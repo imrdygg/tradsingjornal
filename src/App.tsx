@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import type { Session } from '@supabase/supabase-js';
 import {
   AppShell,
   NavTab,
@@ -25,12 +26,63 @@ import {
   TradeExecutionReview,
   TradeManagement,
 } from './types';
+import type { SyncStatus } from './components/layout/SyncStatusBadge';
 import { storage } from './lib/storage';
+import type { StorageState } from './lib/storage';
+import { supabase, isSupabaseConfigured } from './lib/supabase';
+import { loadOrMigrateJournal, saveJournal } from './lib/cloud-sync';
 import { parseTradovateCSV } from './lib/trading/tradovate-import';
-import { Plus, Award, Sparkles, Layers } from 'lucide-react';
+import { Plus, Award, Sparkles, Layers, Cloud, Loader2 } from 'lucide-react';
 
-export default function App() {
-  const [profile, setProfile] = useState<UserProfile>(() => storage.getProfile());
+function AuthScreen() {
+  const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!supabase) return;
+    setBusy(true);
+    setMessage(null);
+    const result = mode === 'sign-in'
+      ? await supabase.auth.signInWithPassword({ email, password })
+      : await supabase.auth.signUp({ email, password });
+    setBusy(false);
+    if (result.error) setMessage(result.error.message);
+    else if (mode === 'sign-up' && !result.data.session) setMessage('Check your email to confirm your account, then sign in.');
+  };
+
+  return (
+    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center p-4">
+      <form onSubmit={submit} className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900/80 p-6 shadow-2xl space-y-5">
+        <div>
+          <div className="flex items-center gap-2 text-emerald-400 mb-3"><Cloud className="w-5 h-5" /><span className="text-xs font-mono uppercase tracking-wider">Private cloud journal</span></div>
+          <h1 className="text-2xl font-bold">{mode === 'sign-in' ? 'Welcome back' : 'Create your account'}</h1>
+          <p className="text-sm text-zinc-400 mt-1">Your journal syncs securely across your phone and computer.</p>
+        </div>
+        {message && <div className="rounded-xl border border-amber-800/70 bg-amber-950/40 p-3 text-xs text-amber-200">{message}</div>}
+        <label className="block text-xs text-zinc-400">Email<input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required className="mt-1 w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-emerald-600" /></label>
+        <label className="block text-xs text-zinc-400">Password<input value={password} onChange={(e) => setPassword(e.target.value)} type="password" minLength={6} required className="mt-1 w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-emerald-600" /></label>
+        <button disabled={busy} className="w-full rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-bold text-zinc-950 hover:bg-emerald-400 disabled:opacity-50 flex items-center justify-center gap-2">{busy && <Loader2 className="w-4 h-4 animate-spin" />}{mode === 'sign-in' ? 'Log in' : 'Sign up'}</button>
+        <button type="button" onClick={() => { setMode(mode === 'sign-in' ? 'sign-up' : 'sign-in'); setMessage(null); }} className="w-full text-xs text-zinc-400 hover:text-zinc-200">{mode === 'sign-in' ? 'Need an account? Sign up' : 'Already have an account? Log in'}</button>
+      </form>
+    </div>
+  );
+}
+
+interface JournalAppProps {
+  userId: string;
+  userEmail?: string | null;
+  /** Omitted in local-only mode, which hides the sign-out control entirely. */
+  onSignOut?: () => Promise<void> | void;
+}
+
+function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
+  const cloudEnabled = isSupabaseConfigured;
+
+  const [profile, setProfile] = useState<UserProfile>(() => ({ ...storage.getProfile(), id: userId }));
   const [instruments, setInstruments] = useState<Instrument[]>(() => storage.getInstruments());
   const [setups, setSetups] = useState<Setup[]>(() => storage.getSetups());
   const [tradingDays, setTradingDays] = useState<TradingDay[]>(() => storage.getTradingDays());
@@ -76,6 +128,94 @@ export default function App() {
   const [closingTrade, setClosingTrade] = useState<Trade | null>(null);
   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
   const [importNotification, setImportNotification] = useState<string | null>(null);
+  const [cloudReady, setCloudReady] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>(cloudEnabled ? 'loading' : 'local');
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+
+  const currentState = useMemo<StorageState>(() => ({ profile, instruments, setups, tradingDays, trades, reviews }), [profile, instruments, setups, tradingDays, trades, reviews]);
+
+  // Keep the latest state reachable from the sign-out handler without re-running effects.
+  const currentStateRef = useRef(currentState);
+  currentStateRef.current = currentState;
+
+  useEffect(() => {
+    if (!cloudEnabled) return;
+    let active = true;
+    (async () => {
+      try {
+        const cloudState = await loadOrMigrateJournal(userId, currentStateRef.current);
+        if (!active) return;
+        storage.importData(JSON.stringify(cloudState));
+        setProfile({ ...cloudState.profile, id: userId });
+        setInstruments(cloudState.instruments);
+        setSetups(cloudState.setups);
+        setTradingDays(cloudState.tradingDays);
+        setTrades(cloudState.trades);
+        setReviews(cloudState.reviews);
+        setSyncStatus('saved');
+        setLastSyncedAt(new Date());
+      } catch (error) {
+        console.error('Cloud journal load failed:', error);
+        setSyncStatus('error');
+        setImportNotification('Cloud sync is unavailable. Your local journal is still available.');
+      } finally {
+        if (active) setCloudReady(true);
+      }
+    })();
+    return () => { active = false; };
+  }, [cloudEnabled, userId]);
+
+  useEffect(() => {
+    if (!cloudEnabled || !cloudReady) return;
+    setSyncStatus('saving');
+    const timeout = window.setTimeout(async () => {
+      try {
+        await saveJournal(userId, currentState);
+        setSyncStatus('saved');
+        setLastSyncedAt(new Date());
+      } catch (error) {
+        console.error('Cloud journal save failed:', error);
+        setSyncStatus('error');
+      }
+    }, 350);
+    return () => window.clearTimeout(timeout);
+  }, [cloudEnabled, cloudReady, userId, currentState]);
+
+  const retrySave = useCallback(async () => {
+    if (!cloudEnabled) return;
+    setSyncStatus('saving');
+    try {
+      await saveJournal(userId, currentStateRef.current);
+      setSyncStatus('saved');
+      setLastSyncedAt(new Date());
+    } catch (error) {
+      console.error('Cloud journal retry failed:', error);
+      setSyncStatus('error');
+    }
+  }, [cloudEnabled, userId]);
+
+  const handleSignOut = async () => {
+    setSigningOut(true);
+    let flushed = true;
+    if (cloudEnabled && cloudReady) {
+      setSyncStatus('saving');
+      try {
+        await saveJournal(userId, currentStateRef.current);
+        setSyncStatus('saved');
+        setLastSyncedAt(new Date());
+      } catch (error) {
+        flushed = false;
+        setSyncStatus('error');
+        console.error('Final cloud save failed:', error);
+      }
+    }
+    // Only wipe the local journal once the cloud copy is safely up to date,
+    // so a second account on this device can never inherit this user's data.
+    if (cloudEnabled && flushed) storage.clearJournal();
+    await onSignOut?.();
+    setSigningOut(false);
+  };
 
   // Today's Trading Day (get or create for today)
   const todayTradingDay = useMemo(() => {
@@ -523,6 +663,12 @@ export default function App() {
       timezone={profile.timezone}
       theme={theme}
       onToggleTheme={handleToggleTheme}
+      userEmail={userEmail}
+      onSignOut={handleSignOut}
+      signingOut={signingOut}
+      syncStatus={syncStatus}
+      lastSyncedAt={lastSyncedAt}
+      onRetrySync={retrySave}
     >
       {renderTabContent()}
 
@@ -563,4 +709,71 @@ export default function App() {
       />
     </AppShell>
   );
+}
+
+function SessionLoader() {
+  return (
+    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col items-center justify-center gap-3">
+      <Loader2 className="w-6 h-6 animate-spin text-emerald-400" />
+      <p className="text-xs font-mono text-zinc-400">Restoring your session…</p>
+    </div>
+  );
+}
+
+export default function App() {
+  const [session, setSession] = useState<Session | null>(null);
+  const [restoring, setRestoring] = useState(isSupabaseConfigured);
+
+  useEffect(() => {
+    if (!supabase) return;
+    let active = true;
+
+    supabase.auth
+      .getSession()
+      .then(({ data }) => {
+        if (!active) return;
+        setSession(data.session);
+        setRestoring(false);
+      })
+      .catch((error) => {
+        console.error('Session restore failed:', error);
+        if (active) setRestoring(false);
+      });
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+      setRestoring(false);
+    });
+
+    return () => {
+      active = false;
+      listener.subscription.unsubscribe();
+    };
+  }, []);
+
+  const handleSignOut = useCallback(async () => {
+    if (!supabase) return;
+    const { error } = await supabase.auth.signOut();
+    if (error) console.error('Sign out failed:', error);
+  }, []);
+
+  // Supabase isn't configured: keep the journal fully usable offline. No
+  // onSignOut is passed, so there is no dead sign-out button in the header.
+  if (!isSupabaseConfigured) {
+    return <JournalApp userId={storage.getProfile().id} />;
+  }
+
+  if (restoring) return <SessionLoader />;
+
+  if (session) {
+    return (
+      <JournalApp
+        userId={session.user.id}
+        userEmail={session.user.email}
+        onSignOut={handleSignOut}
+      />
+    );
+  }
+
+  return <AuthScreen />;
 }

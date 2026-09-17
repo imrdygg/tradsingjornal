@@ -12,8 +12,11 @@ import {
   Clock,
   Sun,
   Moon,
+  LogOut,
+  Loader2,
 } from 'lucide-react';
 import { getCurrentTradingDate } from '../../lib/storage/date-utils';
+import { SyncStatusBadge, SyncStatus } from './SyncStatusBadge';
 import { RiskMode, DayStatus } from '../../types';
 
 export type NavTab = 'today' | 'trades' | 'history' | 'analytics' | 'insights' | 'settings';
@@ -28,6 +31,12 @@ interface AppShellProps {
   timezone: string;
   theme?: 'dark' | 'light';
   onToggleTheme?: () => void;
+  userEmail?: string | null;
+  onSignOut?: () => void;
+  signingOut?: boolean;
+  syncStatus?: SyncStatus;
+  lastSyncedAt?: Date | null;
+  onRetrySync?: () => void;
   children: React.ReactNode;
 }
 
@@ -41,6 +50,12 @@ export const AppShell: React.FC<AppShellProps> = ({
   timezone,
   theme = 'dark',
   onToggleTheme,
+  userEmail,
+  onSignOut,
+  signingOut = false,
+  syncStatus,
+  lastSyncedAt,
+  onRetrySync,
   children,
 }) => {
   const todayDate = getCurrentTradingDate(timezone);
@@ -147,6 +162,15 @@ export const AppShell: React.FC<AppShellProps> = ({
               <span className="capitalize">{dayStatus}</span>
             </div>
 
+            {/* Cloud Sync Status */}
+            {syncStatus && (
+              <SyncStatusBadge
+                status={syncStatus}
+                lastSyncedAt={lastSyncedAt}
+                onRetry={onRetrySync}
+              />
+            )}
+
             {/* Dark / Light Theme Toggler Icon Button */}
             {onToggleTheme && (
               <button
@@ -175,6 +199,34 @@ export const AppShell: React.FC<AppShellProps> = ({
               <span className="hidden sm:inline">Add Trade</span>
               <span className="sm:hidden">Trade</span>
             </button>
+
+            {/* Signed-in Account & Sign Out */}
+            {onSignOut && (
+              <div className="flex items-center gap-2 pl-2 sm:pl-3 border-l border-zinc-800">
+                <span
+                  className="hidden xl:inline text-[11px] font-mono text-zinc-400 max-w-[160px] truncate"
+                  title={userEmail ?? undefined}
+                >
+                  {userEmail ?? 'Signed in'}
+                </span>
+                <button
+                  id="header-sign-out-btn"
+                  type="button"
+                  onClick={onSignOut}
+                  disabled={signingOut}
+                  title="Sign out"
+                  aria-label="Sign out"
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-zinc-100 text-xs font-medium transition-colors disabled:opacity-50"
+                >
+                  {signingOut ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <LogOut className="w-4 h-4 stroke-[2.2]" />
+                  )}
+                  <span className="hidden sm:inline">{signingOut ? 'Saving…' : 'Sign out'}</span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </header>

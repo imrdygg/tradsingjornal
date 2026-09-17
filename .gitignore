@@ -6,3 +6,8 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# This project uses npm, so package-lock.json is the single source of truth.
+# Ignore bun's lockfiles so a stray `bun install` can't introduce a divergent one.
+bun.lock
+bun.lockb

@@ -394,6 +394,27 @@ export const storage = {
     }
   },
 
+  /** Removes the journal from this device. Used on sign-out so the next
+   *  account on this browser never inherits the previous user's data. */
+  clearJournal(): void {
+    if (typeof window === 'undefined') return;
+    for (const key of [
+      STORAGE_KEYS.PROFILE,
+      STORAGE_KEYS.INSTRUMENTS,
+      STORAGE_KEYS.SETUPS,
+      STORAGE_KEYS.DAYS,
+      STORAGE_KEYS.TRADES,
+      STORAGE_KEYS.REVIEWS,
+      STORAGE_KEYS.SEEDED,
+    ]) {
+      try {
+        localStorage.removeItem(key);
+      } catch (err) {
+        console.warn(`Error clearing ${key} from storage:`, err);
+      }
+    }
+  },
+
   isLoggedIn(): boolean {
     return getItem<boolean>(STORAGE_KEYS.AUTH, true); // default authenticated for owner in personal journal
   },

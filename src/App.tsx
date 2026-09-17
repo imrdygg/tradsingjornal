@@ -32,7 +32,7 @@ import type { StorageState } from './lib/storage';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 import { loadOrMigrateJournal, saveJournal } from './lib/cloud-sync';
 import { parseTradovateCSV } from './lib/trading/tradovate-import';
-import { Plus, Award, Sparkles, Layers, Cloud, Loader2 } from 'lucide-react';
+import { Plus, Award, Sparkles, Layers, Cloud, CloudOff, Loader2 } from 'lucide-react';
 
 function AuthScreen() {
   const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in');
@@ -668,12 +668,16 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       theme={theme}
       onToggleTheme={handleToggleTheme}
       userEmail={userEmail}
-      onSignOut={handleSignOut}
+      // Only offer sign-out when there is a real account behind it. Passing
+      // handleSignOut unconditionally made local-only mode show a "?" avatar
+      // and a Sign out button that silently did nothing.
+      onSignOut={onSignOut ? handleSignOut : undefined}
       signingOut={signingOut}
       syncStatus={syncStatus}
       lastSyncedAt={lastSyncedAt}
       onRetrySync={retrySave}
     >
+      {!cloudEnabled && <LocalOnlyNotice />}
       {renderTabContent()}
 
       {/* Trade Form Modal (Add / Edit) */}
@@ -712,6 +716,39 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
         onSaveReview={handleSaveDailyReview}
       />
     </AppShell>
+  );
+}
+
+/**
+ * Shown when the build has no Supabase credentials. Without this the app just
+ * quietly runs local-only and there is no way to discover why there is no
+ * sign-in, or what to do about it.
+ */
+function LocalOnlyNotice() {
+  return (
+    <div className="mb-4 rounded-2xl border border-amber-800/60 bg-amber-950/30 p-3 sm:p-4">
+      <div className="flex items-start gap-2.5">
+        <CloudOff className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+        <div className="min-w-0 space-y-1">
+          <p className="text-xs font-semibold text-amber-200">
+            Cloud sync is off — this journal is saved in this browser only
+          </p>
+          <p className="text-[11px] leading-relaxed text-amber-200/80">
+            Signing in and syncing across devices are disabled because this build
+            has no Supabase credentials. Add{' '}
+            <code className="rounded bg-amber-900/50 px-1 py-0.5 font-mono">
+              VITE_SUPABASE_URL
+            </code>{' '}
+            and{' '}
+            <code className="rounded bg-amber-900/50 px-1 py-0.5 font-mono">
+              VITE_SUPABASE_ANON_KEY
+            </code>{' '}
+            to this environment, then rebuild. For local development they belong
+            in <span className="font-mono">.env.local</span>.
+          </p>
+        </div>
+      </div>
+    </div>
   );
 }
 

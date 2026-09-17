@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { LogOut, Loader2, Cloud } from 'lucide-react';
+import { LogOut, Loader2, Cloud, User } from 'lucide-react';
 
 interface AccountMenuProps {
   email?: string | null;
@@ -42,7 +42,8 @@ export const AccountMenu: React.FC<AccountMenuProps> = ({
     };
   }, [open]);
 
-  const initial = (email || '?').trim().charAt(0).toUpperCase() || '?';
+  // Fall back to a neutral icon rather than a bare "?" when no email is known.
+  const initial = (email || '').trim().charAt(0).toUpperCase();
 
   return (
     <div className="relative" ref={containerRef}>
@@ -56,7 +57,13 @@ export const AccountMenu: React.FC<AccountMenuProps> = ({
         title={email ?? 'Account'}
         className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-zinc-700 bg-zinc-800 text-xs font-bold text-zinc-200 transition-colors hover:bg-zinc-700"
       >
-        {signingOut ? <Loader2 className="h-4 w-4 animate-spin" /> : initial}
+        {signingOut ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : initial ? (
+          initial
+        ) : (
+          <User className="h-4 w-4 text-zinc-400" />
+        )}
       </button>
 
       {open && (

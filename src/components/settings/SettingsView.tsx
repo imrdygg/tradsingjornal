@@ -15,10 +15,14 @@ import {
   ZoomIn,
   X,
   BookOpen,
+  LogOut,
+  Cloud,
+  Loader2,
 } from 'lucide-react';
 import { UserProfile, Instrument, Setup } from '../../types';
 import { ImageUploader } from '../common/ImageUploader';
 import { ImageLightboxModal } from '../common/ImageLightboxModal';
+import { SyncStatusBadge, SyncStatus } from '../layout/SyncStatusBadge';
 
 interface SettingsViewProps {
   profile: UserProfile;
@@ -32,6 +36,11 @@ interface SettingsViewProps {
   onExportData: () => void;
   onImportData: (jsonData: string) => void;
   onTradovateImport?: (csvContent: string) => void;
+  /** Signed-in email. Absent when the app is running local-only. */
+  userEmail?: string | null;
+  onSignOut?: () => void;
+  signingOut?: boolean;
+  syncStatus?: SyncStatus;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
@@ -46,6 +55,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onExportData,
   onImportData,
   onTradovateImport,
+  userEmail,
+  onSignOut,
+  signingOut = false,
+  syncStatus,
 }) => {
   const [newSetupName, setNewSetupName] = useState('');
   const [importStatus, setImportStatus] = useState<string | null>(null);
@@ -178,6 +191,53 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         <p className="text-xs text-zinc-400 mt-0.5">
           Tune your default risk guardrails, trading setups catalog, instruments, and data backups.
         </p>
+      </div>
+
+      {/* 0. Account - the discoverable home for signing in and out */}
+      <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4 sm:p-5 space-y-4">
+        <h2 className="text-xs font-bold uppercase tracking-wider text-zinc-300 font-mono flex items-center gap-2">
+          <Cloud className="w-4 h-4 text-zinc-400" />
+          Account & Cloud Sync
+        </h2>
+
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[11px] uppercase tracking-wider text-zinc-500 font-mono">
+              {onSignOut ? 'Signed in as' : 'Local journal'}
+            </p>
+            <p
+              className="text-sm font-medium text-zinc-200 truncate max-w-full"
+              title={userEmail ?? undefined}
+            >
+              {userEmail ?? 'Not signed in'}
+            </p>
+            <p className="text-[11px] text-zinc-400 mt-0.5">
+              {onSignOut
+                ? 'Your journal syncs securely across every device you sign in on.'
+                : 'Cloud sync is off. Your journal is saved in this browser only.'}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            {syncStatus && <SyncStatusBadge status={syncStatus} />}
+            {onSignOut && (
+              <button
+                id="settings-sign-out-btn"
+                type="button"
+                onClick={onSignOut}
+                disabled={signingOut}
+                className="flex items-center gap-2 rounded-xl border border-rose-800/60 bg-rose-950/30 px-3 py-2 text-xs font-semibold text-rose-200 hover:bg-rose-900/40 disabled:opacity-50 transition-colors"
+              >
+                {signingOut ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <LogOut className="w-4 h-4" />
+                )}
+                {signingOut ? 'Saving…' : 'Sign out'}
+              </button>
+            )}
+          </div>
+        </div>
       </div>
 
       {importStatus && (

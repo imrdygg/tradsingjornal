@@ -7,7 +7,7 @@ interface SyncStatusBadgeProps {
   status: SyncStatus;
   /** Timestamp of the last confirmed cloud save. */
   lastSyncedAt?: Date | null;
-  /** Re-attempts the save; only shown when status is 'error'. */
+  /** Re-attempts the save; only used when status is 'error'. */
   onRetry?: () => void;
 }
 
@@ -26,16 +26,17 @@ export const SyncStatusBadge: React.FC<SyncStatusBadgeProps> = ({
 }) => {
   const syncedTime = lastSyncedAt ? formatTime(lastSyncedAt) : null;
 
+  // Sized to sit alongside the other compact status chips in the header strip.
   const baseClass =
-    'flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-mono border whitespace-nowrap';
+    'flex shrink-0 items-center gap-1.5 rounded-md border px-2 py-0.5 font-mono text-[11px] whitespace-nowrap';
 
   if (status === 'local') {
     return (
       <div
-        className={`hidden sm:flex ${baseClass} bg-zinc-900 border-zinc-800 text-zinc-400`}
+        className={`${baseClass} border-zinc-800 bg-zinc-900 text-zinc-400`}
         title="Cloud sync is off because Supabase is not configured. Your journal is saved in this browser only."
       >
-        <HardDrive className="w-3.5 h-3.5" />
+        <HardDrive className="h-3 w-3" />
         <span>Local only</span>
       </div>
     );
@@ -47,12 +48,12 @@ export const SyncStatusBadge: React.FC<SyncStatusBadgeProps> = ({
         type="button"
         id="sync-status-badge"
         onClick={onRetry}
-        className={`${baseClass} bg-rose-950/40 border-rose-800/60 text-rose-300 hover:bg-rose-900/40 transition-colors`}
+        className={`${baseClass} border-rose-800/60 bg-rose-950/40 text-rose-300 transition-colors hover:bg-rose-900/40`}
         title="Cloud save failed. Click to retry. Your journal is still saved in this browser."
         aria-label="Cloud sync failed. Retry."
       >
-        <AlertTriangle className="w-3.5 h-3.5" />
-        <span className="hidden sm:inline">Retry sync</span>
+        <AlertTriangle className="h-3 w-3" />
+        <span>Retry sync</span>
       </button>
     );
   }
@@ -60,12 +61,12 @@ export const SyncStatusBadge: React.FC<SyncStatusBadgeProps> = ({
   if (status === 'saved') {
     return (
       <div
-        className={`hidden sm:flex ${baseClass} bg-emerald-950/30 border-emerald-800/50 text-emerald-300`}
-        title={syncedTime ? `All changes saved to the cloud at ${syncedTime}.` : 'All changes saved to the cloud.'}
+        className={`${baseClass} border-emerald-800/50 bg-emerald-950/30 text-emerald-300`}
         role="status"
         aria-live="polite"
+        title={syncedTime ? `All changes saved to the cloud at ${syncedTime}.` : 'All changes saved to the cloud.'}
       >
-        <Check className="w-3.5 h-3.5" />
+        <Check className="h-3 w-3" />
         <span>Saved{syncedTime ? ` ${syncedTime}` : ''}</span>
       </div>
     );
@@ -74,11 +75,11 @@ export const SyncStatusBadge: React.FC<SyncStatusBadgeProps> = ({
   // 'loading' (first restore) and 'saving' (a write is in flight)
   return (
     <div
-      className={`hidden sm:flex ${baseClass} bg-zinc-900 border-zinc-800 text-zinc-300`}
+      className={`${baseClass} border-zinc-800 bg-zinc-900 text-zinc-300`}
       role="status"
       aria-live="polite"
     >
-      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+      <Loader2 className="h-3 w-3 animate-spin" />
       <span>{status === 'loading' ? 'Loading…' : 'Saving…'}</span>
     </div>
   );

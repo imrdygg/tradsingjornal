@@ -1,5 +1,33 @@
 @import "tailwindcss";
 
+/* ---------------------------------------------------------------------------
+   Layout foundation
+   html/body/#root need a real height for min-height chains to resolve, and
+   dvh keeps full-height shells correct on mobile where the browser UI
+   overlaps 100vh.
+   --------------------------------------------------------------------------- */
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+html {
+  background-color: #09090b;
+}
+
+html.light {
+  background-color: #f8fafc;
+}
+
+/* Respect notches / home indicators on the fixed bottom nav. */
+.pb-safe {
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.5rem);
+}
+
+/* Note: `min-h-dvh` comes from Tailwind v4 natively, so it is deliberately
+   not redefined here - an unlayered rule would override the utility layer. */
+
 /* Ensure date & datetime-local calendar picker indicators are clearly visible in dark and light modes */
 input[type="date"]::-webkit-calendar-picker-indicator,
 input[type="datetime-local"]::-webkit-calendar-picker-indicator {

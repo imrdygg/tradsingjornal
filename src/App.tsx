@@ -55,7 +55,7 @@ function AuthScreen() {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex items-center justify-center p-4">
+    <div className="flex min-h-dvh items-center justify-center bg-zinc-950 p-4 text-zinc-100">
       <form onSubmit={submit} className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900/80 p-6 shadow-2xl space-y-5">
         <div>
           <div className="flex items-center gap-2 text-emerald-400 mb-3"><Cloud className="w-5 h-5" /><span className="text-xs font-mono uppercase tracking-wider">Private cloud journal</span></div>
@@ -641,6 +641,10 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             onExportData={handleExportData}
             onImportData={handleImportData}
             onTradovateImport={handleTradovateImport}
+            userEmail={userEmail}
+            onSignOut={onSignOut ? handleSignOut : undefined}
+            signingOut={signingOut}
+            syncStatus={syncStatus}
           />
         );
 
@@ -713,7 +717,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
 
 function SessionLoader() {
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col items-center justify-center gap-3">
+    <div className="flex min-h-dvh flex-col items-center justify-center gap-3 bg-zinc-950 text-zinc-100">
       <Loader2 className="w-6 h-6 animate-spin text-emerald-400" />
       <p className="text-xs font-mono text-zinc-400">Restoring your session…</p>
     </div>

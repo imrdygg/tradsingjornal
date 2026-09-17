@@ -1,0 +1,6 @@
+{
+  "name": "Personal Trading Journal",
+  "description": "Private, mobile-friendly personal trading journal and performance-analysis system for a solo futures trader.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

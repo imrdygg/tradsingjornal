@@ -301,7 +301,7 @@ export const AppShell: React.FC<AppShellProps> = ({
 
       {/* Bottom navigation for anything narrower than the desktop nav breakpoint */}
       <div className="pb-safe fixed bottom-0 left-0 right-0 z-40 border-t border-zinc-800/90 bg-zinc-950/95 pt-1.5 backdrop-blur-lg lg:hidden">
-        <div className="grid grid-cols-7 gap-1 px-2">
+        <div className="grid grid-cols-7 gap-0.5 px-1 sm:gap-1 sm:px-2">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = currentTab === item.id;

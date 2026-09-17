@@ -262,7 +262,7 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
             <div
               key={s.id}
               ref={isFocused && !focusContainerRef.current ? focusContainerRef : undefined}
-              className={`rounded-2xl border text-xs space-y-2 transition-colors ${
+              className={`rounded-2xl border text-xs space-y-2 transition-colors scroll-mt-40 sm:scroll-mt-32
                 isFocused || isWatched
                   ? 'border-emerald-800/80 bg-zinc-900/50 shadow-[0_0_0_1px_rgba(16,185,129,0.15)]'
                   : 'border-zinc-800/80 bg-zinc-900/50 hover:border-zinc-700/80'

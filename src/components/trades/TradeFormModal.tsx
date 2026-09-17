@@ -14,6 +14,7 @@ import { calculateRMultiple } from '../../lib/trading/calculate-r';
 import { findInstrument } from '../../lib/trading/instruments';
 import { ImageUploader } from '../common/ImageUploader';
 import { ImageLightboxModal } from '../common/ImageLightboxModal';
+import { ModalOverlay } from '../common/ModalOverlay';
 
 interface TradeFormModalProps {
   isOpen: boolean;
@@ -262,8 +263,8 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
-      <div className="relative w-full max-w-xl rounded-2xl border border-zinc-800 bg-zinc-900 p-4 sm:p-6 shadow-2xl my-6">
+    <ModalOverlay>
+      <div className="relative my-6 w-full max-w-xl rounded-2xl border border-zinc-800 bg-zinc-900 p-4 shadow-2xl sm:p-6">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
           <div className="flex items-center gap-2">
@@ -585,6 +586,6 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
         title={`${direction.toUpperCase()} MES @ ${entryPrice || 'Trade'} Chart`}
         subtitle={`${session} • ${setupName || 'Setup'}`}
       />
-    </div>
+    </ModalOverlay>
   );
 };

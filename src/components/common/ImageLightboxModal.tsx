@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
+import { lockBodyScroll, unlockBodyScroll } from '../../lib/ui/scroll-lock';
 import {
   X,
   ChevronLeft,
@@ -64,6 +66,14 @@ export const ImageLightboxModal: React.FC<ImageLightboxModalProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose, handlePrev, handleNext, images.length]);
 
+  // Freeze the page behind the lightbox while it is open. The lock utility
+  // reference-counts, so stacking (modal -> lightbox) stays balanced.
+  useEffect(() => {
+    if (!isOpen) return;
+    lockBodyScroll();
+    return unlockBodyScroll;
+  }, [isOpen]);
+
   if (!isOpen || images.length === 0) return null;
 
   const currentImage = images[currentIndex];
@@ -75,7 +85,11 @@ export const ImageLightboxModal: React.FC<ImageLightboxModalProps> = ({
     link.click();
   };
 
-  return (
+  // Portalled so an ancestor with backdrop-filter/transform cannot become the
+  // containing block for this fixed overlay and drag it out of the viewport.
+  if (typeof document === 'undefined') return null;
+
+  return createPortal(
     <div
       id="image-lightbox-overlay"
       className="fixed inset-0 z-[100] flex flex-col items-center justify-between bg-black/95 backdrop-blur-md p-3 sm:p-5 select-none animate-in fade-in duration-150"
@@ -220,6 +234,7 @@ export const ImageLightboxModal: React.FC<ImageLightboxModalProps> = ({
           ))}
         </div>
       )}
-    </div>
+    </div>,
+    document.body,
   );
 };

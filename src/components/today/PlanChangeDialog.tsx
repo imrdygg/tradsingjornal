@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { AlertCircle, History, X } from 'lucide-react';
+import { ModalOverlay } from '../common/ModalOverlay';
 
 interface PlanChangeDialogProps {
   isOpen: boolean;
@@ -35,7 +36,7 @@ export const PlanChangeDialog: React.FC<PlanChangeDialogProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+    <ModalOverlay>
       <div className="relative w-full max-w-md rounded-2xl border border-zinc-700/80 bg-zinc-900 p-5 shadow-2xl">
         <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
           <div className="flex items-center gap-2">
@@ -110,6 +111,6 @@ export const PlanChangeDialog: React.FC<PlanChangeDialogProps> = ({
           </div>
         </form>
       </div>
-    </div>
+    </ModalOverlay>
   );
 };

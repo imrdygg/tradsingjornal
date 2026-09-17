@@ -14,6 +14,7 @@ import {
 import { TradingDay, Trade, DailyReview, Setup } from '../../types';
 import { formatTradingDate, formatTimestamp } from '../../lib/storage/date-utils';
 import { TradeCard } from '../trades/TradeCard';
+import { ModalOverlay } from '../common/ModalOverlay';
 
 interface HistoryViewProps {
   tradingDays: TradingDay[];
@@ -319,8 +320,8 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
 
       {/* Day Details Modal */}
       {selectedDay && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-sm overflow-y-auto">
-          <div className="relative w-full max-w-3xl rounded-2xl border border-zinc-800 bg-zinc-900 p-4 sm:p-6 shadow-2xl my-6 space-y-6">
+        <ModalOverlay backdropClassName="bg-black/85 backdrop-blur-sm">
+          <div className="relative my-6 w-full max-w-3xl space-y-6 rounded-2xl border border-zinc-800 bg-zinc-900 p-4 shadow-2xl sm:p-6">
             {/* Header */}
             <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
               <div>
@@ -460,7 +461,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
               </div>
             )}
           </div>
-        </div>
+        </ModalOverlay>
       )}
     </div>
   );

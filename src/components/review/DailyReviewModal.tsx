@@ -17,6 +17,7 @@ import {
   QuestionAnswer,
 } from '../../types';
 import { calculateDisciplineScore } from '../../lib/analytics/discipline';
+import { ModalOverlay } from '../common/ModalOverlay';
 
 interface DailyReviewModalProps {
   isOpen: boolean;
@@ -213,8 +214,8 @@ export const DailyReviewModal: React.FC<DailyReviewModalProps> = ({
       : 'text-zinc-300';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-sm overflow-y-auto">
-      <div className="relative w-full max-w-2xl rounded-2xl border border-zinc-800 bg-zinc-900 p-4 sm:p-6 shadow-2xl my-6 space-y-5">
+    <ModalOverlay backdropClassName="bg-black/85 backdrop-blur-sm">
+      <div className="relative my-6 w-full max-w-2xl space-y-5 rounded-2xl border border-zinc-800 bg-zinc-900 p-4 shadow-2xl sm:p-6">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
           <div>
@@ -392,6 +393,6 @@ export const DailyReviewModal: React.FC<DailyReviewModalProps> = ({
           </div>
         </form>
       </div>
-    </div>
+    </ModalOverlay>
   );
 };

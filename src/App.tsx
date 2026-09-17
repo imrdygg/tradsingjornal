@@ -16,6 +16,7 @@ import { HistoryView } from './components/history/HistoryView';
 import { AnalyticsView } from './components/analytics/AnalyticsView';
 import { InsightsView } from './components/insights/InsightsView';
 import { SettingsView } from './components/settings/SettingsView';
+import { PlaybookView } from './components/playbook/PlaybookView';
 import {
   TradingDay,
   Trade,
@@ -388,6 +389,22 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     setSetups(storage.getSetups());
   };
 
+  // Deep-link from the Morning Plan: switching to the Playbook tab focused on
+  // today's watched setups. Cleared on the next manual tab change so a later
+  // visit to the Playbook starts clean at the top of the list.
+  const [playbookFocusSetups, setPlaybookFocusSetups] = useState<string[] | null>(null);
+  const handleOpenPlaybook = useCallback(() => {
+    setPlaybookFocusSetups(todayTradingDay.watchedSetups || []);
+    setActiveTab('playbook');
+  }, [todayTradingDay.watchedSetups]);
+  const handleSelectTab = useCallback(
+    (tab: NavTab) => {
+      setPlaybookFocusSetups(null);
+      setActiveTab(tab);
+    },
+    []
+  );
+
   const handleExportData = () => {
     const jsonStr = storage.exportAllData();
     const blob = new Blob([jsonStr], { type: 'application/json' });
@@ -527,6 +544,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               onSaveDay={handleSaveDay}
               onLockPlan={handleLockPlan}
               onRecordPlanChange={handleRecordPlanChange}
+              onOpenPlaybook={handleOpenPlaybook}
             />
 
             {/* Today's Recorded Trades Section */}
@@ -627,17 +645,25 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       case 'insights':
         return <InsightsView trades={trades} tradingDays={tradingDays} />;
 
+      case 'playbook':
+        return (
+          <PlaybookView
+            setups={setups}
+            onAddSetup={handleAddSetup}
+            onUpdateSetup={handleUpdateSetup}
+            onDeleteSetup={handleDeleteSetup}
+            onToggleSetup={handleToggleSetup}
+            focusSetupNames={playbookFocusSetups ?? undefined}
+            watchedSetupNames={todayTradingDay.watchedSetups}
+          />
+        );
+
       case 'settings':
         return (
           <SettingsView
             profile={profile}
             instruments={instruments}
-            setups={setups}
             onUpdateProfile={handleUpdateProfile}
-            onAddSetup={handleAddSetup}
-            onUpdateSetup={handleUpdateSetup}
-            onDeleteSetup={handleDeleteSetup}
-            onToggleSetup={handleToggleSetup}
             onExportData={handleExportData}
             onImportData={handleImportData}
             onTradovateImport={handleTradovateImport}
@@ -656,7 +682,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   return (
     <AppShell
       currentTab={activeTab}
-      onSelectTab={setActiveTab}
+      onSelectTab={handleSelectTab}
       onOpenAddTrade={() => {
         setEditingTrade(null);
         setIsTradeModalOpen(true);

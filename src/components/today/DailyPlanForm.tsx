@@ -11,6 +11,7 @@ import {
   CheckCircle2,
   ImageIcon,
   Calendar,
+  BookOpen,
 } from 'lucide-react';
 import {
   TradingDay,
@@ -40,6 +41,8 @@ interface DailyPlanFormProps {
     newValue: string;
     reason: string;
   }) => void;
+  /** Opens the Playbook tab, focused on the setups watched today. */
+  onOpenPlaybook?: () => void;
 }
 
 export const DailyPlanForm: React.FC<DailyPlanFormProps> = ({
@@ -50,6 +53,7 @@ export const DailyPlanForm: React.FC<DailyPlanFormProps> = ({
   onSaveDay,
   onLockPlan,
   onRecordPlanChange,
+  onOpenPlaybook,
 }) => {
   const isLocked = !!day.lockedAt;
 
@@ -457,9 +461,22 @@ export const DailyPlanForm: React.FC<DailyPlanFormProps> = ({
 
         {/* Setups Watched */}
         <div className="space-y-1.5">
-          <label className="text-xs font-medium text-zinc-300">
-            Setups Being Watched Today:
-          </label>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <label className="text-xs font-medium text-zinc-300">
+              Setups Being Watched Today:
+            </label>
+            {onOpenPlaybook && (
+              <button
+                type="button"
+                onClick={onOpenPlaybook}
+                className="text-[11px] font-mono text-emerald-400 hover:text-emerald-300 flex items-center gap-1 hover:underline"
+                title="Open the Playbook tab focused on the setups watched today"
+              >
+                <BookOpen className="w-3 h-3" />
+                Study in Playbook
+              </button>
+            )}
+          </div>
           <div className="flex flex-wrap gap-1.5">
             {setups
               .filter((s) => s.active)

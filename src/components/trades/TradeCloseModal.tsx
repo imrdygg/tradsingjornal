@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { X, Check, Calculator, AlertCircle, ShieldCheck } from 'lucide-react';
+import { X, Check, Calculator, AlertCircle, ShieldCheck, Calendar } from 'lucide-react';
 import {
   Trade,
   TradeExecutionReview,
@@ -278,8 +278,9 @@ export const TradeCloseModal: React.FC<TradeCloseModalProps> = ({
             </div>
 
             <div>
-              <label className="text-xs font-medium text-zinc-300 block mb-1">
-                Exit Time <span className="text-rose-400">*</span>
+              <label className="text-xs font-medium text-zinc-300 block mb-1 flex items-center gap-1.5">
+                <Calendar className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Exit Time</span> <span className="text-rose-400">*</span>
               </label>
               <input
                 type="datetime-local"

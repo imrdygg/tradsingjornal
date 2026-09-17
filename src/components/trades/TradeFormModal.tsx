@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { X, Plus, AlertCircle, Calculator, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { X, Plus, AlertCircle, Calculator, ArrowUpRight, ArrowDownRight, Calendar } from 'lucide-react';
 import {
   Trade,
   TradeDirection,
@@ -417,8 +417,9 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
 
           {/* Row 4: Entry Time */}
           <div>
-            <label className="text-xs font-medium text-zinc-300 block mb-1">
-              Entry Date / Time <span className="text-rose-400">*</span>
+            <label className="text-xs font-medium text-zinc-300 block mb-1 flex items-center gap-1.5">
+              <Calendar className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Entry Date / Time</span> <span className="text-rose-400">*</span>
             </label>
             <input
               type="datetime-local"

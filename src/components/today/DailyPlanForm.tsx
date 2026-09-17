@@ -10,6 +10,7 @@ import {
   History,
   CheckCircle2,
   ImageIcon,
+  Calendar,
 } from 'lucide-react';
 import {
   TradingDay,
@@ -18,16 +19,19 @@ import {
   TradingSession,
   Setup,
   Instrument,
+  Trade,
 } from '../../types';
 import { ImportantLevelsEditor } from './ImportantLevelsEditor';
 import { PlanChangeDialog } from './PlanChangeDialog';
 import { formatTimestamp } from '../../lib/storage/date-utils';
 import { ImageLightboxModal } from '../common/ImageLightboxModal';
+import { MesScaleInBreakevenCalculator } from './MesScaleInBreakevenCalculator';
 
 interface DailyPlanFormProps {
   day: TradingDay;
   setups: Setup[];
   instruments: Instrument[];
+  openTrades?: Trade[];
   onSaveDay: (updated: TradingDay) => void;
   onLockPlan: () => void;
   onRecordPlanChange: (change: {
@@ -42,6 +46,7 @@ export const DailyPlanForm: React.FC<DailyPlanFormProps> = ({
   day,
   setups,
   instruments,
+  openTrades,
   onSaveDay,
   onLockPlan,
   onRecordPlanChange,
@@ -143,8 +148,12 @@ export const DailyPlanForm: React.FC<DailyPlanFormProps> = ({
         <div>
           <div className="flex items-center gap-2">
             <h2 className="text-base sm:text-lg font-bold text-zinc-100 tracking-tight flex items-center gap-2">
-              <Compass className="w-5 h-5 text-zinc-300" />
-              Morning Plan — {day.tradeDate}
+              <Compass className="w-5 h-5 text-emerald-400" />
+              <span>Morning Plan</span>
+              <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-zinc-800 border border-zinc-700 text-xs font-mono text-zinc-200">
+                <Calendar className="w-3.5 h-3.5 text-emerald-400" />
+                {day.tradeDate}
+              </span>
             </h2>
             {isLocked && (
               <span className="inline-flex items-center gap-1 rounded-md bg-emerald-950/80 border border-emerald-800 px-2 py-0.5 text-[11px] font-medium text-emerald-300 font-mono">
@@ -545,6 +554,14 @@ export const DailyPlanForm: React.FC<DailyPlanFormProps> = ({
             className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:border-zinc-600 focus:outline-none"
           />
         </div>
+      </div>
+
+      {/* 3. Position Scaling & Breakeven Calculator */}
+      <div className="pt-2 border-t border-zinc-800/80">
+        <MesScaleInBreakevenCalculator
+          openTrades={openTrades}
+          plannedLossLimit={day.plannedLossLimit || 100}
+        />
       </div>
 
       {/* Plan Changes Audit History (if any recorded changes exist) */}

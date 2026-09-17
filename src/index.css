@@ -1,1 +1,124 @@
 @import "tailwindcss";
+
+/* Ensure date & datetime-local calendar picker indicators are clearly visible in dark and light modes */
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.85;
+  filter: invert(0.85);
+  padding: 2px;
+  border-radius: 4px;
+  transition: opacity 0.15s ease, filter 0.15s ease;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator:hover,
+input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+  filter: invert(1);
+}
+
+/* Light mode calendar icon and input overrides */
+html.light input[type="date"]::-webkit-calendar-picker-indicator,
+html.light input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+.light input[type="date"]::-webkit-calendar-picker-indicator,
+.light input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.2);
+  opacity: 0.85;
+}
+
+html.light input[type="date"]::-webkit-calendar-picker-indicator:hover,
+html.light input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover,
+.light input[type="date"]::-webkit-calendar-picker-indicator:hover,
+.light input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
+  filter: invert(0);
+  opacity: 1;
+}
+
+/* Light Mode Theme Overrides */
+html.light body,
+.light body {
+  background-color: #f8fafc;
+  color: #0f172a;
+}
+
+.light .bg-zinc-950 {
+  background-color: #ffffff !important;
+}
+
+.light .bg-zinc-950\/90,
+.light .bg-zinc-950\/95,
+.light .bg-zinc-950\/80,
+.light .bg-zinc-950\/70,
+.light .bg-zinc-950\/60 {
+  background-color: rgba(255, 255, 255, 0.95) !important;
+}
+
+.light .bg-zinc-900 {
+  background-color: #f1f5f9 !important;
+}
+
+.light .bg-zinc-900\/90,
+.light .bg-zinc-900\/80,
+.light .bg-zinc-900\/70,
+.light .bg-zinc-900\/60,
+.light .bg-zinc-900\/50,
+.light .bg-zinc-900\/40,
+.light .bg-zinc-900\/20 {
+  background-color: rgba(241, 245, 249, 0.85) !important;
+}
+
+.light .bg-zinc-800 {
+  background-color: #e2e8f0 !important;
+}
+
+.light .bg-zinc-800\/80,
+.light .bg-zinc-800\/60,
+.light .bg-zinc-800\/40 {
+  background-color: rgba(226, 232, 240, 0.7) !important;
+}
+
+.light .border-zinc-800,
+.light .border-zinc-800\/80,
+.light .border-zinc-800\/70,
+.light .border-zinc-800\/60,
+.light .border-zinc-800\/50,
+.light .border-zinc-800\/40,
+.light .border-zinc-700,
+.light .border-zinc-700\/60,
+.light .border-zinc-700\/50 {
+  border-color: #cbd5e1 !important;
+}
+
+.light .text-zinc-100 {
+  color: #0f172a !important;
+}
+
+.light .text-zinc-200 {
+  color: #1e293b !important;
+}
+
+.light .text-zinc-300 {
+  color: #334155 !important;
+}
+
+.light .text-zinc-400 {
+  color: #64748b !important;
+}
+
+.light .text-zinc-500 {
+  color: #94a3b8 !important;
+}
+
+.light input,
+.light select,
+.light textarea {
+  color: #0f172a !important;
+  background-color: #ffffff !important;
+  border-color: #cbd5e1 !important;
+}
+
+.light input::placeholder,
+.light textarea::placeholder {
+  color: #94a3b8 !important;
+}
+

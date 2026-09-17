@@ -157,23 +157,33 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
 
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
           <div>
-            <label className="text-[10px] text-zinc-400 block mb-0.5">From Date</label>
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 font-mono focus:outline-none"
-            />
+            <label className="text-[10px] text-zinc-400 block mb-0.5 flex items-center gap-1">
+              <Calendar className="w-3 h-3 text-emerald-400" />
+              <span>From Date</span>
+            </label>
+            <div className="relative">
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 text-xs text-zinc-100 font-mono focus:border-zinc-600 focus:outline-none"
+              />
+            </div>
           </div>
 
           <div>
-            <label className="text-[10px] text-zinc-400 block mb-0.5">To Date</label>
-            <input
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1 text-xs text-zinc-200 font-mono focus:outline-none"
-            />
+            <label className="text-[10px] text-zinc-400 block mb-0.5 flex items-center gap-1">
+              <Calendar className="w-3 h-3 text-emerald-400" />
+              <span>To Date</span>
+            </label>
+            <div className="relative">
+              <input
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 text-xs text-zinc-100 font-mono focus:border-zinc-600 focus:outline-none"
+              />
+            </div>
           </div>
 
           <div>

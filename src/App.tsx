@@ -39,6 +39,36 @@ export default function App() {
 
   const [activeTab, setActiveTab] = useState<NavTab>('today');
 
+  // Theme state: default to dark, supports light mode toggle
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('ptj_theme_mode');
+      if (saved === 'light' || saved === 'dark') return saved;
+    }
+    return 'dark';
+  });
+
+  // Apply theme class to <html> element
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === 'light') {
+      root.classList.add('light');
+      root.classList.remove('dark');
+    } else {
+      root.classList.add('dark');
+      root.classList.remove('light');
+    }
+    try {
+      localStorage.setItem('ptj_theme_mode', theme);
+    } catch {
+      // ignore
+    }
+  }, [theme]);
+
+  const handleToggleTheme = () => {
+    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+  };
+
   // Modals state
   const [isTradeModalOpen, setIsTradeModalOpen] = useState(false);
   const [editingTrade, setEditingTrade] = useState<Trade | null>(null);
@@ -353,6 +383,7 @@ export default function App() {
               day={todayTradingDay}
               setups={setups}
               instruments={instruments}
+              openTrades={todayTrades.filter((t) => t.status === 'open')}
               onSaveDay={handleSaveDay}
               onLockPlan={handleLockPlan}
               onRecordPlanChange={handleRecordPlanChange}
@@ -490,6 +521,8 @@ export default function App() {
       dayStatus={todayTradingDay.status}
       realizedPnL={todayRealizedPnL}
       timezone={profile.timezone}
+      theme={theme}
+      onToggleTheme={handleToggleTheme}
     >
       {renderTabContent()}
 

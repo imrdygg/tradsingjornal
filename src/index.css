@@ -54,24 +54,40 @@ html.light {
 
 /* ---------------------------------------------------------------------------
    Playbook diagrams
-   Each candle prints in when a study guide unfolds, stagger set inline per candle
-   so the chart draws left to right. The class is applied only while the guide is
-   open, which is what makes the sequence replay on every open.
+   Each candle prints in when a study guide unfolds, then holds long enough to
+   read the chart and redraws on a loop. The per-candle stagger is set inline, so
+   the loop sweeps left to right like the pattern forming on a live chart rather
+   than everything blinking at once.
+
+   The first and last frames are identical (invisible), which is what makes the
+   loop seamless; the 8% and 84% stops are what keep the finished chart on screen
+   for most of the cycle instead of pulsing.
+
+   The class is only applied while the guide is open, so a folded card animates
+   nothing, and reduced-motion users get the finished chart immediately.
    --------------------------------------------------------------------------- */
-@keyframes setup-candle-in {
-  from {
+@keyframes setup-candle-loop {
+  0% {
     opacity: 0;
     transform: translateY(5px);
   }
-  to {
+  8% {
     opacity: 1;
     transform: translateY(0);
+  }
+  84% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(5px);
   }
 }
 
 @media (prefers-reduced-motion: no-preference) {
   .setup-candle {
-    animation: setup-candle-in 240ms ease-out both;
+    animation: setup-candle-loop 3.6s ease-in-out infinite;
   }
 }
 

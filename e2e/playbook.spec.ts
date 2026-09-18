@@ -47,8 +47,34 @@ test.describe('Playbook tab', () => {
       'Trend Continuation',
       'Other',
     ]) {
-      await expect(page.getByText(name, { exact: true })).toBeVisible();
+      // Addressed by title rather than by text: a folded card keeps its study guide in
+      // the DOM, and the Support/Resistance diagrams label their dashed level with the
+      // same word, so a bare text match is ambiguous. The name element is what this
+      // asserts about, and it is the element that carries the title.
+      await expect(page.getByTitle(name)).toBeVisible();
     }
+  });
+
+  test('the whole card toggles the study guide, not just its icon', async ({ page }) => {
+    await gotoPlaybook(page);
+
+    // Breakout has no dashed-level label that could collide with its name.
+    const card = page.locator('div.rounded-2xl', { has: page.getByTitle('Breakout') }).first();
+    const guide = card.getByText('How this setup forms');
+
+    // Folded to start with, and hidden rather than merely clipped.
+    await expect(card.getByTitle('Show study guide')).toHaveAttribute('aria-expanded', 'false');
+    await expect(guide).toBeHidden();
+
+    // Clicking the setup name — not a button, not an icon — unfolds the guide.
+    await card.getByTitle('Breakout').click();
+    await expect(card.getByTitle('Hide study guide')).toHaveAttribute('aria-expanded', 'true');
+    await expect(guide).toBeVisible();
+    await expect(card.locator('svg[role="img"]')).toHaveCount(2);
+
+    // Pressing the header again folds it back away.
+    await card.getByTitle('Hide study guide').click();
+    await expect(guide).toBeHidden();
   });
 
   test('expands a study guide with diagrams, formation and trading rules', async ({ page }) => {

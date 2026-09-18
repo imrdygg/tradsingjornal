@@ -22,6 +22,7 @@ import { Setup } from '../../types';
 import { ImageUploader } from '../common/ImageUploader';
 import { ImageLightboxModal } from '../common/ImageLightboxModal';
 import { ModalOverlay } from '../common/ModalOverlay';
+import { Collapse } from '../common/Collapse';
 import { SetupDiagram } from './SetupDiagram';
 import { SetupGuide, resolveSetupGuide } from './setup-guides';
 import { isVideoUrl } from '../../lib/media/media-utils';
@@ -246,8 +247,8 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
           <div className="space-y-0.5">
             <p className="text-xs font-semibold text-zinc-200">2. Open its study guide</p>
             <p className="text-[11px] text-zinc-400 leading-relaxed">
-              Tap <span className="text-zinc-300 font-medium">Study guide</span> on a card to see how
-              the pattern forms, how to trade it and what invalidates it.
+              Tap anywhere on a card to unfold its study guide — how the pattern forms, how to trade
+              it and what invalidates it.
             </p>
           </div>
         </div>
@@ -300,7 +301,7 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
 
       {/* Setup Containers */}
       <div className="space-y-3">
-        {setups.map((s) => {
+        {setups.map((s, index) => {
           const setupImages = s.images || [];
           const guide: SetupGuide | undefined = resolveSetupGuide(s.name);
           const isExpanded = expandedIds.has(s.id);
@@ -314,74 +315,91 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
             <div
               key={s.id}
               ref={isFocused && !focusContainerRef.current ? focusContainerRef : undefined}
-              className={`rounded-2xl border text-xs space-y-2 transition-colors scroll-mt-40 sm:scroll-mt-32
+              // Cards ease in one after another so the library arrives rather than blinks.
+              // Long lists are capped so the last card is never waiting on the first ones.
+              style={{ animationDelay: `${Math.min(index, 8) * 40}ms` }}
+              className={`playbook-card-enter rounded-2xl border text-xs space-y-2 transition-colors scroll-mt-40 sm:scroll-mt-32
                 isFocused || isWatched
                   ? 'border-emerald-800/80 bg-zinc-900/50 shadow-[0_0_0_1px_rgba(16,185,129,0.15)]'
                   : 'border-zinc-800/80 bg-zinc-900/50 hover:border-zinc-700/80'
               }`}
             >
-              {/* Container header — the name wraps so long setup names are never cut off. */}
-              <div className="flex items-start justify-between gap-2 p-3 pb-0">
-                <div className="flex items-start gap-2.5 min-w-0 flex-1">
-                  <button
-                    type="button"
-                    onClick={() => onToggleSetup(s.id)}
-                    className={`mt-0.5 px-2 py-0.5 rounded text-[10px] font-mono uppercase font-bold transition-colors shrink-0 ${
-                      s.active
-                        ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-800'
-                        : 'bg-zinc-800 text-zinc-400'
-                    }`}
-                    title={
-                      s.active
-                        ? 'Active — shown first when recording a trade'
-                        : 'Disabled — still available when recording a trade'
-                    }
-                  >
-                    {s.active ? 'Active' : 'Off'}
-                  </button>
+              {/*
+                The header is the toggle. Needing to hit a small book icon meant the card
+                looked inert, so anywhere on it now opens the guide — and the name gets a line
+                of its own instead of competing with the action buttons for width.
+              */}
+              <button
+                type="button"
+                onClick={() => toggleExpanded(s.id)}
+                aria-expanded={isExpanded}
+                aria-controls={`setup-guide-${s.id}`}
+                title={isExpanded ? 'Hide study guide' : 'Show study guide'}
+                className="flex w-full items-start gap-2.5 rounded-t-2xl p-3 text-left transition-colors hover:bg-zinc-800/40"
+              >
+                <ChevronDown
+                  className={`mt-0.5 h-4 w-4 shrink-0 text-zinc-500 transition-transform duration-200 ${
+                    isExpanded ? 'rotate-180' : ''
+                  }`}
+                />
+                <span className="min-w-0 flex-1">
                   <span
-                    className="font-semibold text-zinc-100 text-sm leading-snug break-words min-w-0"
+                    className="block break-words text-sm font-semibold leading-snug text-zinc-100"
                     title={s.name}
                   >
                     {s.name}
                   </span>
-                  {isWatched && (
-                    <button
-                      type="button"
-                      onClick={() => toggleExpanded(s.id)}
-                      aria-expanded={isExpanded}
-                      className="mt-0.5 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono uppercase font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-800 hover:bg-emerald-900/60 hover:text-emerald-200 transition-colors shrink-0 cursor-pointer"
-                      title="This setup is on today's morning plan watch list — click to open its study guide"
-                    >
-                      <Eye className="w-3 h-3" />
-                      Watched today
-                      <ChevronDown
-                        className={`w-3 h-3 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
-                      />
-                    </button>
-                  )}
-                </div>
 
-                <div className="flex items-center gap-1 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => toggleExpanded(s.id)}
-                    className={`px-2 py-1.5 rounded-lg transition-colors flex items-center gap-1 text-[11px] font-medium border ${
-                      isExpanded
-                        ? 'bg-zinc-800 text-zinc-100 border-zinc-700'
-                        : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 border-transparent'
-                    }`}
-                    title={isExpanded ? 'Hide study guide' : 'Show study guide'}
-                    aria-expanded={isExpanded}
-                  >
-                    <BookOpen className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline">
-                      {isExpanded ? 'Hide guide' : 'Study guide'}
+                  {isWatched && (
+                    <span className="mt-1 flex flex-wrap items-center gap-2">
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono uppercase font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-800">
+                        <Eye className="w-3 h-3" />
+                        Watched today
+                      </span>
                     </span>
-                    <ChevronDown
-                      className={`w-3 h-3 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
-                    />
-                  </button>
+                  )}
+
+                  {/* Summary stays visible so a folded card still says what the setup is. */}
+                  {guide && (
+                    <span className="mt-1.5 block text-xs leading-relaxed text-zinc-400">
+                      {guide.summary}
+                    </span>
+                  )}
+                  {!guide && s.description && (
+                    <span className="mt-1.5 block border-l-2 border-zinc-800 pl-3 text-xs leading-relaxed text-zinc-400">
+                      {s.description}
+                    </span>
+                  )}
+                </span>
+              </button>
+
+              {/*
+                Setup-level controls sit in their own row: opening the guide then only ever
+                adds content underneath, so nothing the trader was aiming at moves. Only one
+                element shows "Off" — this badge — or the card would contradict itself.
+              */}
+              <div className="flex items-center justify-between gap-2 px-3 pb-3">
+                <button
+                  type="button"
+                  onClick={() => onToggleSetup(s.id)}
+                  className={`px-2 py-0.5 rounded text-[10px] font-mono uppercase font-bold transition-colors border ${
+                    s.active
+                      ? 'bg-emerald-950/80 text-emerald-300 border-emerald-800'
+                      : 'bg-zinc-800 text-amber-300/90 border-zinc-700'
+                  }`}
+                  title={
+                    s.active
+                      ? 'Active — shown first when recording a trade'
+                      : 'Disabled — still available when recording a trade'
+                  }
+                >
+                  {s.active ? 'Active' : 'Off'}
+                </button>
+
+                <div className="flex items-center gap-1">
+                  <span className="mr-1 hidden text-[10px] font-mono uppercase tracking-wider text-zinc-500 sm:inline">
+                    {isExpanded ? 'Guide open' : 'Open guide'}
+                  </span>
                   <button
                     type="button"
                     onClick={() => openEditSetup(s)}
@@ -400,16 +418,6 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
                   </button>
                 </div>
               </div>
-
-              {/* Guide summary is always visible when present (kept short) */}
-              {guide && (
-                <p className="px-3 text-zinc-400 leading-relaxed">{guide.summary}</p>
-              )}
-              {!guide && s.description && (
-                <p className="px-3 text-zinc-400 leading-relaxed pl-3 border-l-2 border-zinc-800 ml-3">
-                  {s.description}
-                </p>
-              )}
 
               {/* Attached Model / Playbook Images */}
               {setupImages.length > 0 && (
@@ -486,15 +494,16 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
                 </div>
               )}
 
-              {/* Expanded study guide: formation, trading plan, diagrams, invalidation */}
-              {isExpanded && (
+              {/* Study guide: formation, trading plan, diagrams, invalidation. */}
+              <Collapse open={isExpanded} bodyId={`setup-guide-${s.id}`}>
                 <div className="mx-3 mb-3 rounded-xl border border-zinc-800 bg-zinc-950/70 p-3 space-y-4">
                   {guide ? (
                     <>
-                      {/* Example diagrams: green = bullish, red = bearish */}
+                      {/* Example diagrams: green = bullish, red = bearish. They print in
+                          candle by candle as the guide unfolds. */}
                       <div className="grid grid-cols-2 gap-3">
-                        <SetupDiagram setupName={s.name} direction="bullish" />
-                        <SetupDiagram setupName={s.name} direction="bearish" />
+                        <SetupDiagram setupName={s.name} direction="bullish" animate={isExpanded} />
+                        <SetupDiagram setupName={s.name} direction="bearish" animate={isExpanded} />
                       </div>
 
                       <GuideSection
@@ -559,7 +568,7 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
                     </div>
                   )}
                 </div>
-              )}
+              </Collapse>
             </div>
           );
         })}

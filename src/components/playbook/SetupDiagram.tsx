@@ -37,13 +37,17 @@ const VIEW_H = 100;
 
 const y = (v: number) => VIEW_H - v;
 
-const Candle: React.FC<{ x: number; o: number; c: number; h: number; l: number }> = ({
-  x,
-  o,
-  c,
-  h,
-  l,
-}) => {
+const Candle: React.FC<{
+  x: number;
+  o: number;
+  c: number;
+  h: number;
+  l: number;
+  /** Position in the sequence, used to stagger the draw-in. */
+  index: number;
+  /** True while the guide is open: the candles print one after another. */
+  animate: boolean;
+}> = ({ x, o, c, h, l, index, animate }) => {
   const color = c >= o ? BULL_COLOR : BEAR_COLOR;
   const bodyTop = y(Math.max(o, c));
   const bodyBottom = y(Math.min(o, c));
@@ -51,7 +55,10 @@ const Candle: React.FC<{ x: number; o: number; c: number; h: number; l: number }
   const wickX = x + CANDLE_W / 2;
 
   return (
-    <g>
+    // The class is what starts the animation, so it replays every time the guide is
+    // opened rather than only on the first render. Reduced-motion users get the
+    // finished chart immediately, because the animation lives behind a media query.
+    <g className={animate ? 'setup-candle' : undefined} style={animate ? { animationDelay: `${index * 55}ms` } : undefined}>
       <line x1={wickX} y1={y(h)} x2={wickX} y2={y(l)} stroke={color} strokeWidth={1.4} />
       <rect x={x} y={bodyTop} width={CANDLE_W} height={bodyHeight} rx={1} fill={color} />
     </g>
@@ -285,6 +292,8 @@ interface SetupDiagramProps {
   setupName: string;
   direction: Direction;
   className?: string;
+  /** Draw the candles in one after another, left to right. */
+  animate?: boolean;
 }
 
 /**
@@ -296,6 +305,7 @@ export const SetupDiagram: React.FC<SetupDiagramProps> = ({
   setupName,
   direction,
   className = '',
+  animate = false,
 }) => {
   const spec = resolveSetupDiagrams(setupName)[direction];
   const isBullish = direction === 'bullish';
@@ -310,7 +320,7 @@ export const SetupDiagram: React.FC<SetupDiagramProps> = ({
       >
         {spec.level && <LevelLine price={spec.level.price} label={spec.level.label} />}
         {spec.candles.map(([o, c, h, l], i) => (
-          <Candle key={i} x={X0 + i * CANDLE_GAP} o={o} c={c} h={h} l={l} />
+          <Candle key={i} x={X0 + i * CANDLE_GAP} o={o} c={c} h={h} l={l} index={i} animate={animate} />
         ))}
       </svg>
       <figcaption

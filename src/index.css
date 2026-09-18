@@ -25,6 +25,56 @@ html.light {
   padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.5rem);
 }
 
+/* ---------------------------------------------------------------------------
+   Playbook entrance
+   Each setup card eases in, staggered by an inline animation-delay, so the
+   library arrives instead of blinking into place. `both` holds the card at its
+   starting state during the delay, which is what makes the stagger read as a
+   sequence rather than everything appearing at once.
+
+   Guarded by prefers-reduced-motion: a decorative animation must never be
+   something a trader cannot turn off.
+   --------------------------------------------------------------------------- */
+@keyframes playbook-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .playbook-card-enter {
+    animation: playbook-card-in 260ms ease-out both;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Playbook diagrams
+   Each candle prints in when a study guide unfolds, stagger set inline per candle
+   so the chart draws left to right. The class is applied only while the guide is
+   open, which is what makes the sequence replay on every open.
+   --------------------------------------------------------------------------- */
+@keyframes setup-candle-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .setup-candle {
+    animation: setup-candle-in 240ms ease-out both;
+  }
+}
+
 /* Note: `min-h-dvh` comes from Tailwind v4 natively, so it is deliberately
    not redefined here - an unlayered rule would override the utility layer. */
 

@@ -135,6 +135,15 @@ export interface Trade {
   notes?: string;
   tags?: string[];
   initialRisk: number; // $
+  /**
+   * Where the stop — and therefore the risk and the R-multiple — came from.
+   *
+   * A broker CSV carries no stop price, so an import has to invent one and is marked
+   * 'assumed'. Anything the trader entered or confirmed is 'recorded'. Undefined means
+   * the trade predates this field: treated as recorded unless it was imported, since
+   * an imported stop could only ever have been a guess. See `hasAssumedRisk`.
+   */
+  riskSource?: 'recorded' | 'assumed';
   grossPnL: number;    // $
   netPnL?: number;     // $
   fees?: number;       // $

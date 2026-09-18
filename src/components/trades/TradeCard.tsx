@@ -22,6 +22,7 @@ import { formatTimestamp } from '../../lib/storage/date-utils';
 import { ImageLightboxModal } from '../common/ImageLightboxModal';
 import { isVideoUrl } from '../../lib/media/media-utils';
 import type { TradePositionGroup } from '../../lib/trading/position-groups';
+import { hasAssumedRisk } from '../../lib/trading/risk-fixup';
 
 interface TradeCardProps {
   trade: Trade;
@@ -84,6 +85,9 @@ export const TradeCard: React.FC<TradeCardProps> = ({
 
   // Rule discipline score if execution review completed
   const ruleFollowing = calculateTradeRuleFollowing(trade.executionReview);
+  // Imported trades carry a stop the app had to invent, so their risk and R are not
+  // the trader's numbers. Say so rather than presenting them as real.
+  const assumedRisk = hasAssumedRisk(trade);
 
   // Calculate duration if both entry & exit times are present
   let durationStr = 'Open';
@@ -214,6 +218,17 @@ export const TradeCard: React.FC<TradeCardProps> = ({
           <span className="text-[10px] text-zinc-400 uppercase block">Initial Risk</span>
           <span className="text-zinc-200 font-medium">
             ${trade.initialRisk.toFixed(2)}
+            {assumedRisk && (
+              // A data attribute rather than an id: the trades view renders this card
+              // and the desktop table at once, so an id here would appear twice.
+              <span
+                data-assumed-risk="true"
+                title="Imported from a CSV, which has no stop price. Set the real stop in Settings → Fix imported risk."
+                className="ml-1.5 align-middle rounded border border-amber-800 bg-amber-950/60 px-1 py-px text-[9px] font-mono uppercase text-amber-300"
+              >
+                assumed
+              </span>
+            )}
           </span>
           <span className="text-zinc-400 text-[11px] block">
             {durationStr}

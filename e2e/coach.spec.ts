@@ -73,7 +73,8 @@ test.describe('Coach tab', () => {
     const error = page.locator('#coach-error-brief');
     await expect(error).toBeVisible();
     await expect(error).toContainText(/Coach not available here/i);
-    await expect(error).toContainText(/GEMINI_API_KEY/);
+    // The message must name the exact endpoint to check, not just say it failed.
+    await expect(error).toContainText(/\/api\/coach/);
     await expect(page.locator('#coach-brief-result')).toHaveCount(0);
   });
 

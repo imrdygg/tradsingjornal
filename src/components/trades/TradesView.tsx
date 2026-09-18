@@ -22,6 +22,7 @@ import { calculateTradeRuleFollowing } from '../../lib/analytics/discipline';
 import { formatTimestamp } from '../../lib/storage/date-utils';
 import { ImageLightboxModal } from '../common/ImageLightboxModal';
 import { buildPositionGroups, findPositionGroup } from '../../lib/trading/position-groups';
+import { hasAssumedRisk } from '../../lib/trading/risk-fixup';
 import { instrumentSymbol } from '../../lib/trading/instruments';
 
 interface TradesViewProps {
@@ -860,6 +861,15 @@ export const TradesView: React.FC<TradesViewProps> = ({
                       </td>
                       <td className="py-2.5 px-3 text-right text-zinc-300">
                         ${t.initialRisk.toFixed(2)}
+                        {hasAssumedRisk(t) && (
+                          <span
+                            data-assumed-risk="true"
+                            title="Imported from a CSV, which has no stop price. Set the real stop in Settings → Fix imported risk."
+                            className="ml-1.5 align-middle rounded border border-amber-800 bg-amber-950/60 px-1 py-px text-[9px] font-mono uppercase text-amber-300"
+                          >
+                            assumed
+                          </span>
+                        )}
                       </td>
                       <td className={`py-2.5 px-3 text-right font-bold ${pnlColor}`}>
                         {isClosed

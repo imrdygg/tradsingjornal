@@ -8,12 +8,12 @@ import {
   TradingDay,
 } from '../../types';
 import { buildJournalDigest } from '../../lib/ai/journal-digest';
-import {
+import type {
   BriefResponse,
   CoachMode,
   TradeCritiqueResponse,
   WeeklyResponse,
-} from '../../lib/ai/coach-prompts';
+} from '../../lib/ai/coach-types';
 import { buildTradeFacts, CoachResult, requestCoach } from '../../lib/ai/coach-client';
 import {
   CoachAction,

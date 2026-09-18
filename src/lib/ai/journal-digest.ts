@@ -1,6 +1,7 @@
 import { DailyReview, Instrument, QuestionAnswer, Setup, Trade, TradingDay } from '../../types';
 import { calculateTradeRuleFollowing, DAILY_DISCIPLINE_RULES } from '../analytics/discipline';
 import { instrumentSymbol } from '../trading/instruments';
+import { hasAssumedRisk } from '../trading/risk-fixup';
 
 /**
  * The journal digest is the *only* factual basis the AI coach is allowed to use.
@@ -425,11 +426,12 @@ export function buildJournalDigest(input: {
   if (reviewedTrades.length === 0) {
     caveats.push('No trade execution reviews completed, so per-trade rule following is unknown.');
   }
-  const importedCount = trades.filter((t) => t.source === 'tradovate_csv').length;
-  if (importedCount > 0) {
+  const assumedRiskCount = trades.filter(hasAssumedRisk).length;
+  if (assumedRiskCount > 0) {
     caveats.push(
-      `${importedCount} trade(s) were imported from a broker CSV. Broker exports carry no stop price, ` +
-        `so their risk and R-multiple may be placeholder values rather than the trader's real stop.`
+      `${assumedRiskCount} trade(s) have an ASSUMED stop because a broker CSV carries no stop ` +
+        `price. Their risk and R-multiple are placeholders, not the trader's real numbers, so ` +
+        `any risk, expectancy or R-based pattern below is unreliable until those stops are set.`
     );
   }
   for (const day of tradingDays) {

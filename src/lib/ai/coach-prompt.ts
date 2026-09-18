@@ -1,5 +1,9 @@
-import { DigestStatLine, JournalDigest } from './journal-digest';
-import { QuestionAnswer } from '../../types';
+// Type-only imports, so this module contributes nothing to either bundle at runtime and
+// the function needs no third-party package. A failed import at load time would surface
+// as an HTML error page rather than JSON, which is indistinguishable from the function
+// not being deployed — hence keeping this dependency-free.
+import type { DigestStatLine, JournalDigest } from './journal-digest';
+import type { CoachMode, CoachResponse, CoachTradeFacts, WeeklyPattern } from './coach-types';
 
 /**
  * The coach's contract with the model.
@@ -10,8 +14,13 @@ import { QuestionAnswer } from '../../types';
  * those and would otherwise invent them convincingly.
  */
 
-export const COACH_MODES = ['brief', 'weekly', 'trade', 'prep', 'postclose'] as const;
-export type CoachMode = (typeof COACH_MODES)[number];
+export const COACH_MODES: readonly CoachMode[] = [
+  'brief',
+  'weekly',
+  'trade',
+  'prep',
+  'postclose',
+];
 
 export function isCoachMode(value: unknown): value is CoachMode {
   return typeof value === 'string' && (COACH_MODES as readonly string[]).includes(value);
@@ -210,52 +219,6 @@ export function formatDigestForPrompt(digest: JournalDigest): string {
   return lines.join('\n');
 }
 
-/** Shape of a single trade, as sent for a critique. */
-export interface CoachTradeFacts {
-  symbol: string;
-  direction: string;
-  contracts: number;
-  entryPrice: number;
-  initialStop: number;
-  exitPrice?: number;
-  entryTime: string;
-  exitTime?: string;
-  session: string;
-  setupName?: string;
-  source: string;
-  status: string;
-  entryReason?: string;
-  notes?: string;
-  tags?: string[];
-  initialRisk: number;
-  grossPnL: number;
-  netPnL?: number;
-  pointsPnL: number;
-  rMultiple: number;
-  management?: {
-    breakevenPrice?: number;
-    profitSecured?: number;
-    trailingMethod?: string;
-    notes?: string;
-  };
-  executionReview?: Record<string, QuestionAnswer>;
-  /** Other legs of the same position, when this trade is part of a scale-in. */
-  positionLegs?: number;
-  positionAvgEntry?: number;
-  positionTotalContracts?: number;
-  /** The plan that was in force when this trade was taken. */
-  dayPlan?: {
-    plannedLossLimit: number;
-    contractsPlanned: number;
-    allowedSessions: string[];
-    watchedSetups: string[];
-    primaryInstrument: string;
-    marketBias: string;
-    waitingFor?: string;
-    stayOutIf?: string;
-  };
-}
-
 const REVIEW_QUESTION_LABELS: Record<string, string> = {
   followedSetup: 'Followed the planned setup',
   followedStop: 'Honoured the initial stop',
@@ -440,67 +403,6 @@ ${COACH_RESPONSE_SHAPES[mode]}`;
 // ---------------------------------------------------------------------------
 // Response validation
 // ---------------------------------------------------------------------------
-
-export interface BriefResponse {
-  headline: string;
-  yesterday: string;
-  wins: string[];
-  fixes: string[];
-  todayFocus: string;
-  motivation: string;
-}
-
-export interface WeeklyPattern {
-  observation: string;
-  evidence: string;
-}
-
-export interface WeeklyResponse {
-  headline: string;
-  patterns: WeeklyPattern[];
-  disciplineRead: string;
-  riskRead: string;
-  biggestLeak: string;
-  oneChange: string;
-  motivation: string;
-}
-
-export interface TradeCritiqueResponse {
-  verdict: string;
-  didWell: string[];
-  costYou: string[];
-  rulesBroken: string[];
-  nextTime: string;
-  grade: string;
-}
-
-/** Morning preparation, generated before the session closes. */
-export interface PrepResponse {
-  headline: string;
-  yesterdayLesson: string;
-  howToApproach: string;
-  watchOutFor: string[];
-  planGaps: string[];
-  motivation: string;
-}
-
-/** Post-close review of the session that just finished. */
-export interface PostCloseResponse {
-  headline: string;
-  whatHappened: string;
-  wentWell: string[];
-  wentWrong: string[];
-  rulesBroken: string[];
-  tomorrowAction: string;
-  motivation: string;
-}
-
-export type CoachResponse =
-  | BriefResponse
-  | WeeklyResponse
-  | TradeCritiqueResponse
-  | PrepResponse
-  | PostCloseResponse;
 
 function asText(value: unknown, field: string): string {
   if (typeof value !== 'string' || !value.trim()) {

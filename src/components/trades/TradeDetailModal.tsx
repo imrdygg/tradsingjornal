@@ -32,6 +32,7 @@ import { findInstrument } from '../../lib/trading/instruments';
 import { formatTimestamp } from '../../lib/storage/date-utils';
 import { isVideoUrl } from '../../lib/media/media-utils';
 import type { TradePositionGroup } from '../../lib/trading/position-groups';
+import { hasAssumedRisk } from '../../lib/trading/risk-fixup';
 
 /**
  * The execution review questions, in the order they are asked when closing a
@@ -136,6 +137,8 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
 }) => {
   // Draft answers for completing a missing review.
   const [draft, setDraft] = useState<Record<string, QuestionAnswer>>({});
+  // A CSV has no stop, so an imported trade's risk is a placeholder until it is set.
+  const assumedRisk = trade ? hasAssumedRisk(trade) : false;
   const [isReviewOpen, setIsReviewOpen] = useState(false);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -315,7 +318,15 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                     : undefined
                 }
               />
-              <Metric label="Initial risk" value={money(trade.initialRisk)} />
+              <Metric
+                label="Initial risk"
+                value={
+                  <span className={assumedRisk ? 'text-amber-300' : undefined}>
+                    {money(trade.initialRisk)}
+                  </span>
+                }
+                sub={assumedRisk ? 'assumed stop — not real' : undefined}
+              />
               <Metric label="Duration" value={duration ?? '—'} />
               <Metric
                 label="Instrument"

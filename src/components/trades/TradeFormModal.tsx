@@ -18,6 +18,7 @@ import {
   TradingDay,
 } from '../../types';
 import { calculateInitialRisk } from '../../lib/trading/calculate-risk';
+import { hasAssumedRisk } from '../../lib/trading/risk-fixup';
 import { calculatePnL } from '../../lib/trading/calculate-pnl';
 import { calculateRMultiple } from '../../lib/trading/calculate-r';
 import { findInstrument } from '../../lib/trading/instruments';
@@ -310,6 +311,13 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
       status: isClosed ? 'closed' : 'open',
       // Carries the scale-in link through save so the legs stay grouped.
       positionId: prefill?.positionId ?? editingTrade?.positionId,
+      // Saving a changed stop is the trader supplying the real one. Saving without
+      // touching it leaves an imported placeholder marked as a placeholder, so an
+      // unrelated edit (a note, a tag) cannot launder invented risk into real risk.
+      riskSource:
+        editingTrade && hasAssumedRisk(editingTrade) && editingTrade.initialStop === stop
+          ? 'assumed'
+          : 'recorded',
       images: images.length > 0 ? images : undefined,
       screenshotPath: images[0] || undefined,
     });

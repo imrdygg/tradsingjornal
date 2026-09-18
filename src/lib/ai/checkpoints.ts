@@ -1,5 +1,5 @@
 import { DailyReview, Trade, TradingDay } from '../../types';
-import { CoachResponse } from './coach-prompts';
+import type { CoachResponse } from './coach-types';
 
 /**
  * The two daily coach checkpoints.
@@ -16,9 +16,9 @@ import { CoachResponse } from './coach-prompts';
 
 export type CheckpointId = 'prep' | 'postclose';
 
-/** Morning preparation opens with the premarket session. */
-export const PREP_START_HOUR = 4;
-/** The regular session closes at 16:00, which ends the morning window. */
+/** Preparation opens at 08:00, ahead of the regular session open at 09:30. */
+export const PREP_START_HOUR = 8;
+/** The regular session closes at 16:00: prep hands over to the review here. */
 export const PREP_END_HOUR = 16;
 
 export interface CheckpointInfo {
@@ -34,18 +34,20 @@ export interface CheckpointInfo {
 export const CHECKPOINTS: Record<CheckpointId, CheckpointInfo> = {
   prep: {
     id: 'prep',
-    label: 'Morning prep',
+    // Session-neutral names, so renaming the hours never leaves the label lying
+    // about when the checkpoint actually applies.
+    label: 'Pre-session prep',
     windowLabel: `${String(PREP_START_HOUR).padStart(2, '0')}:00–${String(PREP_END_HOUR).padStart(2, '0')}:00`,
     description: 'How to approach the session, before it closes.',
-    actionLabel: 'Prepare me for today',
+    actionLabel: 'Prepare me for the session',
     loadingLabel: 'Reading your plan and recent sessions…',
   },
   postclose: {
     id: 'postclose',
-    label: 'Post-close review',
+    label: 'Post-session review',
     windowLabel: `${String(PREP_END_HOUR).padStart(2, '0')}:00–${String(PREP_START_HOUR).padStart(2, '0')}:00`,
     description: 'What the session produced, and what to change.',
-    actionLabel: 'Review today',
+    actionLabel: 'Review the session',
     loadingLabel: 'Reading today\u2019s trades and reviews…',
   },
 };
@@ -85,12 +87,15 @@ export function resolveCheckpoint(timezone: string, now: Date = new Date()): Che
   return hour >= PREP_START_HOUR && hour < PREP_END_HOUR ? 'prep' : 'postclose';
 }
 
-/** Reports both boundaries for display, so the schedule is never a mystery. */
+/**
+ * Reports both boundaries for display, so the schedule is never a mystery. Reads the
+ * names and windows straight from CHECKPOINTS so they cannot drift apart.
+ */
 export function checkpointWindowNote(): string {
-  const pad = (hour: number) => String(hour).padStart(2, '0');
   return (
-    `Morning prep ${pad(PREP_START_HOUR)}:00–${pad(PREP_END_HOUR)}:00, ` +
-    `post-close review ${pad(PREP_END_HOUR)}:00–${pad(PREP_START_HOUR)}:00. Your local time.`
+    `${CHECKPOINTS.prep.label} ${CHECKPOINTS.prep.windowLabel}, ` +
+    `${CHECKPOINTS.postclose.label.toLowerCase()} ${CHECKPOINTS.postclose.windowLabel}. ` +
+    `Your local time.`
   );
 }
 

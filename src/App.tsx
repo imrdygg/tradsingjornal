@@ -10,6 +10,7 @@ import { DailyPlanForm } from './components/today/DailyPlanForm';
 import { TradeCard } from './components/trades/TradeCard';
 import { TradeFormModal } from './components/trades/TradeFormModal';
 import { TradeCloseModal } from './components/trades/TradeCloseModal';
+import { RiskFixupModal } from './components/trades/RiskFixupModal';
 import { TradeDetailModal } from './components/trades/TradeDetailModal';
 import { DailyReviewModal } from './components/review/DailyReviewModal';
 import { TradesView } from './components/trades/TradesView';
@@ -38,6 +39,7 @@ import { loadOrMigrateJournal, saveJournal } from './lib/cloud-sync';
 import { parseTradovateCSV } from './lib/trading/tradovate-import';
 import type { CsvImportSummary } from './lib/trading/tradovate-import';
 import { buildPositionGroups, findPositionGroup } from './lib/trading/position-groups';
+import { findAssumedRiskTrades, RiskFixItem } from './lib/trading/risk-fixup';
 import { instrumentSymbol } from './lib/trading/instruments';
 import { Plus, Award, Sparkles, Layers, Cloud, CloudOff, Loader2 } from 'lucide-react';
 
@@ -146,6 +148,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   // Trade detail view is stored as an id so it re-renders from live state and
   // immediately reflects a saved execution review.
   const [viewingTradeId, setViewingTradeId] = useState<string | null>(null);
+  const [isRiskFixupOpen, setIsRiskFixupOpen] = useState(false);
   const [importNotification, setImportNotification] = useState<string | null>(null);
   const [cloudReady, setCloudReady] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
@@ -253,6 +256,8 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
 
   // Scale-in legs grouped so cards can show the blended size and average entry.
   const positionGroups = useMemo(() => buildPositionGroups(trades), [trades]);
+  // Imported trades whose stop — and therefore risk and R — is still a placeholder.
+  const assumedRiskTrades = useMemo(() => findAssumedRiskTrades(trades), [trades]);
   const viewingTrade = useMemo(
     () => trades.find((t) => t.id === viewingTradeId) ?? null,
     [trades, viewingTradeId]
@@ -405,6 +410,31 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
 
     storage.saveTrade(closed);
     setTrades(storage.getTrades());
+  };
+
+  /**
+   * Writes the real stops onto the imported trades and clears the assumed flag, so the
+   * risk and R-multiple are the trader's own numbers from here on.
+   */
+  const handleApplyRiskFix = (items: RiskFixItem[]) => {
+    const byId = new Map(items.map((item) => [item.tradeId, item]));
+    const appliedAt = new Date().toISOString();
+
+    for (const trade of trades) {
+      const item = byId.get(trade.id);
+      if (!item) continue;
+      storage.saveTrade({
+        ...trade,
+        initialStop: item.stop,
+        initialRisk: item.risk,
+        rMultiple: item.rMultiple,
+        riskSource: 'recorded',
+        updatedAt: appliedAt,
+      });
+    }
+
+    setTrades(storage.getTrades());
+    setIsRiskFixupOpen(false);
   };
 
   const handleDeleteTrade = (tradeId: string) => {
@@ -801,6 +831,8 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             onExportData={handleExportData}
             onImportData={handleImportData}
             onTradovateImport={handleTradovateImport}
+            assumedRiskCount={assumedRiskTrades.length}
+            onOpenRiskFixup={() => setIsRiskFixupOpen(true)}
             onResetJournal={handleResetJournal}
             userEmail={userEmail}
             onSignOut={onSignOut ? handleSignOut : undefined}
@@ -865,6 +897,20 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
         trade={closingTrade}
         instruments={instruments}
         onConfirmClose={handleConfirmCloseTrade}
+      />
+
+      {/* Risk fix-up: replaces placeholder stops left by a broker CSV import. */}
+      <RiskFixupModal
+        isOpen={isRiskFixupOpen}
+        onClose={() => setIsRiskFixupOpen(false)}
+        trades={trades}
+        instruments={instruments}
+        onApply={handleApplyRiskFix}
+        onEditTrade={(trade) => {
+          setIsRiskFixupOpen(false);
+          setEditingTrade(trade);
+          setIsTradeModalOpen(true);
+        }}
       />
 
       {/* Trade Detail Modal (read everything recorded about one trade) */}

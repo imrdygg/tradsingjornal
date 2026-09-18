@@ -11,7 +11,7 @@ import { expect, test } from '@playwright/test';
  * unit tests in src/lib/ai/__tests__/checkpoints.test.ts, where the clock can be fixed.
  */
 
-const ANY_CHECKPOINT = /Morning prep|Post-close review/;
+const ANY_CHECKPOINT = /Pre-session prep|Post-session review/;
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
@@ -41,10 +41,10 @@ test.describe('Coach checkpoints on Today', () => {
     const card = page.locator('#coach-checkpoint-card');
 
     // The header chip shows the active window...
-    await expect(card.getByText(/(04:00–16:00|16:00–04:00)/).first()).toBeVisible();
+    await expect(card.getByText(/(08:00–16:00|16:00–08:00)/).first()).toBeVisible();
     // ...and the schedule line states both boundaries.
-    await expect(card.locator('#coach-checkpoint-schedule')).toContainText('04:00–16:00');
-    await expect(card.locator('#coach-checkpoint-schedule')).toContainText('16:00–04:00');
+    await expect(card.locator('#coach-checkpoint-schedule')).toContainText('08:00–16:00');
+    await expect(card.locator('#coach-checkpoint-schedule')).toContainText('16:00–08:00');
     await expect(card.locator('#coach-checkpoint-schedule')).toContainText(/local time/i);
   });
 
@@ -86,7 +86,7 @@ test.describe('Coach checkpoints on Today', () => {
 
     await expect(label).toHaveText(ANY_CHECKPOINT);
     const active = (await label.textContent())?.trim() ?? '';
-    const other = active === 'Morning prep' ? 'Post-close review' : 'Morning prep';
+    const other = active === 'Pre-session prep' ? 'Post-session review' : 'Pre-session prep';
 
     await switcher.click();
     await expect(label).toHaveText(other);

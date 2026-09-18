@@ -37,7 +37,7 @@ export interface ParsedTradovateResult {
 }
 
 /** Placeholder stop distance for imported trades — the file has no stop data. */
-const PLACEHOLDER_STOP_POINTS = 10;
+export const PLACEHOLDER_STOP_POINTS = 10;
 
 /**
  * Splits CSV text into rows of fields.
@@ -419,6 +419,9 @@ export function parseTradovateCSV(
         open.direction === 'long'
           ? Math.round((averageEntry - PLACEHOLDER_STOP_POINTS) * 100) / 100
           : Math.round((averageEntry + PLACEHOLDER_STOP_POINTS) * 100) / 100,
+      // Flagged so the app can say the risk and R are placeholders instead of
+      // presenting invented numbers as if they were the trader's own.
+      riskSource: 'assumed',
     });
 
     // Keep the unfilled remainder of the position open.
@@ -461,6 +464,7 @@ export function parseTradovateCSV(
       grossPnL: 0,
       pointsPnL: 0,
       rMultiple: 0,
+      riskSource: 'assumed',
     });
 
     unmatchedFills.push({
@@ -479,7 +483,8 @@ export function parseTradovateCSV(
   }
 
   warnings.push(
-    `Imported trades get a placeholder ${PLACEHOLDER_STOP_POINTS}-point stop and matching risk, because the CSV has no stop data. Edit any trade to set its real stop.`
+    `Imported trades get a placeholder ${PLACEHOLDER_STOP_POINTS}-point stop and matching risk, because the CSV has no stop data. ` +
+      `Until you set the real stop, their risk and R-multiple are not yours. Use "Fix imported risk" in Settings to set them in bulk.`
   );
 
   return { trades, unmatchedFills, errors, warnings, detectedColumns, skippedRows };

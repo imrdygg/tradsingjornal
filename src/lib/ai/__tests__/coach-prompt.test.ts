@@ -2,13 +2,14 @@ import { describe, it, expect } from 'vitest';
 import {
   buildCoachPrompt,
   COACH_GUARDRAILS,
+  COACH_MODES,
   COACH_RESPONSE_SHAPES,
-  CoachTradeFacts,
   formatDigestForPrompt,
   formatTradeForPrompt,
   isCoachMode,
   parseCoachResponse,
-} from '../coach-prompts';
+} from '../coach-prompt';
+import type { CoachTradeFacts } from '../coach-types';
 import { buildJournalDigest } from '../journal-digest';
 import { DailyReview, DailyReviewQuestions, Trade, TradingDay } from '../../../types';
 import { DEFAULT_INSTRUMENTS } from '../../trading/instruments';

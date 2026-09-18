@@ -362,12 +362,36 @@ describe('buildJournalDigest', () => {
       expect(caveats).toContain('No trade execution reviews');
     });
 
-    it('warns that imported trades may carry placeholder risk and R', () => {
+    it('warns that an invented stop makes risk and R unreliable', () => {
       const digest = build({
         trades: [makeTrade({ source: 'tradovate_csv' })],
       });
 
-      expect(digest.dataSufficiency.caveats.join(' ')).toContain('broker CSV');
+      const caveats = digest.dataSufficiency.caveats.join(' ');
+      expect(caveats).toContain('ASSUMED stop');
+      expect(caveats).toContain('placeholders');
+    });
+
+    it('stops warning once the imported stops are real', () => {
+      const digest = build({
+        trades: [makeTrade({ source: 'tradovate_csv', riskSource: 'recorded' })],
+      });
+
+      expect(digest.dataSufficiency.caveats.join(' ')).not.toContain('ASSUMED stop');
+    });
+
+    it('counts only the trades still carrying an assumed stop', () => {
+      const digest = build({
+        trades: [
+          makeTrade({ id: 'a', source: 'tradovate_csv' }),
+          makeTrade({ id: 'b', source: 'tradovate_csv', riskSource: 'recorded' }),
+          makeTrade({ id: 'c', source: 'manual' }),
+        ],
+      });
+
+      expect(digest.dataSufficiency.caveats.join(' ')).toContain(
+        '1 trade(s) have an ASSUMED stop'
+      );
     });
 
     it('warns when risk mode was expanded on any day', () => {

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Sparkles, Clock, Info, ArrowLeftRight } from 'lucide-react';
 import { DailyReview, Instrument, Setup, Trade, TradingDay } from '../../types';
 import { buildJournalDigest } from '../../lib/ai/journal-digest';
-import { PostCloseResponse, PrepResponse } from '../../lib/ai/coach-prompts';
+import type { PostCloseResponse, PrepResponse } from '../../lib/ai/coach-types';
 import { CoachErrorCode, requestCoach } from '../../lib/ai/coach-client';
 import {
   CachedCheckpointNote,

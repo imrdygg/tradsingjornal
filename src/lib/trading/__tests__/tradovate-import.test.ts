@@ -157,4 +157,40 @@ describe('parseTradovateCSV — unhelpful files', () => {
     expect(result.trades[0].initialRisk).toBe(50);
     expect(result.trades[0].initialStop).toBe(7690);
   });
+
+  it('flags the invented stop as assumed on every imported trade', () => {
+    const csv = [
+      'Timestamp,Symbol,Action,Qty,Price',
+      '2026-09-18 09:31:00,MESZ5,Buy,1,7700.00',
+      '2026-09-18 09:35:00,MESZ5,Sell,1,7705.00',
+    ].join('\n');
+
+    const result = parseTradovateCSV(csv);
+    // The flag is what lets the app warn about placeholder risk and R instead of
+    // presenting invented numbers as if they were the trader's own.
+    expect(result.trades[0].riskSource).toBe('assumed');
+  });
+
+  it('flags a position that is still open as assumed too', () => {
+    const csv = [
+      'Timestamp,Symbol,Action,Qty,Price',
+      '2026-09-18 09:31:00,MESZ5,Buy,2,7700.00',
+    ].join('\n');
+
+    const result = parseTradovateCSV(csv);
+    expect(result.trades).toHaveLength(1);
+    expect(result.trades[0].status).toBe('open');
+    expect(result.trades[0].riskSource).toBe('assumed');
+  });
+
+  it('tells the trader where to fix the placeholder risk', () => {
+    const csv = [
+      'Timestamp,Symbol,Action,Qty,Price',
+      '2026-09-18 09:31:00,MESZ5,Buy,1,7700.00',
+      '2026-09-18 09:35:00,MESZ5,Sell,1,7705.00',
+    ].join('\n');
+
+    const result = parseTradovateCSV(csv);
+    expect(result.warnings.join(' ')).toMatch(/Fix imported risk/i);
+  });
 });

@@ -106,18 +106,24 @@ describe('resolveCheckpoint', () => {
     );
   };
 
-  it('selects morning prep during the trading day', () => {
+  it('selects prep from 08:00 through the trading day', () => {
+    expect(resolveCheckpoint('America/New_York', at(8))).toBe('prep');
     expect(resolveCheckpoint('America/New_York', at(9))).toBe('prep');
     expect(resolveCheckpoint('America/New_York', at(13, 30))).toBe('prep');
   });
 
   it('includes the start of the prep window and excludes its end', () => {
-    expect(resolveCheckpoint('America/New_York', at(4))).toBe('prep');
+    expect(resolveCheckpoint('America/New_York', at(8))).toBe('prep');
     expect(resolveCheckpoint('America/New_York', at(15, 59))).toBe('prep');
     expect(resolveCheckpoint('America/New_York', at(16))).toBe('postclose');
   });
 
-  it('selects the post-close review after the session and overnight', () => {
+  it('still offers the review in the hour before prep opens', () => {
+    expect(resolveCheckpoint('America/New_York', at(7, 59))).toBe('postclose');
+    expect(resolveCheckpoint('America/New_York', at(5))).toBe('postclose');
+  });
+
+  it('selects the review after the session and overnight', () => {
     expect(resolveCheckpoint('America/New_York', at(16, 30))).toBe('postclose');
     expect(resolveCheckpoint('America/New_York', at(23, 30))).toBe('postclose');
     expect(resolveCheckpoint('America/New_York', at(0))).toBe('postclose');
@@ -131,16 +137,29 @@ describe('checkpoint metadata', () => {
     expect(otherCheckpoint('postclose')).toBe('prep');
   });
 
-  it('states the window so it is never a mystery to the trader', () => {
+  it('states both windows so they are never a mystery to the trader', () => {
     const text = checkpointWindowNote();
-    expect(text).toContain('04:00–16:00');
+    expect(text).toContain('08:00–16:00');
+    expect(text).toContain('16:00–08:00');
     expect(text).toContain('local time');
   });
 
+  it('names each checkpoint the same way in the label and the schedule line', () => {
+    const text = checkpointWindowNote();
+    // Derived from the labels, so renaming a checkpoint cannot leave stale wording.
+    expect(text).toContain(CHECKPOINTS.prep.label);
+    expect(text).toContain(CHECKPOINTS.postclose.label.toLowerCase());
+  });
+
   it('describes each checkpoint in its own terms', () => {
-    expect(CHECKPOINTS.prep.label).toBe('Morning prep');
-    expect(CHECKPOINTS.postclose.label).toBe('Post-close review');
+    expect(CHECKPOINTS.prep.label).toBe('Pre-session prep');
+    expect(CHECKPOINTS.postclose.label).toBe('Post-session review');
     expect(CHECKPOINTS.prep.actionLabel).not.toBe(CHECKPOINTS.postclose.actionLabel);
+  });
+
+  it('does not imply a time of day, so the hours can change without misleading', () => {
+    expect(CHECKPOINTS.prep.label).not.toMatch(/morning|evening|overnight/i);
+    expect(CHECKPOINTS.postclose.label).not.toMatch(/morning|close/i);
   });
 });
 

@@ -14,6 +14,7 @@ import {
   X,
   RotateCcw,
   Trash2,
+  ShieldAlert,
 } from 'lucide-react';
 import { UserProfile, Instrument } from '../../types';
 import { SyncStatusBadge, SyncStatus } from '../layout/SyncStatusBadge';
@@ -35,6 +36,10 @@ interface SettingsViewProps {
   onImportData: (jsonData: string) => void;
   /** Returns a summary of what was read so problems can be shown inline. */
   onTradovateImport?: (csvContent: string) => CsvImportSummary;
+  /** How many trades still carry a placeholder stop from an import. */
+  assumedRiskCount?: number;
+  /** Opens the bulk risk fix-up dialog. */
+  onOpenRiskFixup?: () => void;
   /** Wipes trades, plans and reviews (keeping settings) and starts fresh. */
   onResetJournal?: () => Promise<void> | void;
   /** Signed-in email. Absent when the app is running local-only. */
@@ -51,6 +56,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onExportData,
   onImportData,
   onTradovateImport,
+  assumedRiskCount = 0,
+  onOpenRiskFixup,
   onResetJournal,
   userEmail,
   onSignOut,
@@ -391,6 +398,34 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           scale-ins into one position, and prices each trade with its own instrument. Anything it
           has to assume is listed in the result above.
         </p>
+
+        {/* A CSV has no stop, so imported risk is invented until the trader replaces it. */}
+        {assumedRiskCount > 0 && onOpenRiskFixup && (
+          <div className="rounded-xl border border-amber-900/50 bg-amber-950/20 p-3 sm:p-3.5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="flex items-start gap-2.5">
+                <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+                <div>
+                  <p id="assumed-risk-summary" className="text-xs font-semibold text-amber-100">
+                    {assumedRiskCount} trade{assumedRiskCount === 1 ? '' : 's'} still use an assumed
+                    stop
+                  </p>
+                  <p className="mt-0.5 text-[11px] leading-relaxed text-amber-200/80">
+                    Their risk, R-multiple and expectancy are placeholders until you set the real
+                    stop. Applying a stop here also tells your coach this risk is trustworthy.
+                  </p>
+                </div>
+              </div>
+              <button
+                id="open-risk-fixup"
+                onClick={onOpenRiskFixup}
+                className="shrink-0 rounded-xl bg-amber-500/90 px-3.5 py-2 text-xs font-bold text-zinc-950 shadow-sm transition-all hover:scale-[1.02] hover:bg-amber-400 active:scale-[0.98]"
+              >
+                Fix imported risk
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* 4. Start Fresh — journal reset */}

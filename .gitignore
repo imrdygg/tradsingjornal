@@ -15,3 +15,4 @@ playwright-report/
 # Ignore bun's lockfiles so a stray `bun install` can't introduce a divergent one.
 bun.lock
 bun.lockb
+.vercel

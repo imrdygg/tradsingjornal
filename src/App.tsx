@@ -324,20 +324,40 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     setTradingDays(storage.getTradingDays());
   };
 
-  // Trade actions
+  /**
+   * Adds or updates a trade from the record form.
+   *
+   * On an edit the stored trade is the base and only the fields the form actually owns
+   * are replaced. Rebuilding the record from the form alone used to reassign a past
+   * trade to today's session, relabel an import as hand-recorded, and drop the
+   * assumed-risk flag — the last of which turned an invented stop price, and the risk
+   * and R derived from it, into numbers the app presented as real.
+   */
   const handleSaveTrade = (tradeData: Partial<Trade>) => {
+    const stored = editingTrade;
+    const now = new Date().toISOString();
+
     const tradeToSave: Trade = {
-      id: editingTrade ? editingTrade.id : `trade-${Date.now()}`,
+      // Identity and provenance are not the form's to change.
+      id: stored?.id ?? `trade-${Date.now()}`,
       userId: profile.id,
-      tradingDayId: todayTradingDay.id,
+      // A trade stays on the day it was taken. Editing last week's note must not move it
+      // into today, which would corrupt both days' figures at once.
+      tradingDayId: stored?.tradingDayId ?? todayTradingDay.id,
+      // An import stays an import, so the risk fix-up flow can still tell which stops
+      // were invented for it.
+      source: stored?.source ?? 'manual',
+      importId: stored?.importId,
+
+      // Fields the form owns. It sends all of them on every save, including undefined
+      // when a value was cleared, so they are taken as given rather than merged.
       instrumentId: tradeData.instrumentId || 'mes',
-      source: 'manual',
       direction: tradeData.direction || 'long',
       contracts: tradeData.contracts || 1,
       entryPrice: tradeData.entryPrice || 0,
       initialStop: tradeData.initialStop || 0,
       exitPrice: tradeData.exitPrice,
-      entryTime: tradeData.entryTime || new Date().toISOString(),
+      entryTime: tradeData.entryTime || now,
       exitTime: tradeData.exitTime,
       session: tradeData.session || 'Regular Session',
       setupName: tradeData.setupName || 'Engulfing',
@@ -345,17 +365,28 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       notes: tradeData.notes,
       tags: tradeData.tags,
       initialRisk: tradeData.initialRisk || 50,
+      // The form decides this: it reports 'assumed' while an imported stop is still the
+      // placeholder the CSV never carried, so a note-only edit cannot launder invented
+      // risk into real risk.
+      riskSource: tradeData.riskSource ?? stored?.riskSource,
       grossPnL: tradeData.grossPnL || 0,
       pointsPnL: tradeData.pointsPnL || 0,
       rMultiple: tradeData.rMultiple !== undefined ? tradeData.rMultiple : 0,
       status: tradeData.status || (tradeData.exitPrice ? 'closed' : 'open'),
       // Preserved on edit; a scale-in sets it so the legs can be shown as one position.
-      positionId: tradeData.positionId ?? editingTrade?.positionId,
-      images: tradeData.images !== undefined ? tradeData.images : (editingTrade ? editingTrade.images : undefined),
-      screenshotPath: tradeData.screenshotPath !== undefined ? tradeData.screenshotPath : (editingTrade ? editingTrade.screenshotPath : undefined),
-      createdAt: editingTrade ? editingTrade.createdAt : new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      executionReview: editingTrade ? editingTrade.executionReview : undefined,
+      positionId: tradeData.positionId ?? stored?.positionId,
+      images: tradeData.images !== undefined ? tradeData.images : stored?.images,
+      screenshotPath:
+        tradeData.screenshotPath !== undefined ? tradeData.screenshotPath : stored?.screenshotPath,
+
+      // Nothing on this form edits these, so they carry over untouched.
+      netPnL: stored?.netPnL,
+      fees: stored?.fees,
+      tradeManagement: stored?.tradeManagement,
+      executionReview: stored?.executionReview,
+
+      createdAt: stored?.createdAt ?? now,
+      updatedAt: now,
     };
 
     storage.saveTrade(tradeToSave);

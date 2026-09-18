@@ -9,6 +9,11 @@ interface PlanChangeDialogProps {
   fieldName: string;
   oldValue: string;
   newValue: string;
+  /** Overridable copy so the same dialog can also undo a plan lock. */
+  title?: string;
+  description?: string;
+  confirmLabel?: string;
+  placeholder?: string;
 }
 
 export const PlanChangeDialog: React.FC<PlanChangeDialogProps> = ({
@@ -18,6 +23,10 @@ export const PlanChangeDialog: React.FC<PlanChangeDialogProps> = ({
   fieldName,
   oldValue,
   newValue,
+  title = 'Record Plan Change',
+  description = 'A written reason is required when modifying a locked daily plan.',
+  confirmLabel = 'Record Change & Update',
+  placeholder = 'E.g., Market shifted from balance to high-volume expansion; increasing loss limit with accumulated buffer...',
 }) => {
   const [reason, setReason] = useState('');
   const [error, setError] = useState('');
@@ -43,9 +52,7 @@ export const PlanChangeDialog: React.FC<PlanChangeDialogProps> = ({
             <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-500/20 text-amber-400">
               <History className="h-4 w-4" />
             </div>
-            <h3 className="text-sm font-semibold text-zinc-100">
-              Record Plan Change
-            </h3>
+            <h3 className="text-sm font-semibold text-zinc-100">{title}</h3>
           </div>
           <button
             onClick={onClose}
@@ -56,6 +63,8 @@ export const PlanChangeDialog: React.FC<PlanChangeDialogProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+          <p className="text-xs text-zinc-400 leading-relaxed">{description}</p>
+
           <div className="rounded-xl bg-zinc-950/80 border border-zinc-800/80 p-3 text-xs space-y-1.5">
             <div className="flex justify-between text-zinc-400">
               <span>Field Modified:</span>
@@ -73,7 +82,7 @@ export const PlanChangeDialog: React.FC<PlanChangeDialogProps> = ({
 
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-zinc-300 flex items-center gap-1.5">
-              Reason for changing locked plan:
+              Reason:
               <span className="text-rose-400">*</span>
             </label>
             <textarea
@@ -83,7 +92,7 @@ export const PlanChangeDialog: React.FC<PlanChangeDialogProps> = ({
                 setReason(e.target.value);
                 if (error) setError('');
               }}
-              placeholder="E.g., Market shifted from balance to high-volume expansion; increasing loss limit with accumulated buffer..."
+              placeholder={placeholder}
               className="w-full rounded-xl border border-zinc-700 bg-zinc-950 p-3 text-xs text-zinc-100 placeholder-zinc-500 focus:border-zinc-500 focus:outline-none"
             />
             {error && (
@@ -106,7 +115,7 @@ export const PlanChangeDialog: React.FC<PlanChangeDialogProps> = ({
               type="submit"
               className="rounded-xl bg-amber-500 px-4 py-2 text-xs font-semibold text-zinc-950 hover:bg-amber-400 transition-colors shadow-sm"
             >
-              Record Change & Update
+              {confirmLabel}
             </button>
           </div>
         </form>

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import {
   Lock,
+  Unlock,
   ShieldAlert,
   ShieldCheck,
   TrendingUp,
@@ -43,6 +44,10 @@ interface DailyPlanFormProps {
   }) => void;
   /** Opens the Playbook tab, focused on the setups watched today. */
   onOpenPlaybook?: () => void;
+  /** Opens the record-trade form pre-filled with a scale-in add. */
+  onLogScaleInTrade?: (draft: Partial<Trade>) => void;
+  /** Undoes today's plan lock, recording the reason in the audit trail. */
+  onUnlockPlan?: (reason?: string) => void;
 }
 
 export const DailyPlanForm: React.FC<DailyPlanFormProps> = ({
@@ -54,8 +59,11 @@ export const DailyPlanForm: React.FC<DailyPlanFormProps> = ({
   onLockPlan,
   onRecordPlanChange,
   onOpenPlaybook,
+  onLogScaleInTrade,
+  onUnlockPlan,
 }) => {
   const isLocked = !!day.lockedAt;
+  const [isUnlockDialogOpen, setIsUnlockDialogOpen] = useState(false);
 
   // State for pending plan change dialog
   const [changeDialogState, setChangeDialogState] = useState<{
@@ -182,9 +190,23 @@ export const DailyPlanForm: React.FC<DailyPlanFormProps> = ({
             LOCK TODAY'S PLAN
           </button>
         ) : (
-          <div className="flex items-center gap-1.5 text-xs text-emerald-400 font-medium">
-            <CheckCircle2 className="w-4 h-4" />
-            <span>Immutable Baseline Stored</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1.5 text-xs text-emerald-400 font-medium">
+              <CheckCircle2 className="w-4 h-4" />
+              <span>Immutable Baseline Stored</span>
+            </div>
+            {onUnlockPlan && (
+              <button
+                type="button"
+                id="unlock-plan-btn"
+                onClick={() => setIsUnlockDialogOpen(true)}
+                className="flex items-center gap-1.5 rounded-xl border border-amber-800/70 bg-amber-950/30 px-3 py-1.5 text-xs font-medium text-amber-200 hover:bg-amber-900/40 transition-colors"
+                title="Reopen today's plan for editing"
+              >
+                <Unlock className="w-3.5 h-3.5" />
+                Undo lock
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -478,8 +500,11 @@ export const DailyPlanForm: React.FC<DailyPlanFormProps> = ({
             )}
           </div>
           <div className="flex flex-wrap gap-1.5">
-            {setups
-              .filter((s) => s.active)
+            {[...setups]
+              .sort(
+                (a, b) =>
+                  Number(b.active) - Number(a.active) || a.name.localeCompare(b.name)
+              )
               .map((s) => {
                 const isWatched = (day.watchedSetups || []).includes(s.name);
                 const hasImages = s.images && s.images.length > 0;
@@ -496,8 +521,14 @@ export const DailyPlanForm: React.FC<DailyPlanFormProps> = ({
                       type="button"
                       onClick={() => toggleSetup(s.name)}
                       className="px-2.5 py-1"
+                      title={
+                        s.active
+                          ? s.name
+                          : `${s.name} (marked off in the Playbook — still available)`
+                      }
                     >
                       {s.name}
+                      {!s.active && <span className="text-zinc-600"> ·off</span>}
                     </button>
                     {hasImages && (
                       <button
@@ -578,6 +609,8 @@ export const DailyPlanForm: React.FC<DailyPlanFormProps> = ({
         <MesScaleInBreakevenCalculator
           openTrades={openTrades}
           plannedLossLimit={day.plannedLossLimit || 100}
+          instruments={instruments}
+          onLogScaleIn={onLogScaleInTrade}
         />
       </div>
 
@@ -624,6 +657,23 @@ export const DailyPlanForm: React.FC<DailyPlanFormProps> = ({
         newValue={changeDialogState.newValue}
         onClose={() => setChangeDialogState((prev) => ({ ...prev, isOpen: false }))}
         onConfirm={handleConfirmPlanChange}
+      />
+
+      {/* Undo plan lock — requires a reason so the audit trail stays complete */}
+      <PlanChangeDialog
+        isOpen={isUnlockDialogOpen}
+        fieldName="Plan Lock"
+        oldValue="Locked"
+        newValue="Unlocked"
+        title="Undo today's plan lock"
+        description="Unlocking reopens today's plan for editing. The reason below is saved to the plan change history so the record stays honest."
+        confirmLabel="Unlock plan"
+        placeholder="E.g., Locked too early — still setting my key levels for the open."
+        onClose={() => setIsUnlockDialogOpen(false)}
+        onConfirm={(reason) => {
+          onUnlockPlan?.(reason);
+          setIsUnlockDialogOpen(false);
+        }}
       />
 
       {/* Setup Playbook Lightbox Modal */}

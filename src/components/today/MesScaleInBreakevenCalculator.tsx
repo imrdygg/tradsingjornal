@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Calculator,
   ArrowRight,
@@ -7,240 +7,331 @@ import {
   TrendingUp,
   TrendingDown,
   HelpCircle,
-  RefreshCw,
   Target,
   Scale,
   Zap,
+  Info,
+  Wand2,
+  MoveDown,
+  Plus,
 } from 'lucide-react';
-import { Trade } from '../../types';
+import { Trade, Instrument } from '../../types';
+import { findInstrument, DEFAULT_INSTRUMENTS } from '../../lib/trading/instruments';
+import {
+  calculateScaleInPlan,
+  calculateScaleInScenarios,
+} from '../../lib/trading/scale-in';
 
 interface MesScaleInBreakevenCalculatorProps {
+  /** Open trades for today. The calculator fills itself from the newest one. */
   openTrades?: Trade[];
   plannedLossLimit?: number;
+  /** Instrument list, used for the true point / tick value (MES is $5/pt, MNQ $2/pt, ...). */
+  instruments?: Instrument[];
+  /**
+   * Called with a ready-to-save draft when the trader logs the add as its own
+   * trade. The journal opens the record form pre-filled so the stop and setup
+   * can be confirmed before saving.
+   */
+  onLogScaleIn?: (draft: Partial<Trade>) => void;
 }
+
+const money = (n: number) =>
+  `${n < 0 ? '-' : ''}$${Math.abs(n).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+
+const price = (n: number) =>
+  n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+const contractWord = (n: number) => (n === 1 ? 'contract' : 'contracts');
 
 export const MesScaleInBreakevenCalculator: React.FC<MesScaleInBreakevenCalculatorProps> = ({
   openTrades = [],
   plannedLossLimit = 100,
+  instruments = DEFAULT_INSTRUMENTS,
+  onLogScaleIn,
 }) => {
-  // Calculator inputs
+  // Newest open trade first — that is the position the trader is managing.
+  const sortedOpenTrades = useMemo(
+    () =>
+      [...openTrades].sort(
+        (a, b) => new Date(b.entryTime).getTime() - new Date(a.entryTime).getTime()
+      ),
+    [openTrades]
+  );
+
+  const [selectedTradeId, setSelectedTradeId] = useState<string>('');
+  /** False once the trader clears the form to type their own numbers. */
+  const [autoFill, setAutoFill] = useState(true);
+  const [instrumentId, setInstrumentId] = useState<string>('mes');
   const [direction, setDirection] = useState<'long' | 'short'>('long');
   const [initialContracts, setInitialContracts] = useState<number>(1);
-  const [initialEntryPrice, setInitialEntryPrice] = useState<string>('7730.00');
-  const [currentMarketPrice, setCurrentMarketPrice] = useState<string>('7700.00');
-  const [contractsToAdd, setContractsToAdd] = useState<number>(5);
-  const [addPrice, setAddPrice] = useState<string>('7700.00');
-
-  // Reverse solver target bounce (points)
+  const [initialEntryPrice, setInitialEntryPrice] = useState<string>('');
+  const [currentMarketPrice, setCurrentMarketPrice] = useState<string>('');
+  const [contractsToAdd, setContractsToAdd] = useState<number>(2);
+  const [addPrice, setAddPrice] = useState<string>('');
   const [desiredBouncePts, setDesiredBouncePts] = useState<number>(5);
 
-  // Active open MES trades (if any)
-  const openMesTrades = useMemo(() => {
-    return openTrades.filter(
-      (t) => t.status === 'open' && (!t.instrumentId || t.instrumentId.toLowerCase() === 'mes')
-    );
-  }, [openTrades]);
+  const instrument = useMemo(
+    () => findInstrument(instruments, instrumentId),
+    [instruments, instrumentId]
+  );
+  const pointValue = instrument.pointValue;
+  const tickSize = instrument.tickSize || 0.25;
+  const symbol = instrument.symbol;
 
-  // Handle loading an active trade
-  const handleLoadActiveTrade = (trade: Trade) => {
+  /** Loads a real open trade into every field. */
+  const applyTrade = (trade: Trade) => {
+    setAutoFill(true);
+    setSelectedTradeId(trade.id);
+    setInstrumentId(trade.instrumentId || 'mes');
     setDirection(trade.direction);
-    setInitialContracts(trade.contracts || 1);
-    setInitialEntryPrice(trade.entryPrice.toFixed(2));
-    // Default current/add price to 10 points in adverse direction or user custom
-    const adverseOffset = trade.direction === 'long' ? -10 : 10;
-    const estimatedCurrent = (trade.entryPrice + adverseOffset).toFixed(2);
-    setCurrentMarketPrice(estimatedCurrent);
-    setAddPrice(estimatedCurrent);
+    setInitialContracts(Math.max(1, trade.contracts || 1));
+    const entry = trade.entryPrice > 0 ? trade.entryPrice.toFixed(2) : '';
+    setInitialEntryPrice(entry);
+    // You know the live price and you know where you plan to add — we do not.
+    // Start both at the entry price so the numbers are valid, then the trader
+    // updates "current market price" to whatever the market is doing now.
+    setCurrentMarketPrice(entry);
+    setAddPrice(entry);
   };
 
-  // Preset example from user's scenario
-  const handleLoadUserExample = () => {
-    setDirection('long');
-    setInitialContracts(1);
-    setInitialEntryPrice('7730.00');
-    setCurrentMarketPrice('7700.00');
-    setContractsToAdd(5);
-    setAddPrice('7700.00');
-    setDesiredBouncePts(5);
-  };
-
-  // Preset down $50 example
-  const handleLoad50DollarLossExample = () => {
-    setDirection('long');
-    setInitialContracts(1);
-    setInitialEntryPrice('7730.00');
-    // Down $50 on 1 MES contract ($5/pt) = down 10 points
-    setCurrentMarketPrice('7720.00');
-    setContractsToAdd(2);
-    setAddPrice('7720.00');
-    setDesiredBouncePts(3.33);
-  };
-
-  // Calculations
-  const calculations = useMemo(() => {
-    const c1 = Math.max(1, initialContracts || 1);
-    const p1 = parseFloat(initialEntryPrice) || 0;
-    const pCurrent = parseFloat(currentMarketPrice) || p1;
-    const c2 = Math.max(1, contractsToAdd || 1);
-    const p2 = parseFloat(addPrice) || pCurrent;
-
-    const isLong = direction === 'long';
-
-    // MES point value is $5.00 per point
-    const pointValue = 5.0;
-
-    // Current unadjusted position metrics
-    const currentPointsDiff = isLong ? pCurrent - p1 : p1 - pCurrent;
-    const currentPnL = currentPointsDiff * c1 * pointValue;
-    const originalPointsToBreakeven = Math.abs(p1 - pCurrent);
-
-    // After scaling in:
-    // Weighted Average Entry: (c1 * p1 + c2 * p2) / (c1 + c2)
-    const totalContracts = c1 + c2;
-    const newAveragePrice = (c1 * p1 + c2 * p2) / totalContracts;
-
-    // Required bounce / move to reach new breakeven from the add price:
-    // For Long: needs price to rise to newAveragePrice from p2
-    // For Short: needs price to drop to newAveragePrice from p2
-    const pointsToNewBreakeven = isLong ? newAveragePrice - p2 : p2 - newAveragePrice;
-    const distanceSavedPts = originalPointsToBreakeven - Math.max(0, pointsToNewBreakeven);
-    const percentDistanceReduced =
-      originalPointsToBreakeven > 0
-        ? Math.max(0, Math.min(100, (distanceSavedPts / originalPointsToBreakeven) * 100))
-        : 0;
-
-    // Risk / Exposure metrics
-    const dollarPerPointBefore = c1 * pointValue;
-    const dollarPerPointAfter = totalContracts * pointValue;
-    const dollarPerTickAfter = (dollarPerPointAfter / 4); // 0.25 tick size
-
-    // Reverse Solver: How many contracts needed to achieve desired bounce?
-    // Formula: We want pAvg such that |pAvg - p2| = desiredBouncePts
-    // For long: pAvg = p2 + desiredBouncePts
-    // (c1 * p1 + c2 * p2) / (c1 + c2) = pAvg
-    // c1 * p1 + c2 * p2 = (c1 + c2) * pAvg
-    // c1 * (p1 - pAvg) = c2 * (pAvg - p2)
-    // c2 = c1 * (p1 - pAvg) / (pAvg - p2) = c1 * (p1 - (p2 + desiredBounce)) / desiredBounce
-    const targetBounce = Math.max(0.25, desiredBouncePts || 1);
-    let neededContractsForTarget = 0;
-    if (originalPointsToBreakeven > targetBounce) {
-      neededContractsForTarget = Math.ceil(
-        (c1 * (originalPointsToBreakeven - targetBounce)) / targetBounce
-      );
+  // Auto-fill from the newest open trade. Keyed on the trade ids (not the array
+  // identity) so typing in the form is never overwritten by a re-render.
+  const openTradesKey = sortedOpenTrades.map((t) => t.id).join('|');
+  useEffect(() => {
+    if (!autoFill) return;
+    if (sortedOpenTrades.length === 0) {
+      setSelectedTradeId('');
+      return;
     }
+    const target =
+      sortedOpenTrades.find((t) => t.id === selectedTradeId) || sortedOpenTrades[0];
+    applyTrade(target);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openTradesKey, selectedTradeId, autoFill]);
 
-    // Profit / Loss projection scenarios with the new 6-contract size:
-    const favorable5PtsPnL = 5 * dollarPerPointAfter;
-    const adverse5PtsPnL = -5 * dollarPerPointAfter;
+  // A genuinely new open trade always becomes the position we calculate from,
+  // even if the trader had switched to typing their own numbers.
+  useEffect(() => {
+    if (sortedOpenTrades.length > 0) setAutoFill(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openTradesKey]);
 
-    return {
-      c1,
-      p1,
-      pCurrent,
-      c2,
-      p2,
-      totalContracts,
-      currentPointsDiff,
-      currentPnL,
-      originalPointsToBreakeven,
-      newAveragePrice,
-      pointsToNewBreakeven,
-      percentDistanceReduced,
-      dollarPerPointBefore,
-      dollarPerPointAfter,
-      dollarPerTickAfter,
-      neededContractsForTarget,
-      favorable5PtsPnL,
-      adverse5PtsPnL,
-    };
-  }, [direction, initialContracts, initialEntryPrice, currentMarketPrice, contractsToAdd, addPrice, desiredBouncePts]);
+  const handleSelectTrade = (tradeId: string) => {
+    if (!tradeId) return;
+    const trade = sortedOpenTrades.find((t) => t.id === tradeId);
+    if (trade) applyTrade(trade);
+  };
 
-  // Quick preset contract sizes comparison table
-  const scenarioMatrix = useMemo(() => {
-    const c1 = Math.max(1, initialContracts || 1);
-    const p1 = parseFloat(initialEntryPrice) || 0;
-    const p2 = parseFloat(addPrice) || p1;
-    const isLong = direction === 'long';
+  const resetToBlank = () => {
+    setAutoFill(false);
+    setSelectedTradeId('');
+    setInitialContracts(1);
+    setInitialEntryPrice('');
+    setCurrentMarketPrice('');
+    setContractsToAdd(2);
+    setAddPrice('');
+  };
 
-    return [1, 2, 3, 5, 8, 10].map((addQty) => {
-      const tot = c1 + addQty;
-      const avg = (c1 * p1 + addQty * p2) / tot;
-      const bounceNeeded = isLong ? avg - p2 : p2 - avg;
-      const dollarPt = tot * 5;
-      return {
-        addQty,
-        totalQty: tot,
-        avgPrice: avg,
-        bounceNeeded: Math.max(0, bounceNeeded),
-        dollarPt,
-      };
+  // ---------------------------------------------------------------------------
+  // The maths (pure functions, unit tested in src/lib/trading/scale-in.ts)
+  // ---------------------------------------------------------------------------
+  const p1Raw = parseFloat(initialEntryPrice) || 0;
+  const pCurrentRaw = parseFloat(currentMarketPrice);
+  const hasPosition = p1Raw > 0;
+  const hasMarket = !isNaN(pCurrentRaw) && pCurrentRaw > 0;
+
+  const plan = useMemo(
+    () =>
+      calculateScaleInPlan({
+        direction,
+        contracts: initialContracts,
+        entryPrice: p1Raw,
+        currentPrice: hasMarket ? pCurrentRaw : undefined,
+        addContracts: contractsToAdd,
+        addPrice: parseFloat(addPrice) || undefined,
+        pointValue,
+        tickSize,
+        desiredBouncePts,
+      }),
+    [
+      direction,
+      initialContracts,
+      p1Raw,
+      hasMarket,
+      pCurrentRaw,
+      contractsToAdd,
+      addPrice,
+      pointValue,
+      tickSize,
+      desiredBouncePts,
+    ]
+  );
+
+  // Aliased to the short names the JSX below uses.
+  const calculations = {
+    ...plan,
+    c1: plan.contracts,
+    p1: plan.entryPrice,
+    pCurrent: plan.currentPrice,
+    c2: plan.addContracts,
+    p2: plan.addPrice,
+    hasPosition,
+    hasMarket,
+  };
+
+  const scenarioMatrix = useMemo(
+    () =>
+      calculateScaleInScenarios({
+        direction,
+        contracts: initialContracts,
+        entryPrice: p1Raw,
+        currentPrice: hasMarket ? pCurrentRaw : undefined,
+        addPrice: parseFloat(addPrice) || undefined,
+        pointValue,
+      }),
+    [direction, initialContracts, p1Raw, hasMarket, pCurrentRaw, addPrice, pointValue]
+  );
+
+  const canCalculate = calculations.hasPosition && calculations.p2 > 0;
+
+  const sourceTrade = sortedOpenTrades.find((t) => t.id === selectedTradeId);
+
+  /**
+   * Turns the current scale-in into a draft for a NEW open trade. It stays a
+   * separate journal entry (the original position is untouched) so the R
+   * multiple and risk of this add are measured on their own.
+   */
+  const handleLogScaleIn = () => {
+    if (!onLogScaleIn || !canCalculate) return;
+
+    const note =
+      `Scale-in add. Position was ${calculations.c1} ${contractWord(calculations.c1)} ` +
+      `@ ${price(calculations.p1)}; added ${calculations.c2} @ ${price(calculations.p2)} ` +
+      `→ new average ${price(calculations.newAveragePrice)} ` +
+      `(needs ${Math.max(0, calculations.pointsToNewBreakeven).toFixed(2)} pts from the add to break even).`;
+
+    onLogScaleIn({
+      instrumentId: instrument.id,
+      direction,
+      contracts: calculations.c2,
+      entryPrice: calculations.p2,
+      session: sourceTrade?.session ?? 'Regular Session',
+      setupName: sourceTrade?.setupName,
+      entryReason: sourceTrade?.entryReason,
+      notes: note,
+      status: 'open',
+      // Links this leg to the position it was added to, so the trade list can
+      // show one blended entry/size. Falls back to the opening trade's own id
+      // when it is the first leg of the position.
+      positionId: sourceTrade ? sourceTrade.positionId || sourceTrade.id : undefined,
     });
-  }, [initialContracts, initialEntryPrice, addPrice, direction]);
+  };
 
   return (
     <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4 sm:p-5 space-y-5">
-      {/* Header bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-800/80 pb-4">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-              <Calculator className="w-4 h-4" />
+      {/* Header */}
+      <div className="space-y-3 border-b border-zinc-800/80 pb-4">
+        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                <Calculator className="w-4 h-4" />
+              </div>
+              <h3 className="text-sm font-bold text-zinc-100 font-mono tracking-tight">
+                Position Scale-In &amp; Break-Even Calculator
+              </h3>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-800 text-emerald-400 font-semibold border border-zinc-700">
+                {symbol} · {money(pointValue)}/pt · {money(pointValue * tickSize)}/tick
+              </span>
             </div>
-            <h3 className="text-sm font-bold text-zinc-100 font-mono tracking-tight flex items-center gap-2">
-              MES Position Averaging & Breakeven Calculator
-            </h3>
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-800 text-emerald-400 font-semibold border border-zinc-700">
-              $5/Point
-            </span>
+            <p className="text-xs text-zinc-400 max-w-2xl">
+              Enter your real position and the price you would add at. You get the new average
+              entry (= your break-even price), how far price must bounce to reach it, and the risk
+              you take on by sizing up.
+            </p>
           </div>
-          <p className="text-xs text-zinc-400">
-            Calculate your new average entry price, required breakeven bounce, and risk exposure when adding to a position.
-          </p>
+
+          {/* Instrument selector — drives every dollar figure below */}
+          <div className="shrink-0">
+            <label className="text-[10px] font-mono text-zinc-500 uppercase block mb-1">
+              Instrument
+            </label>
+            <select
+              value={instrument.id}
+              onChange={(e) => setInstrumentId(e.target.value)}
+              className="rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 text-xs font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none"
+            >
+              {instruments.map((inst) => (
+                <option key={inst.id} value={inst.id}>
+                  {inst.symbol} — {money(inst.pointValue)}/pt
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
-        {/* Action presets */}
+        {/* Real-position loader */}
         <div className="flex flex-wrap items-center gap-2">
-          {openMesTrades.length > 0 && (
-            <button
-              type="button"
-              onClick={() => handleLoadActiveTrade(openMesTrades[0])}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/80 text-emerald-300 border border-emerald-800 hover:bg-emerald-900 text-xs font-medium transition-all"
-              title="Load your current active MES trade"
-            >
-              <Zap className="w-3.5 h-3.5" />
-              Load Open Trade ({openMesTrades[0].direction.toUpperCase()} @ {openMesTrades[0].entryPrice})
-            </button>
+          {sortedOpenTrades.length > 0 ? (
+            <>
+              <span className="text-[11px] text-zinc-400 font-mono uppercase tracking-wider">
+                My open position:
+              </span>
+              {sortedOpenTrades.length === 1 ? (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/80 text-emerald-300 border border-emerald-800 text-xs font-medium">
+                  <Zap className="w-3.5 h-3.5" />
+                  {sortedOpenTrades[0].direction.toUpperCase()}{' '}
+                  {sortedOpenTrades[0].contracts}x @ {price(sortedOpenTrades[0].entryPrice)}
+                </span>
+              ) : (
+                <select
+                  value={selectedTradeId}
+                  onChange={(e) => handleSelectTrade(e.target.value)}
+                  className="rounded-lg border border-emerald-800/70 bg-emerald-950/50 px-2.5 py-1.5 text-xs font-mono text-emerald-200 focus:outline-none"
+                >
+                  {sortedOpenTrades.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.direction.toUpperCase()} {t.contracts}x @ {price(t.entryPrice)}
+                    </option>
+                  ))}
+                </select>
+              )}
+              <span className="text-[11px] text-zinc-500">
+                (filled in automatically — just update the current price)
+              </span>
+            </>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 text-[11px] text-zinc-400">
+              <Info className="w-3.5 h-3.5 text-zinc-500" />
+              No open trades today, so enter your numbers below manually.
+            </span>
           )}
 
           <button
             type="button"
-            onClick={handleLoadUserExample}
-            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium transition-colors"
+            onClick={resetToBlank}
+            className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium transition-colors"
+            title="Clear every field and type your own numbers"
           >
-            <Sparkles className="w-3 h-3 text-emerald-400" />
-            Your Example (1 @ 7730, +5 @ 7700)
-          </button>
-
-          <button
-            type="button"
-            onClick={handleLoad50DollarLossExample}
-            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium transition-colors"
-          >
-            Down $50 Example
+            <Wand2 className="w-3 h-3" />
+            Clear &amp; enter manually
           </button>
         </div>
       </div>
 
-      {/* Main Two-Column Layout: Calculator Inputs & Instant Results (Left) + Detailed Explanation & Strategy Guide (Right) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-        {/* Left Column: Interactive Calculator & Live Metrics (7 Cols) */}
+        {/* Left: the calculator */}
         <div className="lg:col-span-7 space-y-4">
-          {/* Position Setup Controls */}
+          {/* Step 1 — current position */}
           <div className="rounded-xl border border-zinc-800/80 bg-zinc-950/60 p-4 space-y-3.5">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-zinc-300 font-mono uppercase tracking-wider flex items-center gap-1.5">
                 <Target className="w-3.5 h-3.5 text-zinc-400" />
-                Step 1: Current Active Position
+                Step 1: Your Open Position
               </span>
               <div className="flex items-center gap-1 bg-zinc-900 p-0.5 rounded-lg border border-zinc-800">
                 <button
@@ -270,13 +361,17 @@ export const MesScaleInBreakevenCalculator: React.FC<MesScaleInBreakevenCalculat
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
-                <label className="text-[11px] font-medium text-zinc-400 block mb-1">
-                  Current Contracts
+                <label
+                  htmlFor="breakeven-contracts-held"
+                  className="text-[11px] font-medium text-zinc-400 block mb-1"
+                >
+                  Contracts held
                 </label>
                 <input
+                  id="breakeven-contracts-held"
                   type="number"
                   min={1}
-                  max={50}
+                  max={200}
                   value={initialContracts}
                   onChange={(e) => setInitialContracts(Math.max(1, parseInt(e.target.value) || 1))}
                   className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-xs font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none"
@@ -284,61 +379,72 @@ export const MesScaleInBreakevenCalculator: React.FC<MesScaleInBreakevenCalculat
               </div>
 
               <div>
-                <label className="text-[11px] font-medium text-zinc-400 block mb-1">
-                  Initial Entry Price
+                <label
+                  htmlFor="breakeven-entry-price"
+                  className="text-[11px] font-medium text-zinc-400 block mb-1"
+                >
+                  Entry price
                 </label>
                 <input
+                  id="breakeven-entry-price"
                   type="number"
                   step="0.25"
                   value={initialEntryPrice}
                   onChange={(e) => setInitialEntryPrice(e.target.value)}
-                  placeholder="e.g. 7730.00"
-                  className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-xs font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none"
+                  placeholder="your fill"
+                  className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="text-[11px] font-medium text-zinc-400 block mb-1">
-                  Current Market Price
+                <label
+                  htmlFor="breakeven-current-price"
+                  className="text-[11px] font-medium text-zinc-400 block mb-1"
+                >
+                  Current market price
                 </label>
                 <input
+                  id="breakeven-current-price"
                   type="number"
                   step="0.25"
                   value={currentMarketPrice}
-                  onChange={(e) => {
-                    setCurrentMarketPrice(e.target.value);
-                    setAddPrice(e.target.value); // Keep add price in sync by default
-                  }}
-                  placeholder="e.g. 7700.00"
-                  className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-xs font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none"
+                  onChange={(e) => setCurrentMarketPrice(e.target.value)}
+                  placeholder="live price"
+                  className="w-full rounded-lg border border-amber-900/50 bg-zinc-900 px-3 py-1.5 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:border-amber-600 focus:outline-none"
                 />
               </div>
             </div>
 
-            {/* Current P&L status badge */}
             <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-zinc-900/90 border border-zinc-800/80 text-xs">
               <span className="text-zinc-400 text-[11px]">
-                Current Position Status ({initialContracts} MES @ {initialEntryPrice}):
+                {calculations.hasPosition ? (
+                  <>
+                    Open P&amp;L on {calculations.c1} {contractWord(calculations.c1)} @{' '}
+                    {price(calculations.p1)}:
+                  </>
+                ) : (
+                  'Enter your entry price to see the open P&L'
+                )}
               </span>
-              <span
-                className={`font-mono font-semibold ${
-                  calculations.currentPnL >= 0 ? 'text-emerald-400' : 'text-rose-400'
-                }`}
-              >
-                {calculations.currentPointsDiff >= 0 ? '+' : ''}
-                {calculations.currentPointsDiff.toFixed(2)} pts (
-                {calculations.currentPnL >= 0 ? '+' : ''}$
-                {calculations.currentPnL.toFixed(2)})
-              </span>
+              {calculations.hasPosition && (
+                <span
+                  className={`font-mono font-semibold ${
+                    calculations.currentPnL >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                  }`}
+                >
+                  {calculations.currentPointsDiff >= 0 ? '+' : ''}
+                  {calculations.currentPointsDiff.toFixed(2)} pts ({money(calculations.currentPnL)})
+                </span>
+              )}
             </div>
           </div>
 
-          {/* Scale-In / Addition Parameters */}
+          {/* Step 2 — the add */}
           <div className="rounded-xl border border-zinc-800/80 bg-zinc-950/60 p-4 space-y-3.5">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <span className="text-xs font-semibold text-zinc-300 font-mono uppercase tracking-wider flex items-center gap-1.5">
                 <Scale className="w-3.5 h-3.5 text-emerald-400" />
-                Step 2: Add to Position (Scale-In)
+                Step 2: The Add (Scale-In)
               </span>
               <div className="flex items-center gap-1">
                 {[1, 2, 3, 5, 10].map((qty) => (
@@ -360,13 +466,17 @@ export const MesScaleInBreakevenCalculator: React.FC<MesScaleInBreakevenCalculat
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="text-[11px] font-medium text-zinc-400 block mb-1">
-                  Number of Contracts to Add
+                <label
+                  htmlFor="breakeven-contracts-to-add"
+                  className="text-[11px] font-medium text-zinc-400 block mb-1"
+                >
+                  Contracts to add
                 </label>
                 <input
+                  id="breakeven-contracts-to-add"
                   type="number"
                   min={1}
-                  max={50}
+                  max={200}
                   value={contractsToAdd}
                   onChange={(e) => setContractsToAdd(Math.max(1, parseInt(e.target.value) || 1))}
                   className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-xs font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none"
@@ -374,120 +484,193 @@ export const MesScaleInBreakevenCalculator: React.FC<MesScaleInBreakevenCalculat
               </div>
 
               <div>
-                <label className="text-[11px] font-medium text-zinc-400 block mb-1">
-                  Price to Buy / Add at
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label
+                    htmlFor="breakeven-add-price"
+                    className="text-[11px] font-medium text-zinc-400"
+                  >
+                    Price you would add at
+                  </label>
+                  {calculations.hasMarket && (
+                    <button
+                      type="button"
+                      onClick={() => setAddPrice(currentMarketPrice)}
+                      className="text-[10px] font-mono text-emerald-400 hover:text-emerald-300 hover:underline"
+                      title="Copy the current market price into the add price"
+                    >
+                      = current
+                    </button>
+                  )}
+                </div>
                 <input
+                  id="breakeven-add-price"
                   type="number"
                   step="0.25"
                   value={addPrice}
                   onChange={(e) => setAddPrice(e.target.value)}
-                  placeholder="e.g. 7700.00"
-                  className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-xs font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none"
+                  placeholder="planned add level"
+                  className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
                 />
               </div>
             </div>
           </div>
 
-          {/* Core Results Card: New Average, Breakeven, & Bounce Needed */}
+          {/* Results */}
           <div className="rounded-xl border border-emerald-500/30 bg-emerald-950/10 p-4 space-y-3">
             <div className="flex items-center justify-between border-b border-emerald-900/30 pb-2">
               <span className="text-xs font-mono font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
                 <Sparkles className="w-3.5 h-3.5" />
-                Calculation Results
+                Results
               </span>
               <span className="text-[11px] font-mono text-zinc-400">
-                Total Position: <strong className="text-zinc-200">{calculations.totalContracts} MES</strong>
+                Total position:{' '}
+                <strong className="text-zinc-200">
+                  {calculations.totalContracts} {symbol}
+                </strong>
               </span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-              {/* Metric 1: New Average Price */}
-              <div className="p-3 rounded-lg bg-zinc-950/80 border border-zinc-800/80 space-y-1">
-                <div className="text-[10px] uppercase font-mono text-zinc-400">
-                  New Average Entry (Breakeven Price)
-                </div>
-                <div className="text-xl font-bold font-mono text-emerald-400">
-                  {calculations.newAveragePrice.toFixed(2)}
-                </div>
-                <div className="text-[11px] text-zinc-400">
-                  Pulled down from{' '}
-                  <span className="line-through text-zinc-500 font-mono">
-                    {calculations.p1.toFixed(2)}
-                  </span>{' '}
-                  by{' '}
-                  <span className="text-emerald-300 font-mono font-medium">
-                    {Math.abs(calculations.p1 - calculations.newAveragePrice).toFixed(2)} pts
-                  </span>
-                </div>
-              </div>
+            {!canCalculate ? (
+              <p className="text-xs text-zinc-400 py-3 text-center">
+                Fill in your entry price (and the price you would add at) to see the new break-even.
+              </p>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  <div className="p-3 rounded-lg bg-zinc-950/80 border border-zinc-800/80 space-y-1">
+                    <div className="text-[10px] uppercase font-mono text-zinc-400">
+                      New Average Entry = Break-Even Price
+                    </div>
+                    <div className="text-xl font-bold font-mono text-emerald-400">
+                      {price(calculations.newAveragePrice)}
+                    </div>
+                    <div className="text-[11px] text-zinc-400">
+                      Improved from{' '}
+                      <span className="line-through text-zinc-500 font-mono">
+                        {price(calculations.p1)}
+                      </span>{' '}
+                      by{' '}
+                      <span className="text-emerald-300 font-mono font-medium">
+                        {calculations.averageImprovedBy.toFixed(2)} pts
+                      </span>
+                    </div>
+                  </div>
 
-              {/* Metric 2: Required Bounce to Breakeven */}
-              <div className="p-3 rounded-lg bg-zinc-950/80 border border-zinc-800/80 space-y-1">
-                <div className="text-[10px] uppercase font-mono text-zinc-400">
-                  Required Bounce for $0 Breakeven
+                  <div className="p-3 rounded-lg bg-zinc-950/80 border border-zinc-800/80 space-y-1">
+                    <div className="text-[10px] uppercase font-mono text-zinc-400">
+                      Bounce Needed For $0 Break-Even
+                    </div>
+                    <div className="text-xl font-bold font-mono text-amber-300">
+                      {calculations.pointsToNewBreakeven.toFixed(2)} pts
+                    </div>
+                    <div className="text-[11px] text-zinc-400">
+                      {calculations.hasMarket ? (
+                        <>
+                          Down from{' '}
+                          <span className="line-through text-zinc-500 font-mono">
+                            {calculations.originalPointsToBreakeven.toFixed(2)} pts
+                          </span>{' '}
+                          ({calculations.percentDistanceReduced.toFixed(0)}% less distance)
+                        </>
+                      ) : (
+                        'Enter the current market price to compare'
+                      )}
+                    </div>
+                  </div>
                 </div>
-                <div className="text-xl font-bold font-mono text-amber-300">
-                  {calculations.pointsToNewBreakeven.toFixed(2)} pts
-                </div>
-                <div className="text-[11px] text-zinc-400">
-                  Instead of needing{' '}
-                  <span className="line-through text-zinc-500 font-mono">
-                    {calculations.originalPointsToBreakeven.toFixed(2)} pts
-                  </span>{' '}
-                  ({calculations.percentDistanceReduced.toFixed(0)}% less distance!)
-                </div>
-              </div>
-            </div>
 
-            {/* Risk & Leverage Warning Meter */}
-            <div className="p-3 rounded-lg bg-zinc-950/80 border border-zinc-800/80 space-y-2 text-xs">
-              <div className="flex items-center justify-between text-[11px]">
-                <span className="text-zinc-400 flex items-center gap-1 font-mono">
-                  <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
-                  Risk Exposure Change:
-                </span>
-                <span className="font-mono text-zinc-300">
-                  ${calculations.dollarPerPointBefore}/pt →{' '}
-                  <strong className="text-amber-300 font-bold">${calculations.dollarPerPointAfter}/pt</strong> ($
-                  {calculations.dollarPerTickAfter.toFixed(2)}/tick)
-                </span>
-              </div>
+                {/* Risk exposure */}
+                <div className="p-3 rounded-lg bg-zinc-950/80 border border-zinc-800/80 space-y-2 text-xs">
+                  <div className="flex items-center justify-between text-[11px] flex-wrap gap-1">
+                    <span className="text-zinc-400 flex items-center gap-1 font-mono">
+                      <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
+                      Risk exposure:
+                    </span>
+                    <span className="font-mono text-zinc-300">
+                      {money(calculations.dollarPerPointBefore)}/pt →{' '}
+                      <strong className="text-amber-300 font-bold">
+                        {money(calculations.dollarPerPointAfter)}/pt
+                      </strong>{' '}
+                      ({money(calculations.dollarPerTickAfter)}/tick)
+                    </span>
+                  </div>
 
-              <div className="grid grid-cols-2 gap-2 text-[11px] font-mono pt-1 border-t border-zinc-800/60">
-                <div className="text-emerald-400 flex items-center gap-1">
-                  <TrendingUp className="w-3 h-3" />
-                  +5 pt bounce = +${calculations.favorable5PtsPnL.toFixed(0)} profit
-                </div>
-                <div className="text-rose-400 flex items-center gap-1">
-                  <TrendingDown className="w-3 h-3" />
-                  -5 pt adverse = -${Math.abs(calculations.adverse5PtsPnL).toFixed(0)} loss
-                </div>
-              </div>
+                  <div className="grid grid-cols-2 gap-2 text-[11px] font-mono pt-1 border-t border-zinc-800/60">
+                    <div className="text-emerald-400 flex items-center gap-1">
+                      <TrendingUp className="w-3 h-3" />+{calculations.movePts} pts ={' '}
+                      {money(calculations.favorableMovePnL)}
+                    </div>
+                    <div className="text-rose-400 flex items-center gap-1">
+                      <TrendingDown className="w-3 h-3" />-{calculations.movePts} pts ={' '}
+                      {money(calculations.adverseMovePnL)}
+                    </div>
+                  </div>
 
-              {Math.abs(calculations.adverse5PtsPnL) > plannedLossLimit && (
-                <div className="text-[10px] text-rose-300 bg-rose-950/40 border border-rose-900/60 rounded px-2 py-1 flex items-center gap-1 mt-1">
-                  <ShieldAlert className="w-3 h-3 shrink-0" />
-                  Warning: A 5-point drop with {calculations.totalContracts} contracts exceeds your planned daily loss limit (${plannedLossLimit}).
+                  {Math.abs(calculations.adverseMovePnL) > plannedLossLimit && (
+                    <div className="text-[10px] text-rose-300 bg-rose-950/40 border border-rose-900/60 rounded px-2 py-1 flex items-start gap-1 mt-1">
+                      <ShieldAlert className="w-3 h-3 shrink-0 mt-0.5" />
+                      <span className="leading-relaxed">
+                        A {calculations.movePts}-point move against {calculations.totalContracts}{' '}
+                        {contractWord(calculations.totalContracts)} costs{' '}
+                        {money(Math.abs(calculations.adverseMovePnL))} — more than your planned
+                        daily loss limit of {money(plannedLossLimit)}.
+                      </span>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
+              </>
+            )}
           </div>
 
-          {/* Quick Scenario Matrix: How adding different contract sizes changes the average */}
+          {/* Log the add as its own trade */}
+          {onLogScaleIn && (
+            <div className="rounded-xl border border-emerald-800/60 bg-emerald-950/20 p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="space-y-0.5 min-w-0">
+                <p className="text-xs font-semibold text-emerald-200">
+                  Going ahead with this add?
+                </p>
+                <p className="text-[11px] text-zinc-400 leading-relaxed">
+                  {canCalculate ? (
+                    <>
+                      Record it as a second open trade — {calculations.c2}{' '}
+                      {contractWord(calculations.c2)} {symbol} @ {price(calculations.p2)}. Your
+                      original position stays untouched, so the risk on this add is tracked on its
+                      own.
+                    </>
+                  ) : (
+                    'Fill in the entry price and the price you would add at to log this add.'
+                  )}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                id="breakeven-log-scale-in"
+                disabled={!canCalculate}
+                onClick={handleLogScaleIn}
+                className="shrink-0 inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 px-3.5 py-2 text-xs font-bold shadow-sm transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
+              >
+                <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+                Log this add as a trade
+              </button>
+            </div>
+          )}
+
+          {/* Scenario matrix */}
           <div className="rounded-xl border border-zinc-800/80 bg-zinc-950/60 p-3.5 space-y-2.5">
             <span className="text-xs font-semibold text-zinc-400 font-mono uppercase tracking-wider block">
-              Quick Reference: Adding Different Contract Sizes at {addPrice}
+              If I add a different size
+              {canCalculate ? ` at ${price(calculations.p2)}` : ''}
             </span>
             <div className="overflow-x-auto">
               <table className="w-full text-[11px] font-mono">
                 <thead>
                   <tr className="border-b border-zinc-800 text-zinc-400 text-left">
-                    <th className="pb-1.5 font-medium">Add Qty</th>
-                    <th className="pb-1.5 font-medium">Total Size</th>
-                    <th className="pb-1.5 font-medium">New Avg</th>
+                    <th className="pb-1.5 font-medium">Add</th>
+                    <th className="pb-1.5 font-medium">Total</th>
+                    <th className="pb-1.5 font-medium">New Avg / B/E</th>
                     <th className="pb-1.5 font-medium">Bounce to $0</th>
-                    <th className="pb-1.5 font-medium text-right">$/Point Risk</th>
+                    <th className="pb-1.5 font-medium text-right">Risk</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-800/40">
@@ -504,12 +687,16 @@ export const MesScaleInBreakevenCalculator: React.FC<MesScaleInBreakevenCalculat
                         <td className="py-1.5 font-bold">
                           +{row.addQty} {isCurrent && '★'}
                         </td>
-                        <td className="py-1.5 text-zinc-400">{row.totalQty} MES</td>
-                        <td className="py-1.5">{row.avgPrice.toFixed(2)}</td>
-                        <td className="py-1.5 text-amber-300">
-                          {row.bounceNeeded.toFixed(2)} pts
+                        <td className="py-1.5 text-zinc-400">
+                          {row.totalQty} {symbol}
                         </td>
-                        <td className="py-1.5 text-right text-zinc-400">${row.dollarPt}/pt</td>
+                        <td className="py-1.5">{row.avgPrice > 0 ? price(row.avgPrice) : '—'}</td>
+                        <td className="py-1.5 text-amber-300">
+                          {row.avgPrice > 0 ? `${row.bounceNeeded.toFixed(2)} pts` : '—'}
+                        </td>
+                        <td className="py-1.5 text-right text-zinc-400">
+                          {money(row.dollarPt)}/pt
+                        </td>
                       </tr>
                     );
                   })}
@@ -519,134 +706,158 @@ export const MesScaleInBreakevenCalculator: React.FC<MesScaleInBreakevenCalculat
           </div>
         </div>
 
-        {/* Right Column: In-Depth Explanation & Execution Guide (5 Cols) */}
+        {/* Right: explanation + goal solver */}
         <div className="lg:col-span-5 space-y-4">
-          {/* Explanation Header Card */}
+          {/* Live formula */}
           <div className="rounded-xl border border-zinc-800/90 bg-zinc-950/80 p-4 space-y-3">
             <div className="flex items-center gap-2 text-zinc-200">
               <HelpCircle className="w-4 h-4 text-emerald-400" />
               <h4 className="text-xs font-bold uppercase tracking-wider font-mono">
-                How This Works & Math Formula
+                How the number is worked out
               </h4>
             </div>
 
             <p className="text-xs text-zinc-300 leading-relaxed">
-              When you scale into or average down an MES position, your new breakeven price is the{' '}
-              <strong className="text-emerald-400">weighted average</strong> of all contracts bought.
+              Adding to a position does not erase the loss — it{' '}
+              <strong className="text-emerald-400">spreads it over more contracts</strong>, which
+              pulls your average entry (your break-even price) closer to where price is now.
             </p>
 
-            {/* Formula Box */}
             <div className="rounded-lg bg-zinc-900 p-2.5 border border-zinc-800 text-[11px] font-mono text-zinc-300 space-y-1">
-              <div className="text-zinc-400 text-[10px] uppercase font-bold">The Exact Formula:</div>
+              <div className="text-zinc-400 text-[10px] uppercase font-bold">
+                Weighted average:
+              </div>
               <div className="text-emerald-300 text-xs py-1">
                 New Avg = (Qty₁ × Price₁ + Qty₂ × Price₂) ÷ Total Qty
               </div>
-              <div className="text-zinc-400 text-[10px] pt-1 border-t border-zinc-800">
-                Example: (1 × 7,730 + 5 × 7,700) ÷ 6 = 46,230 ÷ 6 ={' '}
-                <strong className="text-emerald-400">7,705.00</strong>
-              </div>
+              {canCalculate ? (
+                <div className="text-zinc-300 text-[11px] pt-1 border-t border-zinc-800 leading-relaxed">
+                  ({calculations.c1} × {price(calculations.p1)} + {calculations.c2} ×{' '}
+                  {price(calculations.p2)}) ÷ {calculations.totalContracts} ={' '}
+                  <strong className="text-emerald-400">{price(calculations.newAveragePrice)}</strong>
+                </div>
+              ) : (
+                <div className="text-zinc-500 text-[11px] pt-1 border-t border-zinc-800">
+                  Enter your numbers and the live formula appears here.
+                </div>
+              )}
             </div>
 
-            <div className="space-y-2 pt-1 text-xs text-zinc-400 leading-relaxed">
-              <p>
-                <strong className="text-zinc-200">Why does this help?</strong> Originally at 7700, price needed a huge{' '}
-                <span className="text-rose-400 font-mono">30-point rally</span> back to 7730 just to break even.
+            {canCalculate && (
+              <p className="text-xs text-zinc-400 leading-relaxed">
+                With {calculations.totalContracts} {contractWord(calculations.totalContracts)},{' '}
+                {symbol} needs to move{' '}
+                <span className="text-emerald-300 font-mono">
+                  {Math.max(0, calculations.pointsToNewBreakeven).toFixed(2)} pts
+                </span>{' '}
+                from your add price to get you back to $0
+                {calculations.distanceSavedPts > 0
+                  ? `, ${calculations.distanceSavedPts.toFixed(2)} pts less than before.`
+                  : '.'}
               </p>
-              <p>
-                By adding 5 contracts at 7700, <strong className="text-zinc-200">5 out of 6 contracts</strong> are entered at the bottom.
-                Now price only needs a modest <span className="text-emerald-400 font-mono">+5.00 point bounce</span> to reach $0 P&L!
-              </p>
+            )}
+          </div>
+
+          {/* Goal solver */}
+          <div className="rounded-xl border border-zinc-800/90 bg-zinc-950/80 p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider font-mono text-zinc-200 flex items-center gap-1.5">
+                <Target className="w-3.5 h-3.5 text-emerald-400" />
+                Work backwards
+              </span>
+              <span className="text-[10px] font-mono text-zinc-500">by bounce size</span>
+            </div>
+
+            <p className="text-xs text-zinc-400 leading-relaxed">
+              “Price usually gives me a small bounce here. How many must I add to get out at $0?”
+            </p>
+
+            <div className="flex items-end gap-2">
+              <div className="flex-1">
+                <label className="text-[10px] font-mono text-zinc-400 block mb-1">
+                  Expected bounce (points)
+                </label>
+                <input
+                  type="number"
+                  step="0.25"
+                  min="0.25"
+                  value={desiredBouncePts}
+                  onChange={(e) => setDesiredBouncePts(Math.max(0.25, parseFloat(e.target.value) || 1))}
+                  className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-xs font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none"
+                />
+              </div>
+              <button
+                type="button"
+                disabled={calculations.neededContractsForTarget <= 0}
+                onClick={() => setContractsToAdd(calculations.neededContractsForTarget)}
+                className="px-3 py-1.5 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30 text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+              >
+                Add +{calculations.neededContractsForTarget || 0}
+              </button>
+            </div>
+
+            <div className="text-[11px] text-zinc-400 leading-relaxed">
+              {calculations.neededContractsForTarget > 0 ? (
+                <>
+                  To break even within{' '}
+                  <strong className="text-amber-300 font-mono">{desiredBouncePts} pts</strong> of
+                  your add price, you need{' '}
+                  <strong className="text-emerald-300 font-mono">
+                    {calculations.neededContractsForTarget}{' '}
+                    {contractWord(calculations.neededContractsForTarget)}
+                  </strong>{' '}
+                  at {price(calculations.p2)}.
+                </>
+              ) : (
+                <>
+                  Enter your entry price, the live market price and an add price. If the bounce you
+                  expect is already bigger than the gap, the solver will tell you no add is needed.
+                </>
+              )}
             </div>
           </div>
 
-          {/* Strategic Rules & "How to Use in Practice" */}
+          {/* Guard rails */}
           <div className="rounded-xl border border-zinc-800/90 bg-zinc-950/80 p-4 space-y-3">
             <h4 className="text-xs font-bold uppercase tracking-wider font-mono text-zinc-200 flex items-center gap-2">
               <ShieldAlert className="w-4 h-4 text-amber-400" />
-              Strategic Rules: When to Use & When Not To
+              Before you press the button
             </h4>
 
             <div className="space-y-2.5 text-xs">
               <div className="p-2.5 rounded-lg bg-emerald-950/20 border border-emerald-900/40 space-y-1">
                 <div className="text-emerald-300 font-semibold flex items-center gap-1.5">
                   <ArrowRight className="w-3 h-3" />
-                  1. The "Scratch" Trade Exit
+                  Plan the exit, not the homerun
                 </div>
                 <p className="text-[11px] text-zinc-400 leading-relaxed">
-                  Professional traders do not average down hoping for huge wins. They scale in at support so they can{' '}
-                  <strong className="text-zinc-200">exit for $0 (scratch) on the very first relief bounce</strong> if the market has lost momentum.
+                  Scaling in is a tool for turning a losing trade into a{' '}
+                  <strong className="text-zinc-200">scratch</strong> on the first relief bounce — not
+                  for doubling down hoping for a big win.
                 </p>
               </div>
 
               <div className="p-2.5 rounded-lg bg-zinc-900/80 border border-zinc-800/80 space-y-1">
                 <div className="text-zinc-200 font-semibold flex items-center gap-1.5">
-                  <ArrowRight className="w-3 h-3" />
-                  2. Only Add at Confirmed Key Levels
+                  <MoveDown className="w-3 h-3" />
+                  Only add at a level you already planned
                 </div>
                 <p className="text-[11px] text-zinc-400 leading-relaxed">
-                  Never add blindly while price is plunging into thin air. Only add at key levels established in your morning plan (e.g. Prior Day Low, major FVG, VWAP).
+                  Support, prior day low, VWAP, the level you wrote down this morning. Adding into
+                  open air is how a small loss becomes a large one.
                 </p>
               </div>
 
               <div className="p-2.5 rounded-lg bg-rose-950/20 border border-rose-900/40 space-y-1">
                 <div className="text-rose-300 font-semibold flex items-center gap-1.5">
                   <ShieldAlert className="w-3 h-3" />
-                  3. The Leverage Danger (Watch Daily Max Loss)
+                  Decide the stop before the size
                 </div>
                 <p className="text-[11px] text-zinc-400 leading-relaxed">
-                  Holding 6 MES contracts means every single point movement is{' '}
-                  <strong className="text-rose-300">$30.00</strong> instead of $5.00. Set a strict hard stop below the add price so a failed bounce doesn't wipe out your account.
+                  A bigger position means every point costs more. Pick the price that proves the add
+                  wrong, check the dollar loss against your daily limit, and only then size up.
                 </p>
               </div>
-            </div>
-          </div>
-
-          {/* Goal Solver / Target Bounce Calculator */}
-          <div className="rounded-xl border border-zinc-800/90 bg-zinc-950/80 p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider font-mono text-zinc-200 flex items-center gap-1.5">
-                <Target className="w-3.5 h-3.5 text-emerald-400" />
-                Target Bounce Solver
-              </span>
-              <span className="text-[10px] font-mono text-zinc-400">Reverse Goal</span>
-            </div>
-
-            <p className="text-xs text-zinc-400">
-              "I only expect price to bounce a few points. How many contracts must I add to break even?"
-            </p>
-
-            <div className="flex items-center gap-2">
-              <div className="flex-1">
-                <label className="text-[10px] font-mono text-zinc-400 block mb-1">
-                  Desired Bounce Size (Pts)
-                </label>
-                <input
-                  type="number"
-                  step="0.5"
-                  min="0.5"
-                  max="50"
-                  value={desiredBouncePts}
-                  onChange={(e) => setDesiredBouncePts(Math.max(0.25, parseFloat(e.target.value) || 1))}
-                  className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-xs font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none"
-                />
-              </div>
-
-              <button
-                type="button"
-                onClick={() => {
-                  if (calculations.neededContractsForTarget > 0) {
-                    setContractsToAdd(calculations.neededContractsForTarget);
-                  }
-                }}
-                className="self-end px-3 py-1.5 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30 text-xs font-medium transition-colors"
-              >
-                Apply: Add +{calculations.neededContractsForTarget}
-              </button>
-            </div>
-
-            <div className="text-[11px] text-zinc-400 pt-1">
-              To get a breakeven within <strong className="text-amber-300 font-mono">{desiredBouncePts} points</strong>,
-              you need to add <strong className="text-emerald-400 font-mono">{calculations.neededContractsForTarget} contracts</strong> at {addPrice}.
             </div>
           </div>
         </div>

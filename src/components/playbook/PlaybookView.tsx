@@ -13,6 +13,10 @@ import {
   ListChecks,
   ShieldAlert,
   Target,
+  Video,
+  Play,
+  MousePointerClick,
+  PencilLine,
 } from 'lucide-react';
 import { Setup } from '../../types';
 import { ImageUploader } from '../common/ImageUploader';
@@ -20,6 +24,7 @@ import { ImageLightboxModal } from '../common/ImageLightboxModal';
 import { ModalOverlay } from '../common/ModalOverlay';
 import { SetupDiagram } from './SetupDiagram';
 import { SetupGuide, resolveSetupGuide } from './setup-guides';
+import { isVideoUrl } from '../../lib/media/media-utils';
 
 interface PlaybookViewProps {
   setups: Setup[];
@@ -215,35 +220,82 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
           Trading Setups & Playbook Library
         </h1>
         <p className="text-xs text-zinc-400 mt-0.5">
-          Master each setup: what it is, how it forms, how to trade it, and reference charts. Attach
-          your own textbook screenshots to personalize every playbook.
+          Your personal setup library. Every setup you create here is available when you record a
+          trade, and each one keeps its own notes, reference charts and video clips.
         </p>
       </div>
 
+      {/* How to use the playbook — three plain steps so the page explains itself. */}
+      <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="flex items-start gap-2.5">
+          <div className="p-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-emerald-400 shrink-0">
+            <Plus className="w-3.5 h-3.5" />
+          </div>
+          <div className="space-y-0.5">
+            <p className="text-xs font-semibold text-zinc-200">1. Add a setup</p>
+            <p className="text-[11px] text-zinc-400 leading-relaxed">
+              Type a name below, or use “Add with charts & video” to write your rules and attach
+              examples at the same time.
+            </p>
+          </div>
+        </div>
+        <div className="flex items-start gap-2.5">
+          <div className="p-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-emerald-400 shrink-0">
+            <MousePointerClick className="w-3.5 h-3.5" />
+          </div>
+          <div className="space-y-0.5">
+            <p className="text-xs font-semibold text-zinc-200">2. Open its study guide</p>
+            <p className="text-[11px] text-zinc-400 leading-relaxed">
+              Tap <span className="text-zinc-300 font-medium">Study guide</span> on a card to see how
+              the pattern forms, how to trade it and what invalidates it.
+            </p>
+          </div>
+        </div>
+        <div className="flex items-start gap-2.5">
+          <div className="p-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-emerald-400 shrink-0">
+            <PencilLine className="w-3.5 h-3.5" />
+          </div>
+          <div className="space-y-0.5">
+            <p className="text-xs font-semibold text-zinc-200">3. Edit anytime</p>
+            <p className="text-[11px] text-zinc-400 leading-relaxed">
+              Use the pencil to rename a setup, add your own rules and attach charts or short video
+              clips.
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* Quick add setup form */}
-      <form onSubmit={handleAddSetup} className="flex gap-2">
-        <input
-          type="text"
-          placeholder="Quick add setup name (e.g. Fair Value Gap, VWAP Bounce)"
-          value={newSetupName}
-          onChange={(e) => setNewSetupName(e.target.value)}
-          className="flex-1 rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-zinc-600"
-          required
-        />
-        <button
-          type="submit"
-          className="rounded-xl bg-zinc-100 hover:bg-white text-zinc-950 px-4 py-2 text-xs font-semibold flex items-center justify-center gap-1.5 transition-all shrink-0"
-        >
-          <Plus className="w-3.5 h-3.5" /> Quick Add
-        </button>
-        <button
-          type="button"
-          onClick={openAddDetailedSetup}
-          className="rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-800/80 px-3 py-2 text-xs font-medium flex items-center gap-1.5 transition-colors shrink-0"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          <span className="hidden sm:inline">Add with Charts</span>
-        </button>
+      <form onSubmit={handleAddSetup} className="space-y-2">
+        <label className="text-xs font-medium text-zinc-300 block">
+          Setup name
+        </label>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            placeholder="e.g. Fair Value Gap, VWAP Bounce, London High Sweep"
+            value={newSetupName}
+            onChange={(e) => setNewSetupName(e.target.value)}
+            className="flex-1 min-w-0 rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-zinc-600"
+            required
+          />
+          <button
+            type="submit"
+            className="rounded-xl bg-zinc-100 hover:bg-white text-zinc-950 px-4 py-2 text-xs font-semibold flex items-center justify-center gap-1.5 transition-all shrink-0"
+          >
+            <Plus className="w-3.5 h-3.5" /> Add
+          </button>
+          <button
+            type="button"
+            onClick={openAddDetailedSetup}
+            className="rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-800/80 px-3 py-2 text-xs font-medium flex items-center gap-1.5 transition-colors shrink-0"
+            title="Add a setup together with strategy rules, chart screenshots and a short video"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline whitespace-nowrap">Add with charts &amp; video</span>
+            <span className="sm:hidden">+ Charts</span>
+          </button>
+        </div>
       </form>
 
       {/* Setup Containers */}
@@ -268,28 +320,37 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
                   : 'border-zinc-800/80 bg-zinc-900/50 hover:border-zinc-700/80'
               }`}
             >
-              {/* Container header */}
-              <div className="flex items-center justify-between gap-2 p-3 pb-0">
-                <div className="flex items-center gap-2.5 min-w-0">
+              {/* Container header — the name wraps so long setup names are never cut off. */}
+              <div className="flex items-start justify-between gap-2 p-3 pb-0">
+                <div className="flex items-start gap-2.5 min-w-0 flex-1">
                   <button
                     type="button"
                     onClick={() => onToggleSetup(s.id)}
-                    className={`px-2 py-0.5 rounded text-[10px] font-mono uppercase font-bold transition-colors shrink-0 ${
+                    className={`mt-0.5 px-2 py-0.5 rounded text-[10px] font-mono uppercase font-bold transition-colors shrink-0 ${
                       s.active
                         ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-800'
                         : 'bg-zinc-800 text-zinc-400'
                     }`}
-                    title={s.active ? 'Active — selectable in trade forms' : 'Disabled — hidden from trade forms'}
+                    title={
+                      s.active
+                        ? 'Active — shown first when recording a trade'
+                        : 'Disabled — still available when recording a trade'
+                    }
                   >
-                    {s.active ? 'Active' : 'Disabled'}
+                    {s.active ? 'Active' : 'Off'}
                   </button>
-                  <span className="font-semibold text-zinc-100 text-sm truncate">{s.name}</span>
+                  <span
+                    className="font-semibold text-zinc-100 text-sm leading-snug break-words min-w-0"
+                    title={s.name}
+                  >
+                    {s.name}
+                  </span>
                   {isWatched && (
                     <button
                       type="button"
                       onClick={() => toggleExpanded(s.id)}
                       aria-expanded={isExpanded}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono uppercase font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-800 hover:bg-emerald-900/60 hover:text-emerald-200 transition-colors shrink-0 cursor-pointer"
+                      className="mt-0.5 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono uppercase font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-800 hover:bg-emerald-900/60 hover:text-emerald-200 transition-colors shrink-0 cursor-pointer"
                       title="This setup is on today's morning plan watch list — click to open its study guide"
                     >
                       <Eye className="w-3 h-3" />
@@ -305,11 +366,18 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
                   <button
                     type="button"
                     onClick={() => toggleExpanded(s.id)}
-                    className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors flex items-center gap-1"
+                    className={`px-2 py-1.5 rounded-lg transition-colors flex items-center gap-1 text-[11px] font-medium border ${
+                      isExpanded
+                        ? 'bg-zinc-800 text-zinc-100 border-zinc-700'
+                        : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 border-transparent'
+                    }`}
                     title={isExpanded ? 'Hide study guide' : 'Show study guide'}
                     aria-expanded={isExpanded}
                   >
                     <BookOpen className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">
+                      {isExpanded ? 'Hide guide' : 'Study guide'}
+                    </span>
                     <ChevronDown
                       className={`w-3 h-3 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
                     />
@@ -318,7 +386,7 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
                     type="button"
                     onClick={() => openEditSetup(s)}
                     className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
-                    title="Edit setup & chart screenshots"
+                    title="Edit setup, rules, charts and video"
                   >
                     <Edit2 className="w-3.5 h-3.5" />
                   </button>
@@ -349,7 +417,7 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-[10px] font-mono uppercase text-zinc-400 flex items-center gap-1">
                       <ImageIcon className="w-3 h-3 text-emerald-400" />
-                      Playbook Reference Charts ({setupImages.length})
+                      Playbook Charts &amp; Video ({setupImages.length})
                     </span>
                     <button
                       type="button"
@@ -369,34 +437,51 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
                   </div>
 
                   <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
-                    {setupImages.map((img, idx) => (
-                      <button
-                        key={idx}
-                        type="button"
-                        onClick={() =>
-                          setLightboxState({
-                            images: setupImages,
-                            initialIndex: idx,
-                            title: `${s.name} Setup Playbook`,
-                            subtitle: s.description || 'Model Chart Reference',
-                          })
-                        }
-                        className="group relative rounded-lg border border-zinc-800 bg-zinc-900 overflow-hidden h-14 w-24 shrink-0 hover:border-emerald-500/80 transition-all hover:scale-105 active:scale-95 shadow-sm"
-                        title="Click to view chart screenshot big"
-                      >
-                        <img
-                          src={img}
-                          alt={`${s.name} chart ${idx + 1}`}
-                          className="w-full h-full object-cover"
-                        />
-                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                          <ZoomIn className="w-4 h-4 text-emerald-400 drop-shadow" />
-                        </div>
-                        <span className="absolute bottom-0.5 right-0.5 text-[9px] font-mono font-bold bg-black/70 text-zinc-300 px-1 rounded">
-                          #{idx + 1}
-                        </span>
-                      </button>
-                    ))}
+                    {setupImages.map((img, idx) => {
+                      const isVideo = isVideoUrl(img);
+                      return (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() =>
+                            setLightboxState({
+                              images: setupImages,
+                              initialIndex: idx,
+                              title: `${s.name} Setup Playbook`,
+                              subtitle: s.description || 'Model Chart Reference',
+                            })
+                          }
+                          className="group relative rounded-lg border border-zinc-800 bg-zinc-900 overflow-hidden h-14 w-24 shrink-0 hover:border-emerald-500/80 transition-all hover:scale-105 active:scale-95 shadow-sm"
+                          title={isVideo ? 'Click to play video' : 'Click to view chart screenshot big'}
+                        >
+                          {isVideo ? (
+                            <video
+                              src={img}
+                              muted
+                              playsInline
+                              preload="metadata"
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <img
+                              src={img}
+                              alt={`${s.name} chart ${idx + 1}`}
+                              className="w-full h-full object-cover"
+                            />
+                          )}
+                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                            {isVideo ? (
+                              <Play className="w-4 h-4 text-emerald-400 fill-current drop-shadow" />
+                            ) : (
+                              <ZoomIn className="w-4 h-4 text-emerald-400 drop-shadow" />
+                            )}
+                          </div>
+                          <span className="absolute bottom-0.5 right-0.5 text-[9px] font-mono font-bold bg-black/70 text-zinc-300 px-1 rounded">
+                            #{idx + 1}
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -480,10 +565,23 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
         })}
 
         {setups.length === 0 && (
-          <div className="rounded-2xl border border-dashed border-zinc-800 bg-zinc-900/20 p-8 text-center">
-            <p className="text-xs text-zinc-400">
-              No setups yet. Add one above to start your playbook.
-            </p>
+          <div className="rounded-2xl border border-dashed border-zinc-800 bg-zinc-900/20 p-8 text-center space-y-3">
+            <BookOpen className="w-8 h-8 text-zinc-500 mx-auto" />
+            <div className="space-y-1">
+              <p className="text-sm font-semibold text-zinc-300">Your playbook is empty</p>
+              <p className="text-xs text-zinc-400 max-w-sm mx-auto">
+                Add the setups you actually trade. Name them the way you think about them
+                ("VWAP reclaim", "Opening range breakout") and attach your own chart examples.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={openAddDetailedSetup}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-800/80 px-3 py-1.5 text-xs font-medium transition-colors"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Add your first setup
+            </button>
           </div>
         )}
       </div>
@@ -555,8 +653,8 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
                     })
                   }
                   maxImages={6}
-                  label="Playbook Reference Chart Screenshots"
-                  helperText="Attach textbook examples of this setup. Click thumbnail to view big."
+                  label="Playbook Charts & Video Clips"
+                  helperText="Attach textbook examples of this setup — screenshots or a quick 30-60 second clip."
                   idPrefix="setup-modal-images"
                 />
               </div>

@@ -10,16 +10,24 @@ import {
   Edit2,
   Trash2,
   Check,
-  ImageIcon,
   ZoomIn,
+  Play,
+  Video,
+  Layers,
 } from 'lucide-react';
 import { Trade } from '../../types';
 import { calculateTradeRuleFollowing } from '../../lib/analytics/discipline';
 import { formatTimestamp } from '../../lib/storage/date-utils';
 import { ImageLightboxModal } from '../common/ImageLightboxModal';
+import { isVideoUrl } from '../../lib/media/media-utils';
+import type { TradePositionGroup } from '../../lib/trading/position-groups';
 
 interface TradeCardProps {
   trade: Trade;
+  /** Blended view of the position when this card is one leg of a scale-in. */
+  positionGroup?: TradePositionGroup;
+  /** Opens the full trade detail view. */
+  onView?: (trade: Trade) => void;
   onEdit?: (trade: Trade) => void;
   onCloseTrade?: (trade: Trade) => void;
   onDelete?: (tradeId: string) => void;
@@ -27,11 +35,24 @@ interface TradeCardProps {
 
 export const TradeCard: React.FC<TradeCardProps> = ({
   trade,
+  positionGroup,
+  onView,
   onEdit,
   onCloseTrade,
   onDelete,
 }) => {
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+
+  /**
+   * The whole card is clickable to open the trade's details, but nothing
+   * interactive inside it (buttons, media, links) should trigger that.
+   */
+  const handleCardClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!onView) return;
+    const target = event.target as HTMLElement;
+    if (target.closest('button, a, video, audio, input, select, textarea, label')) return;
+    onView(trade);
+  };
 
   const isLong = trade.direction === 'long';
   const isClosed = trade.status === 'closed';
@@ -75,7 +96,20 @@ export const TradeCard: React.FC<TradeCardProps> = ({
   }
 
   return (
-    <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4 hover:border-zinc-700/80 transition-all space-y-3">
+    <div
+      onClick={handleCardClick}
+      className={`rounded-xl border border-zinc-800 bg-zinc-900/50 p-4 transition-all space-y-3 ${
+        onView ? 'cursor-pointer hover:border-emerald-700/70 hover:bg-zinc-900/80' : 'hover:border-zinc-700/80'
+      }`}
+      role={onView ? 'button' : undefined}
+      tabIndex={onView ? 0 : undefined}
+      onKeyDown={(e) => {
+        if (onView && (e.key === 'Enter' || e.key === ' ')) {
+          e.preventDefault();
+          onView(trade);
+        }
+      }}
+    >
       {/* Top Row: Symbol, Direction, Setup, Status */}
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
@@ -116,6 +150,38 @@ export const TradeCard: React.FC<TradeCardProps> = ({
           )}
         </div>
       </div>
+
+      {/* Blended position summary when this is one leg of a scale-in */}
+      {positionGroup && positionGroup.legCount > 1 && (
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-lg border border-emerald-900/60 bg-emerald-950/20 px-2.5 py-2 text-[11px] font-mono">
+          <span className="flex items-center gap-1.5 text-emerald-300">
+            <Layers className="w-3.5 h-3.5 shrink-0" />
+            Combined position · {positionGroup.legCount} legs
+            {!positionGroup.allClosed && (
+              <span className="text-emerald-400/70">(leg {positionGroup.legIndex(trade.id)})</span>
+            )}
+          </span>
+          <span className="text-zinc-300">
+            {positionGroup.totalContracts} {trade.instrumentId.toUpperCase()} · avg entry{' '}
+            <strong className="text-emerald-300 font-bold">
+              {positionGroup.averageEntry.toFixed(2)}
+            </strong>
+            {positionGroup.allClosed && (
+              <>
+                {' '}
+                · P&amp;L{' '}
+                <strong
+                  className={
+                    positionGroup.realizedPnL >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                  }
+                >
+                  {positionGroup.realizedPnL >= 0 ? '+' : ''}${positionGroup.realizedPnL.toFixed(2)}
+                </strong>
+              </>
+            )}
+          </span>
+        </div>
+      )}
 
       {/* Pricing and P&L Grid */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 rounded-lg bg-zinc-950/80 border border-zinc-800/80 p-2.5 font-mono text-xs">
@@ -171,8 +237,8 @@ export const TradeCard: React.FC<TradeCardProps> = ({
         <div className="pt-1">
           <div className="flex items-center justify-between mb-1.5">
             <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-400 flex items-center gap-1">
-              <ImageIcon className="w-3 h-3 text-zinc-400" />
-              Attached Charts ({tradeImages.length})
+              <Video className="w-3 h-3 text-zinc-400" />
+              Attached Charts & Video ({tradeImages.length})
             </span>
             <button
               type="button"
@@ -185,27 +251,44 @@ export const TradeCard: React.FC<TradeCardProps> = ({
           </div>
 
           <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
-            {tradeImages.map((img, idx) => (
-              <button
-                key={idx}
-                type="button"
-                onClick={() => setLightboxIndex(idx)}
-                className="group relative rounded-lg border border-zinc-800 bg-zinc-950 overflow-hidden h-14 w-20 shrink-0 hover:border-emerald-500/70 transition-all hover:scale-105 active:scale-95 shadow-sm"
-                title="Click to view big"
-              >
-                <img
-                  src={img}
-                  alt={`Trade chart ${idx + 1}`}
-                  className="w-full h-full object-cover"
-                />
-                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
-                  <ZoomIn className="w-4 h-4 text-emerald-400 drop-shadow" />
-                </div>
-                <span className="absolute bottom-0.5 right-0.5 text-[9px] font-mono font-bold bg-black/70 text-zinc-300 px-1 rounded">
-                  #{idx + 1}
-                </span>
-              </button>
-            ))}
+            {tradeImages.map((img, idx) => {
+              const isVideo = isVideoUrl(img);
+              return (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => setLightboxIndex(idx)}
+                  className="group relative rounded-lg border border-zinc-800 bg-zinc-950 overflow-hidden h-14 w-20 shrink-0 hover:border-emerald-500/70 transition-all hover:scale-105 active:scale-95 shadow-sm"
+                  title={isVideo ? 'Click to play video' : 'Click to view big'}
+                >
+                  {isVideo ? (
+                    <video
+                      src={img}
+                      muted
+                      playsInline
+                      preload="metadata"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <img
+                      src={img}
+                      alt={`Trade chart ${idx + 1}`}
+                      className="w-full h-full object-cover"
+                    />
+                  )}
+                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
+                    {isVideo ? (
+                      <Play className="w-4 h-4 text-emerald-400 fill-current drop-shadow" />
+                    ) : (
+                      <ZoomIn className="w-4 h-4 text-emerald-400 drop-shadow" />
+                    )}
+                  </div>
+                  <span className="absolute bottom-0.5 right-0.5 text-[9px] font-mono font-bold bg-black/70 text-zinc-300 px-1 rounded">
+                    #{idx + 1}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
@@ -243,6 +326,21 @@ export const TradeCard: React.FC<TradeCardProps> = ({
 
         {/* Action buttons */}
         <div className="flex items-center gap-1">
+          {onView && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onView(trade);
+              }}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[11px] font-semibold border border-zinc-700 transition-colors"
+              title="Open the full trade record"
+            >
+              <ZoomIn className="w-3 h-3" />
+              Details
+            </button>
+          )}
+
           {!isClosed && onCloseTrade && (
             <button
               onClick={() => onCloseTrade(trade)}

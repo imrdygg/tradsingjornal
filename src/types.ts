@@ -120,6 +120,15 @@ export interface Trade {
   entryTime: string; // ISO string or time
   exitTime?: string;
   session: TradingSession;
+  /**
+   * Groups the legs of one position together.
+   *
+   * When a scale-in is logged from the break-even calculator the new leg is
+   * given the opening trade's positionId (or its own id when it is the first
+   * leg), so the journal can show the blended entry and combined size instead
+   * of two unrelated rows. Standalone trades leave this undefined.
+   */
+  positionId?: string;
   setupId?: string;
   setupName?: string;
   entryReason?: string;

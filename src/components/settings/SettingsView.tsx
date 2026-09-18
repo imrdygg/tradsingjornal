@@ -10,9 +10,22 @@ import {
   LogOut,
   Cloud,
   Loader2,
+  AlertTriangle,
+  X,
+  RotateCcw,
+  Trash2,
 } from 'lucide-react';
 import { UserProfile, Instrument } from '../../types';
 import { SyncStatusBadge, SyncStatus } from '../layout/SyncStatusBadge';
+import { ModalOverlay } from '../common/ModalOverlay';
+import type { CsvImportSummary } from '../../lib/trading/tradovate-import';
+
+/** Result banner shown after an import, so failures are never reported as success. */
+interface ImportNotice {
+  tone: 'ok' | 'warn' | 'error';
+  title: string;
+  details: string[];
+}
 
 interface SettingsViewProps {
   profile: UserProfile;
@@ -20,7 +33,10 @@ interface SettingsViewProps {
   onUpdateProfile: (profile: UserProfile) => void;
   onExportData: () => void;
   onImportData: (jsonData: string) => void;
-  onTradovateImport?: (csvContent: string) => void;
+  /** Returns a summary of what was read so problems can be shown inline. */
+  onTradovateImport?: (csvContent: string) => CsvImportSummary;
+  /** Wipes trades, plans and reviews (keeping settings) and starts fresh. */
+  onResetJournal?: () => Promise<void> | void;
   /** Signed-in email. Absent when the app is running local-only. */
   userEmail?: string | null;
   onSignOut?: () => void;
@@ -35,12 +51,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onExportData,
   onImportData,
   onTradovateImport,
+  onResetJournal,
   userEmail,
   onSignOut,
   signingOut = false,
   syncStatus,
 }) => {
-  const [importStatus, setImportStatus] = useState<string | null>(null);
+  const [importNotice, setImportNotice] = useState<ImportNotice | null>(null);
+  const [isResetOpen, setIsResetOpen] = useState(false);
+  const [resetConfirmText, setResetConfirmText] = useState('');
+  const [isResetting, setIsResetting] = useState(false);
 
   const [lightboxState, setLightboxState] = useState<{
     images: string[];
@@ -58,31 +78,82 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       try {
         const text = event.target?.result as string;
         onImportData(text);
-        setImportStatus('Data successfully restored!');
-        setTimeout(() => setImportStatus(null), 3000);
+        setImportNotice({
+          tone: 'ok',
+          title: 'Backup restored. Your journal has been replaced with the file contents.',
+          details: [],
+        });
       } catch (err) {
-        setImportStatus('Failed to import JSON data.');
+        setImportNotice({
+          tone: 'error',
+          title: 'Failed to import that JSON backup.',
+          details: [],
+        });
       }
     };
     reader.readAsText(file);
+    e.target.value = '';
   };
 
   const handleCsvUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    // Reset the input so choosing the same file again re-triggers onChange.
+    e.target.value = '';
     if (!file || !onTradovateImport) return;
 
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
         const text = event.target?.result as string;
-        onTradovateImport(text);
-        setImportStatus('Tradovate CSV parsed and staged!');
-        setTimeout(() => setImportStatus(null), 3000);
+        const summary = onTradovateImport(text);
+        const details = [...summary.errors, ...summary.warnings];
+
+        if (summary.imported === 0) {
+          setImportNotice({
+            tone: 'error',
+            title: 'No trades were imported from that CSV.',
+            details,
+          });
+        } else {
+          setImportNotice({
+            tone: summary.errors.length > 0 ? 'warn' : 'ok',
+            title: `Imported ${summary.imported} trade${summary.imported === 1 ? '' : 's'}.`,
+
+            details,
+          });
+        }
       } catch {
-        setImportStatus('Failed to parse Tradovate CSV file.');
+        setImportNotice({
+          tone: 'error',
+          title: 'Failed to read that CSV file.',
+          details: [],
+        });
       }
     };
     reader.readAsText(file);
+  };
+
+  const handleReset = async () => {
+    if (!onResetJournal) return;
+    setIsResetting(true);
+    try {
+      await onResetJournal();
+      setImportNotice({
+        tone: 'ok',
+        title: 'Journal reset. Trades, plans and reviews are gone — you are starting fresh.',
+        details: ['Your profile, instruments and playbook set-ups were kept.'],
+      });
+    } catch {
+      setImportNotice({
+        tone: 'error',
+        title: 'Reset failed. Nothing was deleted.',
+        details: [],
+      });
+    } finally {
+      setIsResetting(false);
+      setIsResetOpen(false);
+      setResetConfirmText('');
+    }
   };
 
   return (
@@ -144,10 +215,40 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </div>
       </div>
 
-      {importStatus && (
-        <div className="flex items-center gap-2 rounded-xl border border-emerald-800/80 bg-emerald-950/40 p-3 text-xs text-emerald-200 font-medium">
-          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-          <span>{importStatus}</span>
+      {importNotice && (
+        <div
+          id="import-notice"
+          className={`rounded-xl border p-3 text-xs space-y-1.5 ${
+            importNotice.tone === 'ok'
+              ? 'border-emerald-800/80 bg-emerald-950/40 text-emerald-200'
+              : importNotice.tone === 'warn'
+              ? 'border-amber-800/80 bg-amber-950/40 text-amber-200'
+              : 'border-rose-800/80 bg-rose-950/40 text-rose-200'
+          }`}
+        >
+          <div className="flex items-start gap-2 font-medium">
+            {importNotice.tone === 'ok' ? (
+              <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+            ) : (
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+            )}
+            <span className="leading-relaxed">{importNotice.title}</span>
+            <button
+              type="button"
+              onClick={() => setImportNotice(null)}
+              className="ml-auto shrink-0 rounded p-0.5 opacity-70 hover:opacity-100"
+              title="Dismiss"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          {importNotice.details.length > 0 && (
+            <ul className="list-disc list-inside space-y-1 pl-5 leading-relaxed opacity-90">
+              {importNotice.details.map((detail, idx) => (
+                <li key={idx}>{detail}</li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
 
@@ -286,9 +387,114 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </label>
         </div>
         <p className="text-[11px] text-zinc-400">
-          Tradovate CSV import matches fills into trades, checks initial risk, and lets you review execution without silently guessing uncertain data.
+          CSV import reads your broker's fill price (not the order price), matches partial fills and
+          scale-ins into one position, and prices each trade with its own instrument. Anything it
+          has to assume is listed in the result above.
         </p>
       </div>
+
+      {/* 4. Start Fresh — journal reset */}
+      {onResetJournal && (
+        <div className="rounded-2xl border border-rose-900/60 bg-rose-950/20 p-4 sm:p-5 space-y-3">
+          <h2 className="text-xs font-bold uppercase tracking-wider text-rose-300 font-mono flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4" />
+            Start Fresh
+          </h2>
+
+          <p className="text-[11px] text-zinc-400 leading-relaxed">
+            Deletes every trade, daily plan and review
+            {onSignOut ? ', on this device and in your cloud journal,' : ''} and gives you a clean
+            journal. Your profile, instruments and playbook set-ups are kept, and nothing can be
+            undone — export a backup first if you might want this data later.
+          </p>
+
+          <button
+            type="button"
+            id="reset-journal-button"
+            onClick={() => {
+              setResetConfirmText('');
+              setIsResetOpen(true);
+            }}
+            className="flex items-center gap-2 rounded-xl border border-rose-700/70 bg-rose-950/50 px-3.5 py-2 text-xs font-semibold text-rose-200 hover:bg-rose-900/50 transition-colors"
+          >
+            <RotateCcw className="w-4 h-4" />
+            Reset journal &amp; start fresh
+          </button>
+        </div>
+      )}
+
+      {/* Reset confirmation — typed phrase so it cannot happen by accident */}
+      {isResetOpen && (
+        <ModalOverlay>
+          <div className="relative w-full max-w-md rounded-2xl border border-rose-900/70 bg-zinc-900 p-5 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-rose-500/20 text-rose-400">
+                  <Trash2 className="h-4 w-4" />
+                </div>
+                <h3 className="text-sm font-semibold text-zinc-100">Reset your journal?</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsResetOpen(false)}
+                className="rounded-lg p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-3 text-xs text-zinc-400">
+              <p className="leading-relaxed">This permanently deletes:</p>
+              <ul className="list-disc list-inside space-y-1 text-zinc-300">
+                <li>Every recorded trade, including charts and videos</li>
+                <li>Every daily plan and its change history</li>
+                <li>Every daily review and discipline score</li>
+              </ul>
+              <p className="leading-relaxed text-zinc-500">
+                Kept: your profile, instruments and playbook set-ups.
+              </p>
+
+              <div className="pt-1">
+                <label
+                  htmlFor="reset-confirm-input"
+                  className="block text-xs font-medium text-zinc-300 mb-1"
+                >
+                  Type <span className="font-mono text-rose-300">RESET</span> to confirm
+                </label>
+                <input
+                  id="reset-confirm-input"
+                  type="text"
+                  value={resetConfirmText}
+                  onChange={(e) => setResetConfirmText(e.target.value)}
+                  placeholder="RESET"
+                  autoComplete="off"
+                  className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:border-rose-700 focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-4">
+              <button
+                type="button"
+                onClick={() => setIsResetOpen(false)}
+                className="rounded-xl px-4 py-2 text-xs font-medium text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                id="reset-confirm-button"
+                disabled={resetConfirmText.trim().toUpperCase() !== 'RESET' || isResetting}
+                onClick={handleReset}
+                className="flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2 text-xs font-semibold text-white hover:bg-rose-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                {isResetting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                {isResetting ? 'Resetting…' : 'Delete everything & reset'}
+              </button>
+            </div>
+          </div>
+        </ModalOverlay>
+      )}
 
       {/* Lightbox for setup reference charts is now in the Playbook tab */}
     </div>

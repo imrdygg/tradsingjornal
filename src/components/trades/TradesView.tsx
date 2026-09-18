@@ -21,6 +21,7 @@ import { TradeCard } from './TradeCard';
 import { calculateTradeRuleFollowing } from '../../lib/analytics/discipline';
 import { formatTimestamp } from '../../lib/storage/date-utils';
 import { ImageLightboxModal } from '../common/ImageLightboxModal';
+import { buildPositionGroups, findPositionGroup } from '../../lib/trading/position-groups';
 
 interface TradesViewProps {
   trades: Trade[];
@@ -28,6 +29,8 @@ interface TradesViewProps {
   setups: Setup[];
   instruments: Instrument[];
   onOpenAddTrade: () => void;
+  /** Opens the full detail view for a trade. */
+  onViewTrade: (trade: Trade) => void;
   onEditTrade: (trade: Trade) => void;
   onCloseTrade: (trade: Trade) => void;
   onDeleteTrade: (tradeId: string) => void;
@@ -39,6 +42,7 @@ export const TradesView: React.FC<TradesViewProps> = ({
   setups,
   instruments,
   onOpenAddTrade,
+  onViewTrade,
   onEditTrade,
   onCloseTrade,
   onDeleteTrade,
@@ -56,6 +60,11 @@ export const TradesView: React.FC<TradesViewProps> = ({
     title: string;
     subtitle?: string;
   } | null>(null);
+
+  // Scale-in legs are grouped so each row can show the blended entry and size of
+  // the position it belongs to. Built from ALL trades, not the filtered set, so
+  // the average stays correct while filters are applied.
+  const positionGroups = useMemo(() => buildPositionGroups(trades), [trades]);
 
   // Collect all unique setups (from configured setups list + any setups present in recorded trades)
   const availableSetups = useMemo(() => {
@@ -712,6 +721,8 @@ export const TradesView: React.FC<TradesViewProps> = ({
               <TradeCard
                 key={t.id}
                 trade={t}
+                positionGroup={findPositionGroup(positionGroups, t)}
+                onView={onViewTrade}
                 onEdit={onEditTrade}
                 onCloseTrade={onCloseTrade}
                 onDelete={onDeleteTrade}
@@ -733,6 +744,7 @@ export const TradesView: React.FC<TradesViewProps> = ({
                   <th className="py-3 px-3 text-right">Stop</th>
                   <th className="py-3 px-3 text-right">Exit</th>
                   <th className="py-3 px-3 text-right">Qty</th>
+                  <th className="py-3 px-3">Position</th>
                   <th className="py-3 px-3 text-right">Initial Risk</th>
                   <th className="py-3 px-3 text-right">Gross P&L</th>
                   <th className="py-3 px-3 text-right">R</th>
@@ -745,6 +757,7 @@ export const TradesView: React.FC<TradesViewProps> = ({
                 {filteredTrades.map((t) => {
                   const isLong = t.direction === 'long';
                   const isClosed = t.status === 'closed';
+                  const position = findPositionGroup(positionGroups, t);
                   const tradeImages =
                     t.images && t.images.length > 0
                       ? t.images
@@ -763,7 +776,13 @@ export const TradesView: React.FC<TradesViewProps> = ({
                   return (
                     <tr
                       key={t.id}
-                      className="hover:bg-zinc-800/30 transition-colors"
+                      onClick={(event) => {
+                        const target = event.target as HTMLElement;
+                        if (target.closest('button, a, video, input, select, label')) return;
+                        onViewTrade(t);
+                      }}
+                      className="hover:bg-zinc-800/30 transition-colors cursor-pointer"
+                      title="Click a row to open the full trade record"
                     >
                       <td className="py-2.5 px-3 text-zinc-400 text-[11px]">
                         {formatTimestamp(t.entryTime)}
@@ -818,6 +837,24 @@ export const TradesView: React.FC<TradesViewProps> = ({
                       <td className="py-2.5 px-3 text-right text-zinc-300">
                         {t.contracts}
                       </td>
+                      <td className="py-2.5 px-3">
+                        {position ? (
+                          <div className="leading-tight">
+                            <div className="text-emerald-300 font-semibold whitespace-nowrap">
+                              {position.totalContracts} {t.instrumentId.toUpperCase()}
+                              {position.legCount > 1 ? ' total' : ''}
+                            </div>
+                            <div className="text-[10px] text-zinc-400 whitespace-nowrap">
+                              avg {position.averageEntry.toFixed(2)}
+                              {position.legCount > 1
+                                ? ` · ${position.legIndex(t.id)}/${position.legCount} legs`
+                                : ''}
+                            </div>
+                          </div>
+                        ) : (
+                          <span className="text-zinc-600">—</span>
+                        )}
+                      </td>
                       <td className="py-2.5 px-3 text-right text-zinc-300">
                         ${t.initialRisk.toFixed(2)}
                       </td>
@@ -848,7 +885,17 @@ export const TradesView: React.FC<TradesViewProps> = ({
                             {ruleFollowing.score}%
                           </span>
                         ) : isClosed ? (
-                          <span className="text-[10px] text-zinc-400 italic">No rev</span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onViewTrade(t);
+                            }}
+                            className="text-[10px] px-1.5 py-0.5 rounded bg-amber-950/60 text-amber-300 border border-amber-900/70 hover:bg-amber-900/50 font-mono whitespace-nowrap"
+                            title="No execution review yet — open the trade to complete it"
+                          >
+                            Review pending
+                          </button>
                         ) : (
                           <span className="text-[10px] text-zinc-400">In play</span>
                         )}
@@ -877,6 +924,16 @@ export const TradesView: React.FC<TradesViewProps> = ({
                       </td>
                       <td className="py-2.5 px-3 text-right font-sans">
                         <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onViewTrade(t);
+                            }}
+                            className="text-emerald-300 hover:text-emerald-200 px-1.5 py-0.5 rounded hover:bg-zinc-800 font-medium"
+                            title="Open the full trade record"
+                          >
+                            View
+                          </button>
                           {!isClosed && (
                             <button
                               onClick={() => onCloseTrade(t)}

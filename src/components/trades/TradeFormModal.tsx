@@ -1,5 +1,14 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { X, Plus, AlertCircle, Calculator, ArrowUpRight, ArrowDownRight, Calendar } from 'lucide-react';
+import {
+  X,
+  Plus,
+  AlertCircle,
+  Calculator,
+  ArrowUpRight,
+  ArrowDownRight,
+  Calendar,
+  Info,
+} from 'lucide-react';
 import {
   Trade,
   TradeDirection,
@@ -24,6 +33,11 @@ interface TradeFormModalProps {
   instruments: Instrument[];
   setups: Setup[];
   editingTrade?: Trade | null;
+  /**
+   * Seeds a NEW trade from partial data — used by the break-even calculator's
+   * "log this add" action so a scale-in is recorded as its own entry.
+   */
+  prefill?: Partial<Trade> | null;
 }
 
 export const TradeFormModal: React.FC<TradeFormModalProps> = ({
@@ -34,6 +48,7 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
   instruments,
   setups,
   editingTrade,
+  prefill,
 }) => {
   const [instrumentId, setInstrumentId] = useState('mes');
   const [direction, setDirection] = useState<TradeDirection>('long');
@@ -55,6 +70,21 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
   const selectedInstrument = useMemo(
     () => findInstrument(instruments, instrumentId),
     [instruments, instrumentId]
+  );
+
+  // Every playbook setup is selectable — active ones are listed first, but a
+  // setup marked "off" in the Playbook is never hidden from a trade record.
+  const sortedSetups = useMemo(
+    () =>
+      [...setups].sort(
+        (a, b) =>
+          Number(b.active) - Number(a.active) || a.name.localeCompare(b.name)
+      ),
+    [setups]
+  );
+  const setupNameIsListed = useMemo(
+    () => sortedSetups.some((s) => s.name === setupName),
+    [sortedSetups, setupName]
   );
 
   // Initialize or reset form when modal opens
@@ -80,6 +110,29 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
           ? [editingTrade.screenshotPath]
           : []
       );
+    } else if (prefill) {
+      // Pre-filled from the break-even calculator's scale-in action. The stop is
+      // deliberately left as-is (usually blank) — the trader must choose the
+      // level that invalidates the new, larger position.
+      const now = new Date();
+      const localISO = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+        .toISOString()
+        .slice(0, 16);
+
+      setInstrumentId(prefill.instrumentId || 'mes');
+      setDirection(prefill.direction || 'long');
+      setEntryPrice(prefill.entryPrice !== undefined ? prefill.entryPrice.toString() : '');
+      setInitialStop(prefill.initialStop !== undefined ? prefill.initialStop.toString() : '');
+      setContracts(prefill.contracts !== undefined ? prefill.contracts.toString() : '1');
+      setSession(prefill.session || (day.allowedSessions?.[0] ?? 'Regular Session'));
+      setSetupName(prefill.setupName || (day.watchedSetups?.[0] ?? 'Engulfing'));
+      setEntryTime(prefill.entryTime ? prefill.entryTime.slice(0, 16) : localISO);
+      setExitPrice('');
+      setExitTime('');
+      setEntryReason(prefill.entryReason || '');
+      setNotes(prefill.notes || '');
+      setTags(prefill.tags ? prefill.tags.join(', ') : '');
+      setImages(prefill.images && prefill.images.length > 0 ? prefill.images : []);
     } else {
       // Defaults for fast entry (< 1 min)
       const now = new Date();
@@ -111,7 +164,7 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
     }
     setPreviewIndex(null);
     setError('');
-  }, [isOpen, editingTrade, day]);
+  }, [isOpen, editingTrade, prefill, day]);
 
   // Live Calculations Preview
   const calculations = useMemo(() => {
@@ -255,6 +308,8 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
       pointsPnL,
       rMultiple,
       status: isClosed ? 'closed' : 'open',
+      // Carries the scale-in link through save so the legs stay grouped.
+      positionId: prefill?.positionId ?? editingTrade?.positionId,
       images: images.length > 0 ? images : undefined,
       screenshotPath: images[0] || undefined,
     });
@@ -286,6 +341,18 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
             <div className="flex items-center gap-2 rounded-xl border border-rose-800/80 bg-rose-950/40 p-3 text-xs text-rose-200">
               <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
               <span>{error}</span>
+            </div>
+          )}
+
+          {/* Scale-in context: this is a second entry, not an edit. */}
+          {prefill && !editingTrade && (
+            <div className="flex items-start gap-2 rounded-xl border border-emerald-900/70 bg-emerald-950/30 p-3 text-xs text-emerald-200">
+              <Info className="h-4 w-4 shrink-0 text-emerald-400 mt-0.5" />
+              <span className="leading-relaxed">
+                Pre-filled from the break-even calculator as a{' '}
+                <strong>separate open trade</strong>. Check the entry price and set the{' '}
+                <strong>initial stop</strong> for this add before saving.
+              </span>
             </div>
           )}
 
@@ -338,10 +405,14 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
           {/* Row 2: Entry Price, Initial Stop, Contracts */}
           <div className="grid grid-cols-3 gap-3">
             <div>
-              <label className="text-xs font-medium text-zinc-300 block mb-1">
+              <label
+                htmlFor="trade-entry-price"
+                className="text-xs font-medium text-zinc-300 block mb-1"
+              >
                 Entry Price <span className="text-rose-400">*</span>
               </label>
               <input
+                id="trade-entry-price"
                 type="number"
                 step="0.25"
                 placeholder="6702.25"
@@ -353,10 +424,14 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
             </div>
 
             <div>
-              <label className="text-xs font-medium text-zinc-300 block mb-1">
+              <label
+                htmlFor="trade-initial-stop"
+                className="text-xs font-medium text-zinc-300 block mb-1"
+              >
                 Initial Stop <span className="text-rose-400">*</span>
               </label>
               <input
+                id="trade-initial-stop"
                 type="number"
                 step="0.25"
                 placeholder="6692.25"
@@ -368,10 +443,14 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
             </div>
 
             <div>
-              <label className="text-xs font-medium text-zinc-300 block mb-1">
+              <label
+                htmlFor="trade-contracts"
+                className="text-xs font-medium text-zinc-300 block mb-1"
+              >
                 Contracts <span className="text-rose-400">*</span>
               </label>
               <input
+                id="trade-contracts"
                 type="number"
                 min="1"
                 max="50"
@@ -399,19 +478,34 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
             </div>
 
             <div>
-              <label className="text-xs font-medium text-zinc-300 block mb-1">Setup</label>
+              <label
+                htmlFor="trade-setup-select"
+                className="text-xs font-medium text-zinc-300 block mb-1"
+              >
+                Setup{' '}
+                <span className="text-[10px] font-normal text-zinc-500 font-mono">
+                  ({sortedSetups.length} in playbook)
+                </span>
+              </label>
               <select
+                id="trade-setup-select"
                 value={setupName}
                 onChange={(e) => setSetupName(e.target.value)}
                 className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 focus:border-zinc-600 focus:outline-none"
               >
-                {setups
-                  .filter((s) => s.active)
-                  .map((s) => (
-                    <option key={s.id} value={s.name}>
-                      {s.name}
-                    </option>
-                  ))}
+                {/* Keep an unlisted current value visible instead of blank. */}
+                {!setupNameIsListed && setupName && (
+                  <option value={setupName}>{setupName}</option>
+                )}
+                {sortedSetups.map((s) => (
+                  <option key={s.id} value={s.name}>
+                    {s.name}
+                    {s.active ? '' : ' — off'}
+                  </option>
+                ))}
+                {sortedSetups.length === 0 && (
+                  <option value="">No setups yet — add one in the Playbook</option>
+                )}
               </select>
             </div>
           </div>
@@ -489,10 +583,14 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="text-xs font-medium text-zinc-400 block mb-1">
+                <label
+                  htmlFor="trade-exit-price"
+                  className="text-xs font-medium text-zinc-400 block mb-1"
+                >
                   Exit Price
                 </label>
                 <input
+                  id="trade-exit-price"
                   type="number"
                   step="0.25"
                   placeholder="6732.25"
@@ -519,10 +617,14 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
           {/* Entry Reason & Notes */}
           <div className="space-y-3 pt-2 border-t border-zinc-800/80">
             <div>
-              <label className="text-xs font-medium text-zinc-400 block mb-1">
+              <label
+                htmlFor="trade-entry-reason"
+                className="text-xs font-medium text-zinc-400 block mb-1"
+              >
                 Entry Reason (Optional)
               </label>
               <input
+                id="trade-entry-reason"
                 type="text"
                 placeholder="e.g. Bullish engulfing candle rejection off key support level with volume confirmation"
                 value={entryReason}
@@ -532,10 +634,14 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
             </div>
 
             <div>
-              <label className="text-xs font-medium text-zinc-400 block mb-1">
+              <label
+                htmlFor="trade-tags"
+                className="text-xs font-medium text-zinc-400 block mb-1"
+              >
                 Notes / Tags (Comma separated)
               </label>
               <input
+                id="trade-tags"
                 type="text"
                 placeholder="Tags: clean, morning, trend-aligned"
                 value={tags}
@@ -551,8 +657,8 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
                 onChange={setImages}
                 onPreviewImage={(idx) => setPreviewIndex(idx)}
                 maxImages={6}
-                label="Trade Chart Screenshots"
-                helperText="Attach entry chart setup, execution context, or result screenshots. Click thumbnail to see big."
+                label="Trade Charts & Video"
+                helperText="Attach entry chart setup, execution context or result screenshots — or a quick 30-60 second clip of the trade."
                 idPrefix="trade-modal-images"
               />
             </div>

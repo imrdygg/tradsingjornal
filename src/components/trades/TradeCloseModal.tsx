@@ -443,8 +443,8 @@ export const TradeCloseModal: React.FC<TradeCloseModalProps> = ({
                 onChange={setImages}
                 onPreviewImage={(idx) => setPreviewIndex(idx)}
                 maxImages={6}
-                label="Result / Exit Chart Screenshots"
-                helperText="Attach exit chart, execution notes, or P&L screenshots. Click thumbnail to view big."
+                label="Result Charts & Video"
+                helperText="Attach exit chart, execution notes or P&L screenshots — or a quick clip of how the exit played out."
                 idPrefix="trade-close-images"
               />
             </div>

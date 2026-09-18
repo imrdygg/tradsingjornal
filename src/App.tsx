@@ -10,6 +10,7 @@ import { DailyPlanForm } from './components/today/DailyPlanForm';
 import { TradeCard } from './components/trades/TradeCard';
 import { TradeFormModal } from './components/trades/TradeFormModal';
 import { TradeCloseModal } from './components/trades/TradeCloseModal';
+import { TradeDetailModal } from './components/trades/TradeDetailModal';
 import { DailyReviewModal } from './components/review/DailyReviewModal';
 import { TradesView } from './components/trades/TradesView';
 import { HistoryView } from './components/history/HistoryView';
@@ -33,6 +34,8 @@ import type { StorageState } from './lib/storage';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 import { loadOrMigrateJournal, saveJournal } from './lib/cloud-sync';
 import { parseTradovateCSV } from './lib/trading/tradovate-import';
+import type { CsvImportSummary } from './lib/trading/tradovate-import';
+import { buildPositionGroups, findPositionGroup } from './lib/trading/position-groups';
 import { Plus, Award, Sparkles, Layers, Cloud, CloudOff, Loader2 } from 'lucide-react';
 
 function AuthScreen() {
@@ -125,9 +128,21 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   // Modals state
   const [isTradeModalOpen, setIsTradeModalOpen] = useState(false);
   const [editingTrade, setEditingTrade] = useState<Trade | null>(null);
+  // Partial seed for a NEW trade — the scale-in calculator sends one over so an
+  // add is recorded as its own entry without retyping the numbers.
+  const [tradePrefill, setTradePrefill] = useState<Partial<Trade> | null>(null);
+
+  const openAddTrade = useCallback((prefill?: Partial<Trade>) => {
+    setEditingTrade(null);
+    setTradePrefill(prefill ?? null);
+    setIsTradeModalOpen(true);
+  }, []);
   const [isCloseModalOpen, setIsCloseModalOpen] = useState(false);
   const [closingTrade, setClosingTrade] = useState<Trade | null>(null);
   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
+  // Trade detail view is stored as an id so it re-renders from live state and
+  // immediately reflects a saved execution review.
+  const [viewingTradeId, setViewingTradeId] = useState<string | null>(null);
   const [importNotification, setImportNotification] = useState<string | null>(null);
   const [cloudReady, setCloudReady] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
@@ -233,6 +248,13 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     return trades.filter((t) => t.tradingDayId === todayTradingDay.id);
   }, [trades, todayTradingDay.id]);
 
+  // Scale-in legs grouped so cards can show the blended size and average entry.
+  const positionGroups = useMemo(() => buildPositionGroups(trades), [trades]);
+  const viewingTrade = useMemo(
+    () => trades.find((t) => t.id === viewingTradeId) ?? null,
+    [trades, viewingTradeId]
+  );
+
   // Today's Realized Metrics
   const todayClosedTrades = useMemo(() => {
     return todayTrades.filter((t) => t.status === 'closed');
@@ -263,6 +285,24 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
 
   const handleLockPlan = () => {
     storage.lockPlan(todayTradingDay.id);
+    setTradingDays(storage.getTradingDays());
+  };
+
+  /**
+   * Undoes today's plan lock. The reason is recorded in the plan change audit
+   * trail first, so unlocking leaves the same paper trail as any other edit to
+   * a locked plan.
+   */
+  const handleUnlockPlan = (reason?: string) => {
+    if (reason) {
+      storage.recordPlanChange(todayTradingDay.id, {
+        fieldName: 'Plan Lock',
+        oldValue: 'Locked',
+        newValue: 'Unlocked',
+        reason,
+      });
+    }
+    storage.unlockPlan(todayTradingDay.id);
     setTradingDays(storage.getTradingDays());
   };
 
@@ -301,6 +341,8 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       pointsPnL: tradeData.pointsPnL || 0,
       rMultiple: tradeData.rMultiple !== undefined ? tradeData.rMultiple : 0,
       status: tradeData.status || (tradeData.exitPrice ? 'closed' : 'open'),
+      // Preserved on edit; a scale-in sets it so the legs can be shown as one position.
+      positionId: tradeData.positionId ?? editingTrade?.positionId,
       images: tradeData.images !== undefined ? tradeData.images : (editingTrade ? editingTrade.images : undefined),
       screenshotPath: tradeData.screenshotPath !== undefined ? tradeData.screenshotPath : (editingTrade ? editingTrade.screenshotPath : undefined),
       createdAt: editingTrade ? editingTrade.createdAt : new Date().toISOString(),
@@ -309,8 +351,19 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     };
 
     storage.saveTrade(tradeToSave);
+
+    // A scale-in points at the opening trade's id as its position anchor. Stamp
+    // that anchor with the same positionId so both legs group from now on.
+    if (tradeToSave.positionId && tradeToSave.positionId !== tradeToSave.id) {
+      const anchor = trades.find((t) => t.id === tradeToSave.positionId);
+      if (anchor && anchor.positionId !== tradeToSave.positionId) {
+        storage.saveTrade({ ...anchor, positionId: tradeToSave.positionId });
+      }
+    }
+
     setTrades(storage.getTrades());
     setEditingTrade(null);
+    setTradePrefill(null);
   };
 
   const handleConfirmCloseTrade = (
@@ -353,6 +406,23 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
 
   const handleDeleteTrade = (tradeId: string) => {
     storage.deleteTrade(tradeId);
+    setTrades(storage.getTrades());
+    setViewingTradeId((current) => (current === tradeId ? null : current));
+  };
+
+  /**
+   * Adds or replaces the execution review on an already-recorded trade — this
+   * is how imported and closed trades get their discipline score.
+   */
+  const handleSaveExecutionReview = (tradeId: string, review: TradeExecutionReview) => {
+    const existing = trades.find((t) => t.id === tradeId);
+    if (!existing) return;
+
+    storage.saveTrade({
+      ...existing,
+      executionReview: review,
+      updatedAt: new Date().toISOString(),
+    });
     setTrades(storage.getTrades());
   };
 
@@ -416,6 +486,36 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     URL.revokeObjectURL(url);
   };
 
+  /**
+   * "Start fresh": clears trades, plans and reviews locally and overwrites the
+   * cloud snapshot with the same empty journal, so the reset sticks on every
+   * device. Profile, instruments and playbook set-ups are kept.
+   */
+  const handleResetJournal = async () => {
+    storage.resetJournal();
+
+    const fresh: StorageState = {
+      profile,
+      instruments,
+      setups,
+      tradingDays: [],
+      trades: [],
+      reviews: [],
+    };
+
+    if (cloudEnabled && cloudReady) {
+      await saveJournal(userId, fresh);
+    }
+
+    setTrades([]);
+    setReviews([]);
+    // Recreate today's (empty) planning day so the app has somewhere to land.
+    storage.getOrCreateToday();
+    setTradingDays(storage.getTradingDays());
+    setSyncStatus(cloudEnabled ? 'saved' : 'local');
+    setLastSyncedAt(cloudEnabled ? new Date() : null);
+  };
+
   const handleImportData = (jsonStr: string) => {
     const success = storage.importData(jsonStr);
     if (success) {
@@ -428,36 +528,43 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     }
   };
 
-  const handleTradovateImport = (csvContent: string) => {
-    const parsed = parseTradovateCSV(csvContent);
-    if (parsed.errors.length > 0) {
-      setImportNotification(`CSV errors: ${parsed.errors.slice(0, 2).join('; ')}`);
-      return;
+  const handleTradovateImport = (csvContent: string): CsvImportSummary => {
+    const parsed = parseTradovateCSV(csvContent, instruments);
+
+    if (parsed.trades.length === 0) {
+      setImportNotification(parsed.errors[0] || 'No trades could be read from that CSV.');
+      return { imported: 0, errors: parsed.errors, warnings: parsed.warnings };
     }
 
+    const importedAt = new Date().toISOString();
     const newTrades: Trade[] = parsed.trades.map((pt, idx) => ({
       id: `tradovate-${Date.now()}-${idx}`,
       userId: profile.id,
       tradingDayId: todayTradingDay.id,
-      instrumentId: 'mes',
+      // Instrument and point value come from the parsed contract, so MNQ/ES
+      // imports are not silently priced as MES.
+      instrumentId: pt.instrumentId || 'mes',
       source: 'tradovate_csv',
       direction: pt.direction || 'long',
       contracts: pt.contracts || 1,
       entryPrice: pt.entryPrice || 0,
       initialStop: pt.initialStop || 0,
       exitPrice: pt.exitPrice,
-      entryTime: pt.entryTime || new Date().toISOString(),
+      entryTime: pt.entryTime || importedAt,
       exitTime: pt.exitTime,
       session: pt.session || 'Regular Session',
-      setupName: pt.setupName || 'Engulfing',
-      notes: 'Imported from Tradovate Fills CSV',
-      initialRisk: pt.initialRisk || 50,
+      // Left unset on purpose: the CSV has no setup data, and guessing one
+      // would corrupt setup-level analytics.
+      setupName: pt.setupName,
+      positionId: pt.positionId,
+      notes: 'Imported from broker CSV',
+      initialRisk: pt.initialRisk || 0,
       grossPnL: pt.grossPnL || 0,
       pointsPnL: pt.pointsPnL || 0,
       rMultiple: pt.rMultiple !== undefined ? pt.rMultiple : 0,
       status: pt.status || 'closed',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: importedAt,
+      updatedAt: importedAt,
     }));
 
     for (const t of newTrades) {
@@ -466,8 +573,14 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     setTrades(storage.getTrades());
 
     setImportNotification(
-      `Successfully imported ${newTrades.length} trades from Tradovate CSV. Please review execution!`
+      `Imported ${newTrades.length} trade${newTrades.length === 1 ? '' : 's'} from CSV.`
     );
+
+    return {
+      imported: newTrades.length,
+      errors: parsed.errors,
+      warnings: parsed.warnings,
+    };
   };
 
   const renderTabContent = () => {
@@ -489,10 +602,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               plannedMaxLoss={todayTradingDay.plannedLossLimit}
               riskMode={todayTradingDay.riskMode}
               planStatus={todayTradingDay.status}
-              onOpenAddTrade={() => {
-                setEditingTrade(null);
-                setIsTradeModalOpen(true);
-              }}
+              onOpenAddTrade={openAddTrade}
               onOpenEndDay={() => setIsReviewModalOpen(true)}
               isPlanLocked={!!todayTradingDay.lockedAt}
             />
@@ -502,10 +612,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               <div className="flex items-center gap-2">
                 <button
                   id="btn-add-trade-top"
-                  onClick={() => {
-                    setEditingTrade(null);
-                    setIsTradeModalOpen(true);
-                  }}
+                  onClick={() => openAddTrade()}
                   className="flex items-center gap-2 rounded-xl bg-zinc-100 hover:bg-white text-zinc-950 px-4 py-2 text-xs font-bold shadow-sm transition-all hover:scale-[1.02] active:scale-[0.98]"
                 >
                   <Plus className="w-4 h-4 stroke-[2.5]" />
@@ -545,6 +652,8 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               onLockPlan={handleLockPlan}
               onRecordPlanChange={handleRecordPlanChange}
               onOpenPlaybook={handleOpenPlaybook}
+              onLogScaleInTrade={openAddTrade}
+              onUnlockPlan={handleUnlockPlan}
             />
 
             {/* Today's Recorded Trades Section */}
@@ -566,10 +675,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
                     No trades logged for today yet. Lock your morning plan first, then record executions cleanly.
                   </p>
                   <button
-                    onClick={() => {
-                      setEditingTrade(null);
-                      setIsTradeModalOpen(true);
-                    }}
+                    onClick={() => openAddTrade()}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 text-zinc-200 text-xs font-medium hover:bg-zinc-700 transition-colors"
                   >
                     <Plus className="w-3.5 h-3.5" /> Record Trade
@@ -581,6 +687,8 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
                     <TradeCard
                       key={trade.id}
                       trade={trade}
+                      positionGroup={findPositionGroup(positionGroups, trade)}
+                      onView={(t) => setViewingTradeId(t.id)}
                       onEdit={(t) => {
                         setEditingTrade(t);
                         setIsTradeModalOpen(true);
@@ -605,10 +713,8 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             tradingDays={tradingDays}
             setups={setups}
             instruments={instruments}
-            onOpenAddTrade={() => {
-              setEditingTrade(null);
-              setIsTradeModalOpen(true);
-            }}
+            onOpenAddTrade={openAddTrade}
+            onViewTrade={(t) => setViewingTradeId(t.id)}
             onEditTrade={(t) => {
               setEditingTrade(t);
               setIsTradeModalOpen(true);
@@ -667,6 +773,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             onExportData={handleExportData}
             onImportData={handleImportData}
             onTradovateImport={handleTradovateImport}
+            onResetJournal={handleResetJournal}
             userEmail={userEmail}
             onSignOut={onSignOut ? handleSignOut : undefined}
             signingOut={signingOut}
@@ -683,10 +790,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     <AppShell
       currentTab={activeTab}
       onSelectTab={handleSelectTab}
-      onOpenAddTrade={() => {
-        setEditingTrade(null);
-        setIsTradeModalOpen(true);
-      }}
+      onOpenAddTrade={openAddTrade}
       riskMode={todayTradingDay.riskMode}
       dayStatus={todayTradingDay.status}
       realizedPnL={todayRealizedPnL}
@@ -712,12 +816,14 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
         onClose={() => {
           setIsTradeModalOpen(false);
           setEditingTrade(null);
+          setTradePrefill(null);
         }}
         onSave={handleSaveTrade}
         day={todayTradingDay}
         instruments={instruments}
         setups={setups}
         editingTrade={editingTrade}
+        prefill={tradePrefill}
       />
 
       {/* Trade Close Modal (Close + Execution Review) */}
@@ -730,6 +836,31 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
         trade={closingTrade}
         instruments={instruments}
         onConfirmClose={handleConfirmCloseTrade}
+      />
+
+      {/* Trade Detail Modal (read everything recorded about one trade) */}
+      <TradeDetailModal
+        isOpen={viewingTradeId !== null}
+        onClose={() => setViewingTradeId(null)}
+        trade={trades.find((t) => t.id === viewingTradeId) ?? null}
+        instruments={instruments}
+        positionGroup={
+          viewingTrade
+            ? findPositionGroup(positionGroups, viewingTrade)
+            : undefined
+        }
+        onEdit={(t) => {
+          setViewingTradeId(null);
+          setEditingTrade(t);
+          setIsTradeModalOpen(true);
+        }}
+        onCloseTrade={(t) => {
+          setViewingTradeId(null);
+          setClosingTrade(t);
+          setIsCloseModalOpen(true);
+        }}
+        onDelete={handleDeleteTrade}
+        onSaveExecutionReview={handleSaveExecutionReview}
       />
 
       {/* Daily Review Modal */}

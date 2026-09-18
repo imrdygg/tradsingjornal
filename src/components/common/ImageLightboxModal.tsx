@@ -10,11 +10,15 @@ import {
   Download,
   Maximize2,
   ImageIcon,
+  Video,
+  Play,
 } from 'lucide-react';
+import { isVideoUrl } from '../../lib/media/media-utils';
 
 export interface ImageLightboxModalProps {
   isOpen: boolean;
   onClose: () => void;
+  /** Images and/or video URLs. Videos render with playback controls. */
   images: string[];
   initialIndex?: number;
   title?: string;
@@ -77,11 +81,15 @@ export const ImageLightboxModal: React.FC<ImageLightboxModalProps> = ({
   if (!isOpen || images.length === 0) return null;
 
   const currentImage = images[currentIndex];
+  const currentIsVideo = isVideoUrl(currentImage);
 
   const handleDownload = () => {
     const link = document.createElement('a');
     link.href = currentImage;
-    link.download = `${(title || 'chart-screenshot').toLowerCase().replace(/\s+/g, '-')}-${currentIndex + 1}.jpg`;
+    link.download = `${(title || 'chart-screenshot')
+      .toLowerCase()
+      .replace(/\s+/g, '-')}-${currentIndex + 1}.${currentIsVideo ? 'mp4' : 'jpg'}`;
+    if (currentIsVideo) link.target = '_blank';
     link.click();
   };
 
@@ -101,7 +109,7 @@ export const ImageLightboxModal: React.FC<ImageLightboxModalProps> = ({
       <div className="w-full max-w-6xl flex items-center justify-between gap-3 text-zinc-200 z-10 py-1 border-b border-zinc-800/80">
         <div className="flex items-center gap-2.5 min-w-0">
           <div className="p-1.5 rounded-lg bg-zinc-800 text-zinc-300">
-            <ImageIcon className="w-4 h-4" />
+            {currentIsVideo ? <Video className="w-4 h-4" /> : <ImageIcon className="w-4 h-4" />}
           </div>
           <div className="truncate">
             <h3 className="text-xs sm:text-sm font-bold text-zinc-100 truncate">
@@ -123,15 +131,17 @@ export const ImageLightboxModal: React.FC<ImageLightboxModalProps> = ({
             </span>
           )}
 
-          <button
-            id="lightbox-zoom-toggle"
-            type="button"
-            onClick={() => setIsZoomed(!isZoomed)}
-            className="p-1.5 sm:p-2 rounded-xl text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/80 transition-colors"
-            title={isZoomed ? 'Fit to window' : 'Zoom to actual size'}
-          >
-            {isZoomed ? <ZoomOut className="w-4 h-4" /> : <ZoomIn className="w-4 h-4" />}
-          </button>
+          {!currentIsVideo && (
+            <button
+              id="lightbox-zoom-toggle"
+              type="button"
+              onClick={() => setIsZoomed(!isZoomed)}
+              className="p-1.5 sm:p-2 rounded-xl text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/80 transition-colors"
+              title={isZoomed ? 'Fit to window' : 'Zoom to actual size'}
+            >
+              {isZoomed ? <ZoomOut className="w-4 h-4" /> : <ZoomIn className="w-4 h-4" />}
+            </button>
+          )}
 
           <button
             id="lightbox-download-button"
@@ -173,22 +183,35 @@ export const ImageLightboxModal: React.FC<ImageLightboxModalProps> = ({
           </button>
         )}
 
-        {/* The Image Container */}
+        {/* The Media Container: video plays inline, images zoom */}
         <div
           className={`w-full h-full flex items-center justify-center p-1 sm:p-3 transition-all ${
-            isZoomed ? 'overflow-auto cursor-zoom-out' : 'cursor-zoom-in'
+            currentIsVideo ? '' : isZoomed ? 'overflow-auto cursor-zoom-out' : 'cursor-zoom-in'
           }`}
-          onClick={() => setIsZoomed(!isZoomed)}
+          onClick={() => {
+            if (!currentIsVideo) setIsZoomed(!isZoomed);
+          }}
         >
-          <img
-            src={currentImage}
-            alt={title || `Screenshot ${currentIndex + 1}`}
-            className={`transition-transform duration-200 select-none rounded-lg shadow-2xl ${
-              isZoomed
-                ? 'max-w-none w-auto h-auto scale-125'
-                : 'max-h-[75vh] sm:max-h-[80vh] max-w-full object-contain'
-            }`}
-          />
+          {currentIsVideo ? (
+            <video
+              key={currentImage}
+              src={currentImage}
+              controls
+              autoPlay
+              playsInline
+              className="max-h-[75vh] sm:max-h-[80vh] max-w-full rounded-lg shadow-2xl bg-black"
+            />
+          ) : (
+            <img
+              src={currentImage}
+              alt={title || `Screenshot ${currentIndex + 1}`}
+              className={`transition-transform duration-200 select-none rounded-lg shadow-2xl ${
+                isZoomed
+                  ? 'max-w-none w-auto h-auto scale-125'
+                  : 'max-h-[75vh] sm:max-h-[80vh] max-w-full object-contain'
+              }`}
+            />
+          )}
         </div>
 
         {/* Navigation Arrow: Next */}
@@ -225,11 +248,26 @@ export const ImageLightboxModal: React.FC<ImageLightboxModalProps> = ({
                   : 'border-zinc-800 opacity-60 hover:opacity-100'
               }`}
             >
-              <img
-                src={img}
-                alt={`Thumbnail ${idx + 1}`}
-                className="w-full h-full object-cover"
-              />
+              {isVideoUrl(img) ? (
+                <>
+                  <video
+                    src={img}
+                    muted
+                    playsInline
+                    preload="metadata"
+                    className="w-full h-full object-cover"
+                  />
+                  <span className="absolute inset-0 flex items-center justify-center bg-black/40 text-emerald-300 pointer-events-none">
+                    <Play className="w-3.5 h-3.5 fill-current" />
+                  </span>
+                </>
+              ) : (
+                <img
+                  src={img}
+                  alt={`Thumbnail ${idx + 1}`}
+                  className="w-full h-full object-cover"
+                />
+              )}
             </button>
           ))}
         </div>

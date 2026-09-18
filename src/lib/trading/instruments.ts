@@ -56,3 +56,27 @@ export function findInstrument(instruments: Instrument[], symbolOrId: string): I
   );
   return match || DEFAULT_INSTRUMENTS[0]; // fallback to MES
 }
+
+/**
+ * Resolves a broker contract month code to a journal instrument.
+ *
+ * Broker exports name the full contract — "MESZ5", "MNQU6", "ESH4" — so we
+ * match on the longest instrument symbol that the contract starts with. The
+ * longest match matters: "MNQU6" must not be read as "NQ".
+ */
+export function findInstrumentByContract(
+  instruments: Instrument[],
+  contract: string
+): Instrument | undefined {
+  if (!contract) return undefined;
+  const upper = contract.trim().toUpperCase();
+
+  const exact = instruments.find((i) => i.symbol.toUpperCase() === upper || i.id.toUpperCase() === upper);
+  if (exact) return exact;
+
+  const prefixed = instruments
+    .filter((i) => upper.startsWith(i.symbol.toUpperCase()))
+    .sort((a, b) => b.symbol.length - a.symbol.length);
+
+  return prefixed[0];
+}

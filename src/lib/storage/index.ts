@@ -223,6 +223,22 @@ export const storage = {
     return updatedDay;
   },
 
+  /**
+   * Undoes a plan lock so the trader can carry on planning, or unlock after
+   * locking by mistake. Returns the reopened day.
+   */
+  unlockPlan(dayId: string): TradingDay | undefined {
+    const day = this.getTradingDayById(dayId);
+    if (!day) return undefined;
+
+    return this.saveTradingDay({
+      ...day,
+      status: day.status === 'active' ? 'planning' : day.status,
+      lockedAt: undefined,
+      lockedSnapshot: undefined,
+    });
+  },
+
   lockPlan(dayId: string): TradingDay | undefined {
     const day = this.getTradingDayById(dayId);
     if (!day) return undefined;
@@ -391,6 +407,22 @@ export const storage = {
     } catch (err) {
       console.error('Import failed:', err);
       return false;
+    }
+  },
+
+  /**
+   * Clears every journal entry — trades, daily plans and reviews — while
+   * keeping the trader's settings, instruments and playbook set-ups. This is
+   * the "start fresh" reset, and it cannot be undone.
+   */
+  resetJournal(): void {
+    if (typeof window === 'undefined') return;
+    for (const key of [STORAGE_KEYS.DAYS, STORAGE_KEYS.TRADES, STORAGE_KEYS.REVIEWS]) {
+      try {
+        localStorage.removeItem(key);
+      } catch (err) {
+        console.warn(`Error resetting ${key}:`, err);
+      }
     }
   },
 

@@ -51,7 +51,10 @@ test.describe('Playbook tab', () => {
       // the DOM, and the Support/Resistance diagrams label their dashed level with the
       // same word, so a bare text match is ambiguous. The name element is what this
       // asserts about, and it is the element that carries the title.
-      await expect(page.getByTitle(name)).toBeVisible();
+      //
+      // `exact` is required: a title match is a substring match, so plain 'Breakout'
+      // also resolves to 'Opening Range Breakout' and 'Failed Breakout'.
+      await expect(page.getByTitle(name, { exact: true })).toBeVisible();
     }
   });
 
@@ -59,7 +62,9 @@ test.describe('Playbook tab', () => {
     await gotoPlaybook(page);
 
     // Breakout has no dashed-level label that could collide with its name.
-    const card = page.locator('div.rounded-2xl', { has: page.getByTitle('Breakout') }).first();
+    const card = page
+      .locator('div.rounded-2xl', { has: page.getByTitle('Breakout', { exact: true }) })
+      .first();
     const guide = card.getByText('How this setup forms');
 
     // Folded to start with, and hidden rather than merely clipped.
@@ -67,7 +72,7 @@ test.describe('Playbook tab', () => {
     await expect(guide).toBeHidden();
 
     // Clicking the setup name — not a button, not an icon — unfolds the guide.
-    await card.getByTitle('Breakout').click();
+    await card.getByTitle('Breakout', { exact: true }).click();
     await expect(card.getByTitle('Hide study guide')).toHaveAttribute('aria-expanded', 'true');
     await expect(guide).toBeVisible();
     await expect(card.locator('svg[role="img"]')).toHaveCount(2);

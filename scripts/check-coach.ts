@@ -3,7 +3,7 @@
  * server code and the API key can be verified without a deployment.
  */
 import 'dotenv/config';
-import handler from '../api/coach';
+import handler from '../src/api/coach';
 import { buildJournalDigest } from '../src/lib/ai/journal-digest';
 import { DEFAULT_INSTRUMENTS } from '../src/lib/trading/instruments';
 import { Trade, TradingDay } from '../src/types';

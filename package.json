@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
     "build": "vite build",
+    "build:function": "tsx scripts/bundle-coach.ts",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
@@ -27,6 +28,7 @@
     "vite": "^8.3.0"
   },
   "devDependencies": {
+    "esbuild": "^0.27.2",
     "@playwright/test": "^1.63.0",
     "@types/node": "^22.14.0",
     "@types/react": "^19.3.0",

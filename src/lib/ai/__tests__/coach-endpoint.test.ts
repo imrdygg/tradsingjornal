@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isRetryable, modelChain } from '../../../../api/coach';
+import { isRetryable, modelChain } from '../../../../src/api/coach';
 import { COACH_MODES } from '../coach-prompt';
 
 /**

@@ -2,9 +2,9 @@ import {
   buildCoachPrompt,
   isCoachMode,
   parseCoachResponse,
-} from '../src/lib/ai/coach-prompt';
-import type { CoachTradeFacts } from '../src/lib/ai/coach-types';
-import type { JournalDigest } from '../src/lib/ai/journal-digest';
+} from '../lib/ai/coach-prompt';
+import type { CoachTradeFacts } from '../lib/ai/coach-types';
+import type { JournalDigest } from '../lib/ai/journal-digest';
 
 /**
  * The AI coach endpoint.
@@ -16,13 +16,14 @@ import type { JournalDigest } from '../src/lib/ai/journal-digest';
  *     instruction that forbids market claims and predictions.
  *
  * Deliberately dependency-free: it talks to the Gemini REST API with `fetch` and imports
- * no third-party package. An earlier version used the `@google/genai` SDK, which is a real
- * risk in a serverless bundle — if that import fails to load, the platform returns an HTML
- * error page, and the browser cannot tell that apart from the function not being deployed.
+ * no third-party package.
  *
- * This is deliberately the ONLY file in `api/`. The host turns every file in that directory
- * into a serverless function, so the prompt module and its tests live under `src/` instead.
- * A neighbouring test importing `vitest` would otherwise be deployed as a function too.
+ * Deployment shape: the committed handler is `api/coach.js` — a plain-JS bundle generated
+ * by `npm run build:function` (scripts/bundle-coach.ts) from `src/api/coach.ts`. It is
+ * committed so the deployed function requires no TypeScript compilation at all; whatever
+ * compiler the host runs cannot break it. Do not edit `api/coach.js` by hand. The
+ * generated file is the ONLY file in `api/`: the host turns every file in that directory
+ * into a serverless function, so nothing else (tests, TS sources) may live there.
  */
 
 // `tsconfig.json` restricts global types to vite/client, so Node's globals are not
@@ -55,7 +56,7 @@ interface ApiResponse {
 }
 
 /** Bumped whenever the endpoint's contract changes, so a live check is conclusive. */
-const ENDPOINT_VERSION = 3;
+const ENDPOINT_VERSION = 4;
 
 /** Total time to spend trying models before returning what we have. */
 const REQUEST_BUDGET_MS = 45_000;
@@ -223,12 +224,13 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
   const body = readBody(req.body);
   const mode = body?.mode;
+  const digest = body?.digest;
 
   if (!isCoachMode(mode)) {
     res.status(400).json({ error: 'Unknown coach mode. Expected brief, weekly or trade.' });
     return;
   }
-  if (!hasUsableDigest(body?.digest)) {
+  if (!hasUsableDigest(digest)) {
     res.status(400).json({ error: 'The request did not include a usable journal digest.' });
     return;
   }
@@ -240,7 +242,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   }
 
   // The prompt is assembled here, on the server, from the digest the client sent.
-  const { systemInstruction, userPrompt } = buildCoachPrompt(mode, body.digest, trade);
+  const { systemInstruction, userPrompt } = buildCoachPrompt(mode, digest, trade);
 
   // Stop starting new attempts once the budget is spent. Better to return the errors we
   // have than to be killed mid-request by the platform's own limit, which surfaces to

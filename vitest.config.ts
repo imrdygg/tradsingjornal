@@ -8,9 +8,9 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     environment: 'node',
-    // Only `src/` is scanned. Nothing may live in `api/` except serverless functions —
-    // a test file there would be deployed as a function, because the host turns every
-    // file in that directory into one.
-    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    // Only unit tests under `src/` are scanned. Nothing may live in `api/` except the
+    // generated serverless bundle — a test file there would be deployed as a function,
+    // because the host turns every file in that directory into one.
+    include: ['src/**/__tests__/*.{test,spec}.{ts,tsx}'],
   },
 });

@@ -1,6 +1,6 @@
 {
   "functions": {
-    "api/coach.ts": {
+    "api/coach.js": {
       "maxDuration": 60
     }
   }

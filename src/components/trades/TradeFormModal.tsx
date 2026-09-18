@@ -387,8 +387,14 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
             </div>
 
             <div>
-              <label className="text-xs font-medium text-zinc-300 block mb-1">Instrument</label>
+              <label
+                htmlFor="trade-instrument-select"
+                className="text-xs font-medium text-zinc-300 block mb-1"
+              >
+                Instrument
+              </label>
               <select
+                id="trade-instrument-select"
                 value={instrumentId}
                 onChange={(e) => setInstrumentId(e.target.value)}
                 className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none"
@@ -530,7 +536,7 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
             <div className="rounded-xl border border-zinc-800 bg-zinc-950/80 p-3 text-xs space-y-1 font-mono">
               <div className="flex items-center gap-1.5 text-zinc-400 text-[11px] uppercase font-semibold">
                 <Calculator className="w-3.5 h-3.5 text-zinc-300" />
-                Live MES Calculation
+                Live {selectedInstrument.symbol} Calculation
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-zinc-300">
                 <div>
@@ -689,7 +695,9 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
         onClose={() => setPreviewIndex(null)}
         images={images}
         initialIndex={previewIndex !== null ? previewIndex : 0}
-        title={`${direction.toUpperCase()} MES @ ${entryPrice || 'Trade'} Chart`}
+        title={`${direction.toUpperCase()} ${selectedInstrument.symbol} @ ${
+          entryPrice || 'Trade'
+        } Chart`}
         subtitle={`${session} • ${setupName || 'Setup'}`}
       />
     </ModalOverlay>

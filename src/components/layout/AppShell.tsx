@@ -28,6 +28,8 @@ interface AppShellProps {
   riskMode: RiskMode;
   dayStatus: DayStatus;
   realizedPnL: number;
+  /** Instrument the trader is focused on today (MES, MNQ, ES, ...). */
+  primaryInstrument?: string;
   timezone: string;
   theme?: 'dark' | 'light';
   onToggleTheme?: () => void;
@@ -47,6 +49,7 @@ export const AppShell: React.FC<AppShellProps> = ({
   riskMode,
   dayStatus,
   realizedPnL,
+  primaryInstrument,
   timezone,
   theme = 'dark',
   onToggleTheme,
@@ -153,8 +156,15 @@ export const AppShell: React.FC<AppShellProps> = ({
         <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2.5 sm:px-6">
           {/* Brand */}
           <div className="flex min-w-0 flex-1 items-center gap-2.5 lg:flex-none">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-800 text-xs font-semibold tracking-wider text-zinc-200">
-              MES
+            <div
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-zinc-700 bg-zinc-800 text-[10px] font-semibold tracking-wider text-zinc-200"
+              title={
+                primaryInstrument
+                  ? `Today's instrument: ${primaryInstrument}`
+                  : 'Trading Journal'
+              }
+            >
+              {primaryInstrument || 'TJ'}
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2">

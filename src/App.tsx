@@ -36,6 +36,7 @@ import { loadOrMigrateJournal, saveJournal } from './lib/cloud-sync';
 import { parseTradovateCSV } from './lib/trading/tradovate-import';
 import type { CsvImportSummary } from './lib/trading/tradovate-import';
 import { buildPositionGroups, findPositionGroup } from './lib/trading/position-groups';
+import { instrumentSymbol } from './lib/trading/instruments';
 import { Plus, Award, Sparkles, Layers, Cloud, CloudOff, Loader2 } from 'lucide-react';
 
 function AuthScreen() {
@@ -657,7 +658,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             />
 
             {/* Today's Recorded Trades Section */}
-            <div className="space-y-3">
+            <div id="today-trades" className="space-y-3">
               <div className="flex items-center justify-between">
                 <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 font-mono flex items-center gap-2">
                   <Layers className="w-4 h-4 text-zinc-300" />
@@ -687,6 +688,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
                     <TradeCard
                       key={trade.id}
                       trade={trade}
+                      instruments={instruments}
                       positionGroup={findPositionGroup(positionGroups, trade)}
                       onView={(t) => setViewingTradeId(t.id)}
                       onEdit={(t) => {
@@ -734,6 +736,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             trades={trades}
             reviews={reviews}
             setups={setups}
+            instruments={instruments}
           />
         );
 
@@ -794,6 +797,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       riskMode={todayTradingDay.riskMode}
       dayStatus={todayTradingDay.status}
       realizedPnL={todayRealizedPnL}
+      primaryInstrument={instrumentSymbol(instruments, todayTradingDay.primaryInstrument)}
       timezone={profile.timezone}
       theme={theme}
       onToggleTheme={handleToggleTheme}

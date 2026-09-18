@@ -389,7 +389,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
             {stats.count}
           </span>
           <span className="text-[10px] text-zinc-400 font-mono block">
-            MES sample size
+            closed trades in sample
           </span>
         </div>
       </div>

@@ -242,7 +242,8 @@ export const TradeCloseModal: React.FC<TradeCloseModalProps> = ({
               Close Trade & Execution Review
             </h3>
             <p className="text-xs text-zinc-400 font-mono mt-0.5">
-              {trade.direction.toUpperCase()} {trade.contracts}x MES @ {trade.entryPrice.toFixed(2)} (Stop: {trade.initialStop.toFixed(2)})
+              {trade.direction.toUpperCase()} {trade.contracts}x {instrument.symbol} @{' '}
+              {trade.entryPrice.toFixed(2)} (Stop: {trade.initialStop.toFixed(2)})
             </p>
           </div>
           <button
@@ -475,7 +476,9 @@ export const TradeCloseModal: React.FC<TradeCloseModalProps> = ({
         onClose={() => setPreviewIndex(null)}
         images={images}
         initialIndex={previewIndex !== null ? previewIndex : 0}
-        title={trade ? `${trade.direction.toUpperCase()} MES Result Chart` : 'Trade Chart'}
+        title={
+          trade ? `${trade.direction.toUpperCase()} ${instrument.symbol} Result Chart` : 'Trade Chart'
+        }
         subtitle={trade ? `${trade.setupName || 'Setup'} • Realized: $${calculations?.grossPnL?.toFixed(2) ?? '0.00'}` : undefined}
       />
     </ModalOverlay>

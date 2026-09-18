@@ -22,6 +22,7 @@ import { calculateTradeRuleFollowing } from '../../lib/analytics/discipline';
 import { formatTimestamp } from '../../lib/storage/date-utils';
 import { ImageLightboxModal } from '../common/ImageLightboxModal';
 import { buildPositionGroups, findPositionGroup } from '../../lib/trading/position-groups';
+import { instrumentSymbol } from '../../lib/trading/instruments';
 
 interface TradesViewProps {
   trades: Trade[];
@@ -721,6 +722,7 @@ export const TradesView: React.FC<TradesViewProps> = ({
               <TradeCard
                 key={t.id}
                 trade={t}
+                instruments={instruments}
                 positionGroup={findPositionGroup(positionGroups, t)}
                 onView={onViewTrade}
                 onEdit={onEditTrade}
@@ -788,7 +790,7 @@ export const TradesView: React.FC<TradesViewProps> = ({
                         {formatTimestamp(t.entryTime)}
                       </td>
                       <td className="py-2.5 px-3 font-semibold text-zinc-100">
-                        MES
+                        {instrumentSymbol(instruments, t.instrumentId)}
                       </td>
                       <td className="py-2.5 px-3">
                         <span
@@ -841,7 +843,8 @@ export const TradesView: React.FC<TradesViewProps> = ({
                         {position ? (
                           <div className="leading-tight">
                             <div className="text-emerald-300 font-semibold whitespace-nowrap">
-                              {position.totalContracts} {t.instrumentId.toUpperCase()}
+                              {position.totalContracts}{' '}
+                              {instrumentSymbol(instruments, t.instrumentId)}
                               {position.legCount > 1 ? ' total' : ''}
                             </div>
                             <div className="text-[10px] text-zinc-400 whitespace-nowrap">
@@ -908,7 +911,10 @@ export const TradesView: React.FC<TradesViewProps> = ({
                               setTableLightbox({
                                 images: tradeImages,
                                 initialIndex: 0,
-                                title: `${t.direction.toUpperCase()} MES @ ${t.entryPrice.toFixed(2)}`,
+                                title: `${t.direction.toUpperCase()} ${instrumentSymbol(
+                                  instruments,
+                                  t.instrumentId
+                                )} @ ${t.entryPrice.toFixed(2)}`,
                                 subtitle: `${t.session} • ${t.setupName || 'Setup'} (${tradeImages.length} chart${tradeImages.length > 1 ? 's' : ''})`,
                               })
                             }

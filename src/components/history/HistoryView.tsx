@@ -11,7 +11,7 @@ import {
   Layers,
   Filter,
 } from 'lucide-react';
-import { TradingDay, Trade, DailyReview, Setup } from '../../types';
+import { TradingDay, Trade, DailyReview, Setup, Instrument } from '../../types';
 import { formatTradingDate, formatTimestamp } from '../../lib/storage/date-utils';
 import { TradeCard } from '../trades/TradeCard';
 import { ModalOverlay } from '../common/ModalOverlay';
@@ -21,6 +21,7 @@ interface HistoryViewProps {
   trades: Trade[];
   reviews: DailyReview[];
   setups: Setup[];
+  instruments: Instrument[];
 }
 
 export const HistoryView: React.FC<HistoryViewProps> = ({
@@ -28,6 +29,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
   trades,
   reviews,
   setups,
+  instruments,
 }) => {
   const [selectedDayId, setSelectedDayId] = useState<string | null>(null);
 
@@ -423,7 +425,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
               ) : (
                 <div className="space-y-2.5">
                   {selectedDayTrades.map((t) => (
-                    <TradeCard key={t.id} trade={t} />
+                    <TradeCard key={t.id} trade={t} instruments={instruments} />
                   ))}
                 </div>
               )}

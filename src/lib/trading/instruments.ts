@@ -58,6 +58,23 @@ export function findInstrument(instruments: Instrument[], symbolOrId: string): I
 }
 
 /**
+ * Display symbol for a trade's stored instrument id (e.g. 'mnq' -> 'MNQ').
+ *
+ * Unlike findInstrument this does NOT fall back to MES: labelling an unknown
+ * instrument as MES is exactly the kind of silent lie that makes a journal
+ * untrustworthy. Unknown ids are shown uppercased instead.
+ */
+export function instrumentSymbol(instruments: Instrument[], instrumentId?: string): string {
+  if (!instrumentId) return instruments[0]?.symbol ?? '—';
+  const match = instruments.find(
+    (i) =>
+      i.id.toLowerCase() === instrumentId.toLowerCase() ||
+      i.symbol.toLowerCase() === instrumentId.toLowerCase()
+  );
+  return match ? match.symbol : instrumentId.toUpperCase();
+}
+
+/**
  * Resolves a broker contract month code to a journal instrument.
  *
  * Broker exports name the full contract — "MESZ5", "MNQU6", "ESH4" — so we

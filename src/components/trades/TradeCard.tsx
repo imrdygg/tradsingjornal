@@ -15,8 +15,9 @@ import {
   Video,
   Layers,
 } from 'lucide-react';
-import { Trade } from '../../types';
+import { Trade, Instrument } from '../../types';
 import { calculateTradeRuleFollowing } from '../../lib/analytics/discipline';
+import { instrumentSymbol } from '../../lib/trading/instruments';
 import { formatTimestamp } from '../../lib/storage/date-utils';
 import { ImageLightboxModal } from '../common/ImageLightboxModal';
 import { isVideoUrl } from '../../lib/media/media-utils';
@@ -24,6 +25,8 @@ import type { TradePositionGroup } from '../../lib/trading/position-groups';
 
 interface TradeCardProps {
   trade: Trade;
+  /** Used to resolve the trade's real instrument symbol (MES, MNQ, ES, ...). */
+  instruments: Instrument[];
   /** Blended view of the position when this card is one leg of a scale-in. */
   positionGroup?: TradePositionGroup;
   /** Opens the full trade detail view. */
@@ -35,6 +38,7 @@ interface TradeCardProps {
 
 export const TradeCard: React.FC<TradeCardProps> = ({
   trade,
+  instruments,
   positionGroup,
   onView,
   onEdit,
@@ -42,10 +46,15 @@ export const TradeCard: React.FC<TradeCardProps> = ({
   onDelete,
 }) => {
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const symbol = instrumentSymbol(instruments, trade.instrumentId);
 
   /**
    * The whole card is clickable to open the trade's details, but nothing
    * interactive inside it (buttons, media, links) should trigger that.
+   *
+   * The card deliberately has no role="button": it contains its own buttons,
+   * and nesting interactive elements inside a button is invalid for assistive
+   * tech. The explicit "Details" button below is the accessible entry point.
    */
   const handleCardClick = (event: React.MouseEvent<HTMLDivElement>) => {
     if (!onView) return;
@@ -101,14 +110,6 @@ export const TradeCard: React.FC<TradeCardProps> = ({
       className={`rounded-xl border border-zinc-800 bg-zinc-900/50 p-4 transition-all space-y-3 ${
         onView ? 'cursor-pointer hover:border-emerald-700/70 hover:bg-zinc-900/80' : 'hover:border-zinc-700/80'
       }`}
-      role={onView ? 'button' : undefined}
-      tabIndex={onView ? 0 : undefined}
-      onKeyDown={(e) => {
-        if (onView && (e.key === 'Enter' || e.key === ' ')) {
-          e.preventDefault();
-          onView(trade);
-        }
-      }}
     >
       {/* Top Row: Symbol, Direction, Setup, Status */}
       <div className="flex items-center justify-between gap-2">
@@ -128,7 +129,7 @@ export const TradeCard: React.FC<TradeCardProps> = ({
             {trade.direction}
           </span>
           <span className="font-mono font-bold text-sm text-zinc-100">
-            MES ({trade.contracts}x)
+            {symbol} ({trade.contracts}x)
           </span>
           <span className="px-2 py-0.5 rounded bg-zinc-800 text-[11px] font-medium text-zinc-300">
             {trade.setupName || 'Setup'}
@@ -162,7 +163,7 @@ export const TradeCard: React.FC<TradeCardProps> = ({
             )}
           </span>
           <span className="text-zinc-300">
-            {positionGroup.totalContracts} {trade.instrumentId.toUpperCase()} · avg entry{' '}
+            {positionGroup.totalContracts} {symbol} · avg entry{' '}
             <strong className="text-emerald-300 font-bold">
               {positionGroup.averageEntry.toFixed(2)}
             </strong>
@@ -379,7 +380,7 @@ export const TradeCard: React.FC<TradeCardProps> = ({
         onClose={() => setLightboxIndex(null)}
         images={tradeImages}
         initialIndex={lightboxIndex !== null ? lightboxIndex : 0}
-        title={`${trade.direction.toUpperCase()} MES @ ${trade.entryPrice.toFixed(2)}`}
+        title={`${trade.direction.toUpperCase()} ${symbol} @ ${trade.entryPrice.toFixed(2)}`}
         subtitle={`${trade.session} • ${trade.setupName || 'Setup'} • ${isClosed ? `Realized: ${pnlSign}$${trade.grossPnL.toFixed(2)}` : 'In Trade'}`}
       />
     </div>

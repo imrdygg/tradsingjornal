@@ -26,6 +26,7 @@ import {
 import { ImportantLevelsEditor } from './ImportantLevelsEditor';
 import { PlanChangeDialog } from './PlanChangeDialog';
 import { formatTimestamp } from '../../lib/storage/date-utils';
+import { instrumentSymbol } from '../../lib/trading/instruments';
 import { ImageLightboxModal } from '../common/ImageLightboxModal';
 import { MesScaleInBreakevenCalculator } from './MesScaleInBreakevenCalculator';
 
@@ -219,7 +220,8 @@ export const DailyPlanForm: React.FC<DailyPlanFormProps> = ({
             1. Risk Parameters
           </h3>
           <span className="text-[11px] text-zinc-400 font-mono">
-            Default Limit: $100 • MES Futures
+            Default Limit: ${day.normalLossLimit || 100} •{' '}
+            {instrumentSymbol(instruments, day.primaryInstrument)} Futures
           </span>
         </div>
 

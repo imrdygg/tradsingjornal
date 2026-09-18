@@ -138,6 +138,52 @@ test.describe('Undoing a plan lock', () => {
   });
 });
 
+test.describe('Multi-instrument labels', () => {
+  test('an MNQ trade is labelled MNQ and priced at its own point value', async ({ page }) => {
+    await openAddTrade(page);
+    await page.locator('#trade-instrument-select').selectOption('mnq');
+    await page.locator('#trade-entry-price').fill('20000');
+    await page.locator('#trade-initial-stop').fill('19990');
+    await page.locator('#trade-contracts').fill('2');
+
+    // The live calculation header names the chosen instrument.
+    await expect(page.getByText('Live MNQ Calculation')).toBeVisible();
+
+    await page.locator('#trade-exit-price').fill('20020');
+    await page.getByRole('button', { name: /Save Completed Trade/i }).click();
+
+    // Labelled with the real instrument, not MES.
+    await expect(page.getByText('MNQ (2x)')).toBeVisible();
+
+    // 20 points * $2/pt * 2 contracts = $80. MES's $5/pt would say $200.
+    // Scoped to the trade list: the day summary also shows the same P&L.
+    await expect(page.locator('#today-trades').getByText('+$80.00').first()).toBeVisible();
+    await expect(page.getByText('$200.00')).toHaveCount(0);
+
+    // The trade log names it as well.
+    await gotoTab(page, 'trades', /Trade Log/i);
+    if (await page.locator('table').first().isVisible()) {
+      await expect(
+        page.locator('table').getByText('MNQ', { exact: true }).first()
+      ).toBeVisible();
+    } else {
+      await expect(page.getByText('MNQ (2x)')).toBeVisible();
+    }
+  });
+
+  test('the close dialog names the instrument being closed', async ({ page }) => {
+    await openAddTrade(page);
+    await page.locator('#trade-instrument-select').selectOption('mnq');
+    await page.locator('#trade-entry-price').fill('20000');
+    await page.locator('#trade-initial-stop').fill('19990');
+    await page.locator('#trade-contracts').fill('2');
+    await page.getByRole('button', { name: /Save Open Trade/i }).click();
+
+    await page.getByRole('button', { name: /Close Trade/i }).first().click();
+    await expect(page.getByText(/2x MNQ @ 20000\.00/)).toBeVisible();
+  });
+});
+
 test.describe('Starting fresh', () => {
   test('reset clears trades but keeps the playbook', async ({ page }) => {
     await openAddTrade(page);

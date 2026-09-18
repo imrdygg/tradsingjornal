@@ -26,6 +26,7 @@ import {
   CoachLabel,
   CoachLoading,
   CoachMotivation,
+  CoachResultPanel,
   money,
 } from '../coach/coach-ui';
 
@@ -206,7 +207,13 @@ export const CoachCheckpointCard: React.FC<CoachCheckpointCardProps> = ({
       )}
 
       {showResult && note && (
-        <div id="coach-checkpoint-result" className="space-y-3 pt-1">
+        <CoachResultPanel
+          id="coach-checkpoint-result"
+          heading="Result"
+          meta={`written ${formatTimestamp(note.generatedAt, timezone)}`}
+          // A regenerated note carries a new timestamp, which re-opens a folded panel.
+          resultKey={note.generatedAt}
+        >
           {checkpoint === 'prep' && isPrep(note.data) ? (
             <>
               <p className="text-sm font-semibold text-zinc-100 leading-snug">{note.data.headline}</p>
@@ -306,7 +313,7 @@ export const CoachCheckpointCard: React.FC<CoachCheckpointCardProps> = ({
               <CoachMotivation text={note.data.motivation} />
             </>
           ) : null}
-        </div>
+        </CoachResultPanel>
       )}
 
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-zinc-800/80 pt-2.5">

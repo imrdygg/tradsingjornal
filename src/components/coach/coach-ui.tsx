@@ -1,6 +1,16 @@
-import React from 'react';
-import { Sparkles, MessageSquareQuote, Target, AlertTriangle, CheckCircle2, Settings2 } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import {
+  Sparkles,
+  MessageSquareQuote,
+  Target,
+  AlertTriangle,
+  CheckCircle2,
+  Settings2,
+  ChevronDown,
+  RefreshCw,
+} from 'lucide-react';
 import { CoachErrorCode } from '../../lib/ai/coach-client';
+import { Collapse } from '../common/Collapse';
 
 /**
  * Presentational pieces shared by the Coach tab and the Today checkpoint card.
@@ -8,6 +18,83 @@ import { CoachErrorCode } from '../../lib/ai/coach-client';
  */
 
 export const money = (n: number) => `${n < 0 ? '-' : ''}$${Math.abs(n).toLocaleString('en-US')}`;
+
+/**
+ * Wrapper for a piece of written coach output that the trader can fold away.
+ *
+ * The AI answers are long, and re-reading an old one while generating the next
+ * means scrolling past text you have already read. Collapsing is per-section and
+ * local, and a fresh answer always unfurls itself (`resultKey`), so folding a
+ * result away never hides new output.
+ */
+export const CoachResultPanel: React.FC<{
+  /** Kept from the pre-existing markup so the e2e specs can still find the result. */
+  id: string;
+  heading: string;
+  /** Small "when was this written" note shown beside the heading. */
+  meta?: string;
+  /** Changes whenever new output lands; a changed value re-expands the panel. */
+  resultKey?: string;
+  busy?: boolean;
+  onRegenerate?: () => void;
+  regenerateLabel?: string;
+  children: React.ReactNode;
+}> = ({
+  id,
+  heading,
+  meta,
+  resultKey,
+  busy = false,
+  onRegenerate,
+  regenerateLabel = 'Regenerate',
+  children,
+}) => {
+  const [open, setOpen] = useState(true);
+
+  // Regenerating while collapsed would otherwise leave the new answer hidden.
+  useEffect(() => setOpen(true), [resultKey]);
+
+  return (
+    <div id={id} className="pt-1">
+      <div className="flex items-center justify-between gap-2">
+        <button
+          type="button"
+          id={`${id}-toggle`}
+          onClick={() => setOpen((prev) => !prev)}
+          aria-expanded={open}
+          aria-controls={id}
+          className="flex min-w-0 items-center gap-1.5 text-[10px] font-mono uppercase font-bold text-zinc-400 transition-colors hover:text-zinc-200"
+        >
+          <ChevronDown
+            className={`w-3.5 h-3.5 shrink-0 transition-transform ${open ? '' : '-rotate-90'}`}
+          />
+          <span className="truncate">{heading}</span>
+          {meta && (
+            <span className="truncate font-normal normal-case text-zinc-500">· {meta}</span>
+          )}
+        </button>
+
+        {onRegenerate && (
+          <button
+            type="button"
+            id={`${id}-regenerate`}
+            onClick={onRegenerate}
+            disabled={busy}
+            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-zinc-700 px-2.5 py-1 text-[11px] font-semibold text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-100 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <RefreshCw className={`w-3 h-3 ${busy ? 'animate-spin' : ''}`} />
+            {regenerateLabel}
+          </button>
+        )}
+      </div>
+
+      {/* Collapsed this has a zero-height box, which is what the e2e spec asserts on. */}
+      <Collapse open={open} bodyId={`${id}-body`}>
+        <div className="space-y-3 pt-3">{children}</div>
+      </Collapse>
+    </div>
+  );
+};
 
 export const CoachCard: React.FC<{
   children: React.ReactNode;
@@ -71,7 +158,7 @@ export const CoachFact: React.FC<{ label: string; value: string }> = ({ label, v
 );
 
 export const CoachLoading: React.FC<{ label: string }> = ({ label }) => (
-  <div className="flex items-center gap-2 text-xs text-zinc-400 py-2">
+  <div className="flex items-center gap-2 text-xs text-zinc-400 py-2" role="status">
     <Sparkles className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
     {label}
   </div>

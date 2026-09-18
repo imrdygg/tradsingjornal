@@ -806,6 +806,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             setups={setups}
             instruments={instruments}
             todayTradeDate={todayTradingDay.tradeDate}
+            timezone={profile.timezone}
           />
         );
 

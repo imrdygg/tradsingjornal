@@ -14,7 +14,12 @@ import type {
   TradeCritiqueResponse,
   WeeklyResponse,
 } from '../../lib/ai/coach-types';
-import { buildTradeFacts, CoachResult, requestCoach } from '../../lib/ai/coach-client';
+import {
+  buildTradeFacts,
+  CoachErrorCode,
+  CoachResult,
+  requestCoach,
+} from '../../lib/ai/coach-client';
 import {
   CoachAction,
   CoachBullets,
@@ -23,9 +28,11 @@ import {
   CoachFact,
   CoachLoading,
   CoachMotivation,
+  CoachResultPanel,
   money,
 } from './coach-ui';
 import { instrumentSymbol } from '../../lib/trading/instruments';
+import { formatTimestamp } from '../../lib/storage/date-utils';
 
 interface CoachViewProps {
   trades: Trade[];
@@ -34,14 +41,23 @@ interface CoachViewProps {
   setups: Setup[];
   instruments: Instrument[];
   todayTradeDate: string;
+  timezone: string;
 }
 
 interface RequestState {
   loading: boolean;
+  /**
+   * The last answer that actually arrived. Kept while a retry runs, so regenerating
+   * never blanks the page: a failed or slow second attempt must not destroy the first
+   * answer the trader was reading.
+   */
   result: CoachResult | null;
+  failure: { code: CoachErrorCode; message: string } | null;
+  /** Set on every successful run; labels the output and re-expands a folded panel. */
+  writtenAt?: string;
 }
 
-const IDLE: RequestState = { loading: false, result: null };
+const IDLE: RequestState = { loading: false, result: null, failure: null };
 
 const SectionHeader: React.FC<{
   icon: React.ReactNode;
@@ -83,6 +99,7 @@ export const CoachView: React.FC<CoachViewProps> = ({
   setups,
   instruments,
   todayTradeDate,
+  timezone,
 }) => {
   const digest = useMemo(
     () =>
@@ -119,15 +136,36 @@ export const CoachView: React.FC<CoachViewProps> = ({
   const effectiveTradeId = selectedTradeId || criticableTrades[0]?.id || '';
   const selectedTrade = criticableTrades.find((t) => t.id === effectiveTradeId);
 
-  async function run(mode: CoachMode, setState: (s: RequestState) => void, trade?: Trade) {
-    setState({ loading: true, result: null });
+  async function run(
+    mode: CoachMode,
+    setState: React.Dispatch<React.SetStateAction<RequestState>>,
+    trade?: Trade
+  ) {
+    setState((prev) => ({ ...prev, loading: true, failure: null }));
     const day = trade ? tradingDays.find((d) => d.id === trade.tradingDayId) : undefined;
     const facts =
       trade && mode === 'trade'
         ? buildTradeFacts(trade, { instruments, day, allTrades: trades })
         : undefined;
     const result = await requestCoach(mode, digest, facts);
-    setState({ loading: false, result });
+
+    if (result.ok) {
+      setState((prev) => ({
+        ...prev,
+        loading: false,
+        result,
+        failure: null,
+        writtenAt: new Date().toISOString(),
+      }));
+      return;
+    }
+
+    // The error is shown alongside whatever was already written, not instead of it.
+    setState((prev) => ({
+      ...prev,
+      loading: false,
+      failure: { code: result.code, message: result.message },
+    }));
   }
 
   const planCaveat = digest.dataSufficiency.caveats;
@@ -220,26 +258,45 @@ export const CoachView: React.FC<CoachViewProps> = ({
           </p>
         )}
 
-        <GenerateButton
-          id="coach-brief-generate"
-          label="Write today's brief"
-          loadingLabel="Reading your journal…"
-          loading={briefState.loading}
-          onClick={() => run('brief', setBriefState)}
-        />
+        {/*
+          Once there is output, the panel header owns regeneration — right next to the
+          writing it replaces, and still reachable when the panel is folded. Showing this
+          button as well would put two "Regenerate" controls a line apart.
+        */}
+        {!briefState.result && (
+          <GenerateButton
+            id="coach-brief-generate"
+            label={briefState.failure ? 'Try again' : "Write today's brief"}
+            loadingLabel="Reading your journal…"
+            loading={briefState.loading}
+            onClick={() => run('brief', setBriefState)}
+          />
+        )}
 
         {briefState.loading && <CoachLoading label="Reading your plan, trades and reviews…" />}
 
-        {briefState.result && !briefState.result.ok && (
+        {briefState.failure && (
           <CoachErrorPanel
-            code={briefState.result.code}
-            message={briefState.result.message}
+            code={briefState.failure.code}
+            message={briefState.failure.message}
             idSuffix="brief"
           />
         )}
 
         {briefState.result?.ok && (
-          <div id="coach-brief-result" className="space-y-3 pt-1">
+          <CoachResultPanel
+            id="coach-brief-result"
+            heading="Result"
+            meta={
+              briefState.writtenAt
+                ? `written ${formatTimestamp(briefState.writtenAt, timezone)}`
+                : undefined
+            }
+            resultKey={briefState.writtenAt}
+            busy={briefState.loading}
+            onRegenerate={() => run('brief', setBriefState)}
+            regenerateLabel="Regenerate brief"
+          >
             <p className="text-sm font-semibold text-zinc-100 leading-snug">
               {(briefState.result.data as BriefResponse).headline}
             </p>
@@ -277,7 +334,7 @@ export const CoachView: React.FC<CoachViewProps> = ({
               text={(briefState.result.data as BriefResponse).todayFocus}
             />
             <CoachMotivation text={(briefState.result.data as BriefResponse).motivation} />
-          </div>
+          </CoachResultPanel>
         )}
       </CoachCard>
 
@@ -331,27 +388,41 @@ export const CoachView: React.FC<CoachViewProps> = ({
               </div>
             )}
 
-            <GenerateButton
-              id="coach-trade-generate"
-              label="Critique this trade"
-              loadingLabel="Reviewing the trade…"
-              loading={tradeState.loading}
-              disabled={!selectedTrade}
-              onClick={() => selectedTrade && run('trade', setTradeState, selectedTrade)}
-            />
+            {!tradeState.result && (
+              <GenerateButton
+                id="coach-trade-generate"
+                label={tradeState.failure ? 'Try again' : 'Critique this trade'}
+                loadingLabel="Reviewing the trade…"
+                loading={tradeState.loading}
+                disabled={!selectedTrade}
+                onClick={() => selectedTrade && run('trade', setTradeState, selectedTrade)}
+              />
+            )}
 
             {tradeState.loading && <CoachLoading label="Reading the trade, its plan and your review…" />}
 
-            {tradeState.result && !tradeState.result.ok && (
+            {tradeState.failure && (
               <CoachErrorPanel
-                code={tradeState.result.code}
-                message={tradeState.result.message}
+                code={tradeState.failure.code}
+                message={tradeState.failure.message}
                 idSuffix="trade"
               />
             )}
 
             {tradeState.result?.ok && (
-              <div id="coach-trade-result" className="space-y-3 pt-1">
+              <CoachResultPanel
+                id="coach-trade-result"
+                heading="Result"
+                meta={
+                  tradeState.writtenAt
+                    ? `written ${formatTimestamp(tradeState.writtenAt, timezone)}`
+                    : undefined
+                }
+                resultKey={tradeState.writtenAt}
+                busy={tradeState.loading}
+                onRegenerate={() => selectedTrade && run('trade', setTradeState, selectedTrade)}
+                regenerateLabel="Regenerate critique"
+              >
                 <div className="flex items-start gap-3">
                   <span className="shrink-0 rounded-lg border border-amber-800 bg-amber-950/50 text-amber-300 font-mono text-sm font-bold px-2.5 py-1">
                     {(tradeState.result.data as TradeCritiqueResponse).grade}
@@ -402,7 +473,7 @@ export const CoachView: React.FC<CoachViewProps> = ({
                   label="Next time"
                   text={(tradeState.result.data as TradeCritiqueResponse).nextTime}
                 />
-              </div>
+              </CoachResultPanel>
             )}
           </>
         )}
@@ -443,26 +514,40 @@ export const CoachView: React.FC<CoachViewProps> = ({
           </p>
         )}
 
-        <GenerateButton
-          id="coach-weekly-generate"
-          label="Review my performance"
-          loadingLabel="Finding the patterns…"
-          loading={weeklyState.loading}
-          onClick={() => run('weekly', setWeeklyState)}
-        />
+        {!weeklyState.result && (
+          <GenerateButton
+            id="coach-weekly-generate"
+            label={weeklyState.failure ? 'Try again' : 'Review my performance'}
+            loadingLabel="Finding the patterns…"
+            loading={weeklyState.loading}
+            onClick={() => run('weekly', setWeeklyState)}
+          />
+        )}
 
         {weeklyState.loading && <CoachLoading label="Comparing your days, rules and risk…" />}
 
-        {weeklyState.result && !weeklyState.result.ok && (
+        {weeklyState.failure && (
           <CoachErrorPanel
-            code={weeklyState.result.code}
-            message={weeklyState.result.message}
+            code={weeklyState.failure.code}
+            message={weeklyState.failure.message}
             idSuffix="weekly"
           />
         )}
 
         {weeklyState.result?.ok && (
-          <div id="coach-weekly-result" className="space-y-3 pt-1">
+          <CoachResultPanel
+            id="coach-weekly-result"
+            heading="Result"
+            meta={
+              weeklyState.writtenAt
+                ? `written ${formatTimestamp(weeklyState.writtenAt, timezone)}`
+                : undefined
+            }
+            resultKey={weeklyState.writtenAt}
+            busy={weeklyState.loading}
+            onRegenerate={() => run('weekly', setWeeklyState)}
+            regenerateLabel="Regenerate review"
+          >
             <p className="text-sm font-semibold text-zinc-100 leading-snug">
               {(weeklyState.result.data as WeeklyResponse).headline}
             </p>
@@ -522,7 +607,7 @@ export const CoachView: React.FC<CoachViewProps> = ({
             />
 
             <CoachMotivation text={(weeklyState.result.data as WeeklyResponse).motivation} />
-          </div>
+          </CoachResultPanel>
         )}
       </CoachCard>
     </div>

@@ -317,7 +317,7 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
               ref={isFocused && !focusContainerRef.current ? focusContainerRef : undefined}
               // Cards ease in one after another so the library arrives rather than blinks.
               // Long lists are capped so the last card is never waiting on the first ones.
-              style={{ animationDelay: `${Math.min(index, 8) * 40}ms` }}
+              style={{ animationDelay: `${Math.min(index, 8) * 30}ms` }}
               className={`playbook-card-enter rounded-2xl border text-xs space-y-2 transition-colors scroll-mt-40 sm:scroll-mt-32
                 isFocused || isWatched
                   ? 'border-emerald-800/80 bg-zinc-900/50 shadow-[0_0_0_1px_rgba(16,185,129,0.15)]'

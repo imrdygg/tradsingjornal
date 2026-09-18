@@ -48,7 +48,7 @@ html.light {
 
 @media (prefers-reduced-motion: no-preference) {
   .playbook-card-enter {
-    animation: playbook-card-in 260ms ease-out both;
+    animation: playbook-card-in 200ms ease-out both;
   }
 }
 
@@ -65,6 +65,9 @@ html.light {
 
    The class is only applied while the guide is open, so a folded card animates
    nothing, and reduced-motion users get the finished chart immediately.
+
+   2.2s keeps the redraw frequent enough to catch the eye while the stops still leave
+   the finished chart on screen for most of each cycle.
    --------------------------------------------------------------------------- */
 @keyframes setup-candle-loop {
   0% {
@@ -87,7 +90,7 @@ html.light {
 
 @media (prefers-reduced-motion: no-preference) {
   .setup-candle {
-    animation: setup-candle-loop 3.6s ease-in-out infinite;
+    animation: setup-candle-loop 2.2s ease-in-out infinite;
   }
 }
 

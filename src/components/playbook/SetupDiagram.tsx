@@ -58,7 +58,7 @@ const Candle: React.FC<{
     // The class is what starts the animation, so it replays every time the guide is
     // opened rather than only on the first render. Reduced-motion users get the
     // finished chart immediately, because the animation lives behind a media query.
-    <g className={animate ? 'setup-candle' : undefined} style={animate ? { animationDelay: `${index * 55}ms` } : undefined}>
+    <g className={animate ? 'setup-candle' : undefined} style={animate ? { animationDelay: `${index * 40}ms` } : undefined}>
       <line x1={wickX} y1={y(h)} x2={wickX} y2={y(l)} stroke={color} strokeWidth={1.4} />
       <rect x={x} y={bodyTop} width={CANDLE_W} height={bodyHeight} rx={1} fill={color} />
     </g>

@@ -9,6 +9,7 @@ import {
   PlanSnapshot,
 } from '../../types';
 import { DEFAULT_INSTRUMENTS } from '../trading/instruments';
+import { clearCachedNotes } from '../ai/checkpoints';
 import { getCurrentTradingDate } from './date-utils';
 
 export const DEFAULT_SETUPS: Setup[] = [
@@ -424,6 +425,8 @@ export const storage = {
         console.warn(`Error resetting ${key}:`, err);
       }
     }
+    // Saved coach notes describe the trades that just got deleted, so they go too.
+    clearCachedNotes();
   },
 
   /** Removes the journal from this device. Used on sign-out so the next
@@ -445,6 +448,8 @@ export const storage = {
         console.warn(`Error clearing ${key} from storage:`, err);
       }
     }
+    // Coach notes are per-account; the next user must not inherit them.
+    clearCachedNotes();
   },
 
   isLoggedIn(): boolean {

@@ -16,6 +16,8 @@ import { TradesView } from './components/trades/TradesView';
 import { HistoryView } from './components/history/HistoryView';
 import { AnalyticsView } from './components/analytics/AnalyticsView';
 import { InsightsView } from './components/insights/InsightsView';
+import { CoachView } from './components/coach/CoachView';
+import { CoachCheckpointCard } from './components/today/CoachCheckpointCard';
 import { SettingsView } from './components/settings/SettingsView';
 import { PlaybookView } from './components/playbook/PlaybookView';
 import {
@@ -594,6 +596,17 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               <YesterdayFocusBanner yesterdayFocus={yesterdayFocus} />
             )}
 
+            {/* Coach checkpoint: morning prep before the close, review after it. */}
+            <CoachCheckpointCard
+              trades={trades}
+              tradingDays={tradingDays}
+              reviews={reviews}
+              setups={setups}
+              instruments={instruments}
+              todayTradeDate={todayTradingDay.tradeDate}
+              timezone={profile.timezone}
+            />
+
             {/* Today's Risk & Performance Summary Card */}
             <TodaySummary
               realizedPnL={todayRealizedPnL}
@@ -753,6 +766,18 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
 
       case 'insights':
         return <InsightsView trades={trades} tradingDays={tradingDays} />;
+
+      case 'coach':
+        return (
+          <CoachView
+            trades={trades}
+            tradingDays={tradingDays}
+            reviews={reviews}
+            setups={setups}
+            instruments={instruments}
+            todayTradeDate={todayTradingDay.tradeDate}
+          />
+        );
 
       case 'playbook':
         return (

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { DEFAULT_SETUPS } from '../src/lib/storage';
 
 /**
  * Regression tests for the issues reported against the Playbook and the
@@ -58,15 +59,9 @@ test.describe('Recording a trade lists every playbook setup', () => {
     const select = page.locator('#trade-setup-select');
     await expect(select).toBeVisible();
 
-    const expected = [
-      'Engulfing',
-      'Support',
-      'Resistance',
-      'Breakout',
-      'Reversal',
-      'Trend Continuation',
-      'Other',
-    ];
+    // Read from the catalog itself rather than repeating it here, so adding a built-in
+    // setup cannot quietly leave this assertion covering a stale list.
+    const expected = DEFAULT_SETUPS.map((setup) => setup.name);
 
     const options = await select.locator('option').allTextContents();
     expect(options.length).toBe(expected.length);
@@ -90,7 +85,7 @@ test.describe('Recording a trade lists every playbook setup', () => {
 
     const options = await page.locator('#trade-setup-select option').allTextContents();
     expect(options.some((o) => o.trim().startsWith('Engulfing'))).toBeTruthy();
-    expect(options.length).toBe(7);
+    expect(options.length).toBe(DEFAULT_SETUPS.length);
   });
 
   test('a freshly added setup is immediately available', async ({ page }) => {

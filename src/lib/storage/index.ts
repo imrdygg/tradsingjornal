@@ -12,6 +12,17 @@ import { DEFAULT_INSTRUMENTS } from '../trading/instruments';
 import { clearCachedNotes } from '../ai/checkpoints';
 import { getCurrentTradingDate } from './date-utils';
 
+/**
+ * The built-in setup catalog, written out rather than generated so the order is a
+ * deliberate rough priority: the level-based and structure setups a day trader reaches
+ * for first, then the pattern and context ones, with 'Other' last because it is a
+ * catch-all rather than a setup.
+ *
+ * Every name in this list has a study guide (setup-guides.ts) and bullish/bearish
+ * examples (SetupDiagram.tsx) keyed to exactly this spelling. Renaming one here means
+ * renaming it in both of those files, or the card falls back to the generic 'Other'
+ * content.
+ */
 export const DEFAULT_SETUPS: Setup[] = [
   { id: 'engulfing', name: 'Engulfing', active: true, createdAt: '2026-01-01T00:00:00Z' },
   { id: 'support', name: 'Support', active: true, createdAt: '2026-01-01T00:00:00Z' },
@@ -19,6 +30,32 @@ export const DEFAULT_SETUPS: Setup[] = [
   { id: 'breakout', name: 'Breakout', active: true, createdAt: '2026-01-01T00:00:00Z' },
   { id: 'reversal', name: 'Reversal', active: true, createdAt: '2026-01-01T00:00:00Z' },
   { id: 'trend-continuation', name: 'Trend Continuation', active: true, createdAt: '2026-01-01T00:00:00Z' },
+
+  // Level and structure plays.
+  { id: 'vwap-reclaim', name: 'VWAP Reclaim', active: true, createdAt: '2026-01-01T00:00:00Z' },
+  { id: 'vwap-rejection', name: 'VWAP Rejection', active: true, createdAt: '2026-01-01T00:00:00Z' },
+  { id: 'opening-range-breakout', name: 'Opening Range Breakout', active: true, createdAt: '2026-01-01T00:00:00Z' },
+  { id: 'failed-breakout', name: 'Failed Breakout', active: true, createdAt: '2026-01-01T00:00:00Z' },
+  { id: 'retest', name: 'Retest of Broken Level', active: true, createdAt: '2026-01-01T00:00:00Z' },
+  { id: 'trendline-break', name: 'Trendline Break', active: true, createdAt: '2026-01-01T00:00:00Z' },
+  { id: 'liquidity-sweep', name: 'Liquidity Sweep', active: true, createdAt: '2026-01-01T00:00:00Z' },
+  { id: 'opening-gap-fill', name: 'Opening Gap Fill', active: true, createdAt: '2026-01-01T00:00:00Z' },
+  { id: 'range-fade', name: 'Range Fade', active: true, createdAt: '2026-01-01T00:00:00Z' },
+
+  // Imbalance and order-flow plays.
+  { id: 'fair-value-gap', name: 'Fair Value Gap', active: true, createdAt: '2026-01-01T00:00:00Z' },
+  { id: 'order-block', name: 'Order Block', active: true, createdAt: '2026-01-01T00:00:00Z' },
+  { id: 'pullback-to-ema', name: 'Pullback to EMA', active: true, createdAt: '2026-01-01T00:00:00Z' },
+
+  // Classic chart patterns.
+  { id: 'double-top', name: 'Double Top', active: true, createdAt: '2026-01-01T00:00:00Z' },
+  { id: 'double-bottom', name: 'Double Bottom', active: true, createdAt: '2026-01-01T00:00:00Z' },
+  { id: 'head-and-shoulders', name: 'Head and Shoulders', active: true, createdAt: '2026-01-01T00:00:00Z' },
+  { id: 'bull-flag', name: 'Bull Flag', active: true, createdAt: '2026-01-01T00:00:00Z' },
+  { id: 'bear-flag', name: 'Bear Flag', active: true, createdAt: '2026-01-01T00:00:00Z' },
+  { id: 'inside-bar-break', name: 'Inside Bar Break', active: true, createdAt: '2026-01-01T00:00:00Z' },
+  { id: 'three-bar-reversal', name: 'Three-Bar Reversal', active: true, createdAt: '2026-01-01T00:00:00Z' },
+
   { id: 'other', name: 'Other', active: true, createdAt: '2026-01-01T00:00:00Z' },
 ];
 

@@ -19,16 +19,10 @@ const SET_ASIDE = JSON.stringify({
   reason: 'A save from this device replaced it while syncing.',
 });
 
-/** Open a tab via whichever nav is visible at the current viewport. */
-async function gotoTab(page: Page, tab: string) {
-  const desktop = page.locator(`#nav-btn-${tab}`);
-  const mobile = page.locator(`#mobile-nav-${tab}`);
-  if (await desktop.isVisible()) await desktop.click();
-  else await mobile.click();
-}
-
 async function gotoSettings(page: Page) {
-  await gotoTab(page, 'settings');
+  // Settings lives in the avatar menu, not the tab bars.
+  await page.locator('#account-menu-btn').click();
+  await page.locator('#account-menu-settings-btn').click();
   await expect(page.getByRole('heading', { name: /Account & Cloud Sync/i })).toBeVisible();
 }
 

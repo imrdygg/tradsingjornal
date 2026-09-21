@@ -24,7 +24,9 @@ async function gotoTab(page: Page, tab: string) {
 }
 
 async function gotoSettings(page: Page) {
-  await gotoTab(page, 'settings');
+  // Settings lives in the avatar menu, not the tab bars.
+  await page.locator('#account-menu-btn').click();
+  await page.locator('#account-menu-settings-btn').click();
   await expect(page.getByText('Playbook Setups — Rename & Order')).toBeVisible();
 }
 

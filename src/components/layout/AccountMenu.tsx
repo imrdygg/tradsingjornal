@@ -1,21 +1,26 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { LogOut, Loader2, Cloud, User } from 'lucide-react';
+import { LogOut, Loader2, Cloud, User, Settings as SettingsIcon } from 'lucide-react';
 
 interface AccountMenuProps {
   email?: string | null;
-  onSignOut: () => void;
+  onSignOut?: () => void;
   signingOut?: boolean;
+  /** Opens the Settings tab; the avatar menu is now the way to reach it. */
+  onOpenSettings?: () => void;
 }
 
 /**
  * Compact account control: an avatar button that opens a small panel holding
- * the signed-in email and Sign out. Keeps the header narrow so it cannot
- * overflow on laptop widths, where a full-width email + button did.
+ * the signed-in email, Settings, and (when signed in) Sign out. Settings moved
+ * here out of the tab bars, which were out of room — the avatar keeps the
+ * header narrow so it cannot overflow on laptop widths, where a full-width
+ * email + button did.
  */
 export const AccountMenu: React.FC<AccountMenuProps> = ({
   email,
   onSignOut,
   signingOut = false,
+  onOpenSettings,
 }) => {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -74,34 +79,52 @@ export const AccountMenu: React.FC<AccountMenuProps> = ({
           <div className="border-b border-zinc-800 px-3 py-2.5">
             <div className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider text-emerald-400">
               <Cloud className="h-3 w-3" />
-              Signed in
+              {onSignOut ? 'Signed in' : 'Local journal'}
             </div>
             <p
               className="mt-1 truncate text-xs text-zinc-300"
               title={email ?? undefined}
             >
-              {email ?? 'Local journal'}
+              {email ?? 'Saved in this browser'}
             </p>
           </div>
 
-          <button
-            id="header-sign-out-btn"
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              setOpen(false);
-              onSignOut();
-            }}
-            disabled={signingOut}
-            className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-800 disabled:opacity-50"
-          >
-            {signingOut ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <LogOut className="h-4 w-4 text-zinc-400" />
-            )}
-            {signingOut ? 'Saving…' : 'Sign out'}
-          </button>
+          {onOpenSettings && (
+            <button
+              id="account-menu-settings-btn"
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                onOpenSettings();
+              }}
+              className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-800"
+            >
+              <SettingsIcon className="h-4 w-4 text-zinc-400" />
+              Settings
+            </button>
+          )}
+
+          {onSignOut && (
+            <button
+              id="header-sign-out-btn"
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                onSignOut();
+              }}
+              disabled={signingOut}
+              className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-800 disabled:opacity-50"
+            >
+              {signingOut ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <LogOut className="h-4 w-4 text-zinc-400" />
+              )}
+              {signingOut ? 'Saving…' : 'Sign out'}
+            </button>
+          )}
         </div>
       )}
     </div>

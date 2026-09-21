@@ -114,6 +114,12 @@ async function gotoTab(page: Page, tab: string, heading: RegExp) {
   await expect(page.getByRole('heading', { name: heading })).toBeVisible();
 }
 
+/** Settings lives in the avatar menu, not the tab bars. */
+async function openSettings(page: Page) {
+  await page.locator('#account-menu-btn').click();
+  await page.locator('#account-menu-settings-btn').click();
+}
+
 /**
  * Opens the editor for the seeded trade and saves it without changing a field.
  *
@@ -155,7 +161,7 @@ test.describe('Editing a trade keeps its day and its provenance', () => {
   });
 
   test('saving an import does not launder the stop the CSV never had', async ({ page }) => {
-    await gotoTab(page, 'settings', /Settings & Configuration/i);
+    await openSettings(page);
     await expect(page.locator(ASSUMED_RISK_SUMMARY)).toHaveText(
       /1 trade still use an assumed stop/i
     );
@@ -164,7 +170,7 @@ test.describe('Editing a trade keeps its day and its provenance', () => {
 
     // The stop is still the importer's placeholder, so the app must keep saying so
     // rather than presenting risk and R built on an invented price as real numbers.
-    await gotoTab(page, 'settings', /Settings & Configuration/i);
+    await openSettings(page);
     await expect(page.locator(ASSUMED_RISK_SUMMARY)).toHaveText(
       /1 trade still use an assumed stop/i
     );

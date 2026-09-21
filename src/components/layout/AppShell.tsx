@@ -8,7 +8,6 @@ import {
   Lightbulb,
   Sparkles,
   BookOpen,
-  Settings as SettingsIcon,
   ShieldAlert,
   Lock,
   Plus,
@@ -28,8 +27,9 @@ export type NavTab =
   | 'analytics'
   | 'insights'
   | 'coach'
-  | 'playbook'
   | 'markets'
+  | 'playbook'
+  // Reachable through the avatar menu, not the tab bars — they were out of room.
   | 'settings';
 
 interface AppShellProps {
@@ -84,7 +84,6 @@ export const AppShell: React.FC<AppShellProps> = ({
     { id: 'coach', label: 'Coach', icon: Sparkles },
     { id: 'markets', label: 'Markets', icon: CandlestickChart },
     { id: 'playbook', label: 'Playbook', icon: BookOpen },
-    { id: 'settings', label: 'Settings', icon: SettingsIcon },
   ];
 
   const pnlSign = realizedPnL > 0 ? '+' : '';
@@ -249,13 +248,14 @@ export const AppShell: React.FC<AppShellProps> = ({
               <span className="sm:hidden">Trade</span>
             </button>
 
-            {onSignOut && (
-              <AccountMenu
-                email={userEmail}
-                onSignOut={onSignOut}
-                signingOut={signingOut}
-              />
-            )}
+            {/* Always mounted: Settings now lives in this menu, so it exists for
+                local (unsigned-in) journals too, where there is no sign-out. */}
+            <AccountMenu
+              email={userEmail}
+              onSignOut={onSignOut}
+              signingOut={signingOut}
+              onOpenSettings={() => onSelectTab('settings')}
+            />
           </div>
         </div>
 
@@ -326,7 +326,8 @@ export const AppShell: React.FC<AppShellProps> = ({
 
       {/* Bottom navigation for anything narrower than the desktop nav breakpoint */}
       <div className="pb-safe fixed bottom-0 left-0 right-0 z-40 border-t border-zinc-800/90 bg-zinc-950/95 pt-1.5 backdrop-blur-lg lg:hidden">
-        {/* Eight tabs now: the label size and column count were both tuned so the
+        {/* Eight tabs, one per column: Settings moved to the avatar menu, so Markets
+            finally fits without the grid wrapping. The label size was tuned so the
             longest label still fits at 320px without wrapping or overflowing. */}
         <div className="grid grid-cols-8 gap-0.5 px-1 sm:gap-1 sm:px-2">
           {navItems.map((item) => {

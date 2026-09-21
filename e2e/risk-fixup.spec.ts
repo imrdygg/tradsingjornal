@@ -32,7 +32,9 @@ async function gotoTab(page: Page, tab: string) {
 }
 
 async function gotoSettings(page: Page) {
-  await gotoTab(page, 'settings');
+  // Settings lives in the avatar menu, not the tab bars.
+  await page.locator('#account-menu-btn').click();
+  await page.locator('#account-menu-settings-btn').click();
   // The CSV input is the anchor that proves Settings has rendered.
   await expect(page.locator('input[type="file"][accept=".csv"]')).toBeAttached();
 }

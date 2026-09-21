@@ -58,6 +58,9 @@ export const MarketChart: React.FC<MarketChartProps> = ({ symbol, theme, height 
   const containerRef = useRef<HTMLDivElement>(null);
   const [failed, setFailed] = useState(false);
 
+  // Stable per-mount id for the library's `getElementById` lookup.
+  const [targetId] = useState(() => `tv-widget-host-${Math.random().toString(36).slice(2, 10)}`);
+
   useEffect(() => {
     let cancelled = false;
     setFailed(false);
@@ -70,11 +73,22 @@ export const MarketChart: React.FC<MarketChartProps> = ({ symbol, theme, height 
         const host = containerRef.current;
         host.innerHTML = '';
         const target = document.createElement('div');
-        target.className = 'tv-widget-host';
+        // The iframe is sized 100%/100% up the chain, so the host div needs definite
+        // dimensions of its own rather than content-driven ones.
+        target.style.width = '100%';
+        target.style.height = '100%';
         host.appendChild(target);
 
+        // The provider's library resolves its mount point with
+        // `document.getElementById(options.container)` — a string id, never a DOM node,
+        // and it reads that id from `container_id` only. Handing it a node (or leaving
+        // `container_id` unset) makes it fall back to inserting beside
+        // `document.currentScript`, which is null when invoked from a module — the
+        // library throws and the chart reports "could not be loaded".
+        target.id = targetId;
+
         new window.TradingView.widget({
-          container_id: undefined,
+          container_id: targetId,
           autosize: true,
           symbol: symbol.tvSymbol,
           interval: '60',
@@ -91,10 +105,6 @@ export const MarketChart: React.FC<MarketChartProps> = ({ symbol, theme, height 
           withdateranges: true,
           details: false,
           studies: ['RSI@tv-basicstudies', 'MASimple@tv-basicstudies'],
-          // The library reads the container by id when given a string; passing a node
-          // through `container` is the documented alternative for elements not in the DOM
-          // by id. We hand it the div we just made.
-          container: target,
         });
       })
       .catch(() => {

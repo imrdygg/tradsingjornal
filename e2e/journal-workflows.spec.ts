@@ -20,6 +20,13 @@ async function gotoTab(page: Page, tab: string, heading: RegExp) {
   await expect(page.getByRole('heading', { name: heading })).toBeVisible();
 }
 
+/** Settings lives in the avatar menu, not the tab bars. */
+async function openSettings(page: Page, heading: RegExp) {
+  await page.locator('#account-menu-btn').click();
+  await page.locator('#account-menu-settings-btn').click();
+  await expect(page.getByRole('heading', { name: heading })).toBeVisible();
+}
+
 async function openAddTrade(page: Page) {
   await page.locator('#btn-add-trade-top').click();
   await expect(page.getByRole('heading', { name: /Record Futures Trade/i })).toBeVisible();
@@ -210,7 +217,7 @@ test.describe('Starting fresh', () => {
     await page.getByRole('button', { name: /Save Open Trade/i }).click();
     await expect(page.getByRole('heading', { name: /Trade Executions \(1\)/ })).toBeVisible();
 
-    await gotoTab(page, 'settings', /Settings & Configuration/i);
+    await openSettings(page, /Settings & Configuration/i);
     await page.locator('#reset-journal-button').click();
 
     // Two-step guard: the button stays disabled until RESET is typed.

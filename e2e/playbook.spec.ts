@@ -1,13 +1,16 @@
 import { expect, test, type Page } from '@playwright/test';
+import { DEFAULT_SETUPS } from '../src/lib/storage';
 
 /**
  * Smoke tests for the Playbook tab.
  *
- * The app boots local-only (no Supabase in the test env), so the default
- * seed applies: 7 setups (Engulfing, Support, Resistance, Breakout,
- * Reversal, Trend Continuation, Other) and a fresh trading day whose
+ * The app boots local-only (no Supabase in the test env), so a fresh journal gets the
+ * whole built-in catalog (DEFAULT_SETUPS — 32 setups) and a trading day whose
  * watchedSetups are ['Engulfing', 'Support', 'Resistance'].
  */
+
+/** One example chart, which draws its dashed level as a 4-3 line. */
+const DIAGRAM_WITH_LEVEL = 'svg[role="img"] line[stroke-dasharray="4 3"]';
 
 const ENGULFING_SUMMARY =
   'A two-candle reversal pattern where one candle fully "swallows" the body of the previous one';
@@ -113,6 +116,58 @@ test.describe('Playbook tab', () => {
     // Collapse again.
     await engulfingCard.getByTitle('Hide study guide').click();
     await expect(engulfingCard.getByText('How this setup forms')).toBeHidden();
+  });
+
+  test('every built-in setup draws both examples with its dashed level', async ({ page }) => {
+    await gotoPlaybook(page);
+
+    // Driven from the catalog rather than from a list written out here, so a setup added
+    // later without a level line fails this test instead of shipping a chart that shows
+    // candles moving without the price the setup is waiting on.
+    for (const setup of DEFAULT_SETUPS) {
+      const card = page
+        .locator('div.rounded-2xl', { has: page.getByTitle(setup.name, { exact: true }) })
+        .first();
+
+      // One bullish and one bearish example, each with its level.
+      await expect(card.locator('svg[role="img"]')).toHaveCount(2);
+      await expect(card.locator(DIAGRAM_WITH_LEVEL)).toHaveCount(2);
+    }
+  });
+
+  test('the added setups bring their guide and label the level they wait on', async ({ page }) => {
+    await gotoPlaybook(page);
+
+    const card = page
+      .locator('div.rounded-2xl', { has: page.getByTitle('Gap and Go', { exact: true }) })
+      .first();
+    await card.getByTitle('Show study guide').click();
+
+    await expect(card.getByText('How this setup forms')).toBeVisible();
+    await expect(card.getByText('How to trade it')).toBeVisible();
+    await expect(card.getByText(/Invalidation/)).toBeVisible();
+
+    // The level is not just drawn, it is named: both examples label the gap edge.
+    await expect(card.locator('svg[role="img"] text')).toHaveCount(2);
+    await expect(card.locator('svg[role="img"] text').first()).toHaveText('Gap edge');
+    await expect(card.locator('svg[role="img"] text').last()).toHaveText('Gap edge');
+  });
+
+  test('a custom setup gets the generic examples rather than an empty space', async ({ page }) => {
+    await gotoPlaybook(page);
+
+    await page.getByPlaceholder(/Fair Value Gap/).fill('My Own Setup');
+    await page.getByRole('button', { name: 'Add', exact: true }).click();
+
+    const card = page
+      .locator('div.rounded-2xl', { has: page.getByTitle('My Own Setup', { exact: true }) })
+      .first();
+
+    // A setup the catalog has never heard of still shows a chart with a level, and says
+    // plainly that the chart is generic so it is not read as a picture of their setup.
+    await expect(card.locator(DIAGRAM_WITH_LEVEL)).toHaveCount(2);
+    await card.getByTitle('Show study guide').click();
+    await expect(card.getByText(/generic rising and\s+falling examples/i)).toBeVisible();
   });
 
   test('default watched setups are highlighted with a clickable badge', async ({ page }) => {

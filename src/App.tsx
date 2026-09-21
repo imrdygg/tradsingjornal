@@ -19,8 +19,8 @@ import { DailyReviewModal } from './components/review/DailyReviewModal';
 import { PlanLockPreviewModal } from './components/today/PlanLockPreviewModal';
 import { CoachCheckpointCard } from './components/today/CoachCheckpointCard';
 import { CoachEntryComparison } from './components/today/CoachEntryComparison';
-import { askEntryCall, type PlanCoachContext } from './lib/ai/plan-coach';
-import type { EntryCallResponse } from './lib/ai/coach-types';
+import { askEntryCall, buildCoachPlanPatch, type PlanCoachContext } from './lib/ai/plan-coach';
+import type { CoachPlanFields, EntryCallResponse } from './lib/ai/coach-types';
 
 /**
  * Tab views load on demand.
@@ -617,6 +617,28 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     }),
     [todayTradingDay, instruments, setups, trades, tradingDays, reviews, profile.timezone]
   );
+
+  /**
+   * Writes a coach-drafted plan from the Markets tab into today's plan.
+   *
+   * The draft was made for the one symbol on the chart, so it becomes the day's primary
+   * instrument only when the journal's own catalog actually holds that symbol: a chart of
+   * a market this app cannot price must never redirect the day's sizing. Nothing here
+   * locks the plan — the trader still reviews and locks it themselves.
+   */
+  const handleApplyChartPlan = (draft: CoachPlanFields, symbol: string) => {
+    const key = symbol.trim().toLowerCase();
+    const match = instruments.find(
+      (inst) => inst.symbol.toLowerCase() === key || inst.id.toLowerCase() === key
+    );
+    const patch = buildCoachPlanPatch({
+      day: todayTradingDay,
+      draft,
+      setups,
+      primaryInstrument: match?.symbol,
+    });
+    handleSaveDay({ ...todayTradingDay, ...patch });
+  };
 
   /**
    * Asks the coach for its own call on an entry that was just recorded, and stores it
@@ -1464,6 +1486,8 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             timezone={profile.timezone}
             maxDrawdown={profile.maxDrawdown ?? null}
             primaryInstrument={instrumentSymbol(instruments, todayTradingDay.primaryInstrument)}
+            onApplyPlan={handleApplyChartPlan}
+            planLocked={!!todayTradingDay.lockedAt}
             theme={theme}
           />
         );

@@ -1,5 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CandlestickChart, RefreshCw, Sparkles, TrendingDown, TrendingUp } from 'lucide-react';
+import {
+  CandlestickChart,
+  Check,
+  Lock,
+  RefreshCw,
+  Sparkles,
+  TrendingDown,
+  TrendingUp,
+} from 'lucide-react';
 import {
   CHART_SYMBOLS,
   chartQuoteSymbol,
@@ -14,7 +22,7 @@ import {
   type CoachErrorCode,
   type CoachResult,
 } from '../../lib/ai/coach-client';
-import type { ChartReadResponse } from '../../lib/ai/coach-types';
+import type { ChartReadResponse, CoachPlanFields } from '../../lib/ai/coach-types';
 import {
   fetchInstrumentQuote,
   formatQuotePercent,
@@ -53,6 +61,15 @@ interface MarketsViewProps {
   maxDrawdown?: number | null;
   /** Today's primary instrument, used as the default chart when it is chartable. */
   primaryInstrument?: string;
+  /**
+   * Writes a coach-drafted plan into today's plan, for the symbol it was drafted from.
+   *
+   * The plan is always for the one instrument on screen: the trader charts a single
+   * symbol at a time, so the coach is never asked for a plan across every market.
+   */
+  onApplyPlan: (draft: CoachPlanFields, symbol: string) => void;
+  /** A locked plan needs a recorded reason to change, so nothing is offered for it. */
+  planLocked?: boolean;
   theme: 'dark' | 'light';
 }
 
@@ -103,6 +120,8 @@ export const MarketsView: React.FC<MarketsViewProps> = ({
   timezone,
   maxDrawdown,
   primaryInstrument,
+  onApplyPlan,
+  planLocked = false,
   theme,
 }) => {
   const [symbolId, setSymbolId] = useState<string>(() => findChartSymbol(primaryInstrument).id);
@@ -136,6 +155,8 @@ export const MarketsView: React.FC<MarketsViewProps> = ({
 
   // ---- The coach's read of the chart ----
   const [opinion, setOpinion] = useState<OpinionState>(IDLE_OPINION);
+  // Set when the trader accepts the drafted plan, so the card can confirm it once.
+  const [planAppliedAt, setPlanAppliedAt] = useState<string | null>(null);
 
   const digest = useMemo(
     () =>
@@ -174,15 +195,59 @@ export const MarketsView: React.FC<MarketsViewProps> = ({
     }
   }
 
-  // Switching instruments clears the previous read: it described a different chart.
+  // Switching instruments clears the previous read: it described a different chart. The
+  // applied note goes with it — it was about the plan for the symbol just left.
   useEffect(() => {
     setOpinion(IDLE_OPINION);
+    setPlanAppliedAt(null);
   }, [symbolId]);
 
   const data: ChartReadResponse | null =
     opinion.result?.ok && opinion.result.data
       ? (opinion.result.data as ChartReadResponse)
       : null;
+
+  /**
+   * The plan half of the read, with defaults filled in.
+   *
+   * The chart read is the older half of this response and the plan fields are new, so a
+   * deployment still running the previous function would answer without them. Reading
+   * them through defaults keeps the Markets tab working against either shape — a missing
+   * plan shows as nothing to apply rather than crashing the view.
+   */
+  const planFields: CoachPlanFields | null = data
+    ? {
+        bias: data.bias ?? 'unsure',
+        contracts: typeof data.contracts === 'number' ? data.contracts : 0,
+        setups: Array.isArray(data.setups) ? data.setups : [],
+        waitingFor: typeof data.waitingFor === 'string' ? data.waitingFor : '',
+        stayOutIf: typeof data.stayOutIf === 'string' ? data.stayOutIf : '',
+        levels: Array.isArray(data.levels) ? data.levels : [],
+      }
+    : null;
+
+  // Whether the coach drafted anything worth writing into the plan. A bias on its own is
+  // not a plan, so it does not count.
+  const planWritable = !!planFields && (
+    planFields.contracts >= 1 ||
+    planFields.setups.length > 0 ||
+    planFields.waitingFor.length > 0 ||
+    planFields.stayOutIf.length > 0 ||
+    planFields.levels.length > 0
+  );
+
+  /**
+   * Whether the charted symbol is one the journal can price.
+   *
+   * A symbol the catalog does not hold still gets its plan drafted, but it must not become
+   * today's primary instrument: the app would then size and price the day on a contract it
+   * does not know.
+   */
+  const chartedInstrument = instruments.find(
+    (inst) =>
+      inst.symbol.toLowerCase() === symbol.id.toLowerCase() ||
+      inst.id.toLowerCase() === symbol.id.toLowerCase()
+  );
 
   const directionStyle = data
     ? data.direction === 'long'
@@ -389,6 +454,129 @@ export const MarketsView: React.FC<MarketsViewProps> = ({
                     </li>
                   ))}
                 </ul>
+              </div>
+            )}
+
+            {/*
+              The same read, as a draft of today's plan.
+
+              Deliberately about this chart only: one symbol is on screen, so the coach is
+              asked to plan for that one instrument and never for the journal's whole list.
+              It fills the plan fields and stops there — locking the day stays the trader's
+              own click, on the same plan they can edit first.
+            */}
+            {planFields && (
+              <div
+                className="space-y-3 rounded-xl border border-amber-900/50 bg-amber-950/10 p-3.5"
+                data-testid="chart-read-plan"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[10px] font-mono uppercase font-bold text-amber-400">
+                    Today's plan for {symbol.label}
+                  </span>
+                  {planAppliedAt ? (
+                    <span className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-400">
+                      <Check className="w-3.5 h-3.5 stroke-[3]" />
+                      Written into today's plan
+                    </span>
+                  ) : (
+                    <button
+                      id="markets-apply-plan"
+                      onClick={() => {
+                        onApplyPlan(planFields, symbol.id);
+                        setPlanAppliedAt(new Date().toISOString());
+                      }}
+                      disabled={planLocked || !planWritable}
+                      className="flex items-center gap-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-zinc-950 px-3.5 py-2 text-[11px] font-bold shadow-sm transition-all hover:scale-[1.02] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100"
+                    >
+                      <Check className="w-3 h-3 stroke-[3]" />
+                      Use as today's plan
+                    </button>
+                  )}
+                </div>
+
+                <p className="text-[11px] text-zinc-400 leading-relaxed">
+                  Drafted from the {symbol.label} chart alone. Applying it fills today's plan
+                  fields for this instrument — it does not lock anything, and the plan stays
+                  yours to edit.
+                </p>
+
+                {planWritable ? (
+                  <>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      <div className="rounded-lg border border-zinc-800 bg-zinc-950/80 px-2 py-1.5">
+                        <span className="text-[10px] text-zinc-500 block uppercase font-mono">
+                          Bias
+                        </span>
+                        <span className="text-zinc-100 font-mono font-bold text-xs">
+                          {planFields.bias}
+                        </span>
+                      </div>
+                      <div className="rounded-lg border border-zinc-800 bg-zinc-950/80 px-2 py-1.5">
+                        <span className="text-[10px] text-zinc-500 block uppercase font-mono">
+                          Contracts
+                        </span>
+                        <span className="text-zinc-100 font-mono font-bold text-xs">
+                          {planFields.contracts >= 1 ? planFields.contracts : 'unchanged'}
+                        </span>
+                      </div>
+                      <div className="rounded-lg border border-zinc-800 bg-zinc-950/80 px-2 py-1.5">
+                        <span className="text-[10px] text-zinc-500 block uppercase font-mono">
+                          Setups
+                        </span>
+                        <span className="text-zinc-100 font-mono font-bold text-xs">
+                          {planFields.setups.length ? planFields.setups.join(', ') : 'unchanged'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="grid sm:grid-cols-2 gap-3">
+                      <p className="text-[11px] text-zinc-300 leading-relaxed">
+                        <span className="text-zinc-500 uppercase font-mono text-[10px] block">
+                          What am I waiting for?
+                        </span>
+                        {planFields.waitingFor || (
+                          <span className="text-zinc-500">unchanged from your plan</span>
+                        )}
+                      </p>
+                      <p className="text-[11px] text-zinc-300 leading-relaxed">
+                        <span className="text-zinc-500 uppercase font-mono text-[10px] block">
+                          Stay out if
+                        </span>
+                        {planFields.stayOutIf || (
+                          <span className="text-zinc-500">unchanged from your plan</span>
+                        )}
+                      </p>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-[11px] text-zinc-500 leading-relaxed">
+                    The coach drafted no plan fields from this chart, so there is nothing to write
+                    into today's plan.
+                  </p>
+                )}
+
+                {planFields.levels.length > 0 && (
+                  <p className="text-[11px] text-zinc-500 leading-relaxed">
+                    The {planFields.levels.length} level
+                    {planFields.levels.length === 1 ? '' : 's'} above become today's planned levels.
+                  </p>
+                )}
+
+                {planLocked && (
+                  <p className="text-[11px] text-zinc-400 leading-relaxed flex items-start gap-1.5">
+                    <Lock className="w-3.5 h-3.5 mt-0.5 shrink-0 text-zinc-500" />
+                    Today's plan is locked, so it cannot be filled from here. Unlock it first if you
+                    want to plan around this chart.
+                  </p>
+                )}
+
+                {!chartedInstrument && (
+                  <p className="text-[11px] text-zinc-400 leading-relaxed">
+                    {symbol.label} is not one of your journal instruments, so today's primary
+                    instrument keeps its current setting.
+                  </p>
+                )}
               </div>
             )}
           </div>

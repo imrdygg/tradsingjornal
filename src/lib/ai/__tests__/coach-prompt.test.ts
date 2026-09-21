@@ -11,9 +11,9 @@ import {
   isCoachMode,
   parseCoachResponse,
 } from '../coach-prompt';
-import type { CoachTradeFacts } from '../coach-types';
+import type { ChartReadResponse, CoachTradeFacts } from '../coach-types';
 import { buildJournalDigest } from '../journal-digest';
-import type { MarketBrief } from '../market-data';
+import type { DailyBars, MarketBrief } from '../market-data';
 import { DailyReview, DailyReviewQuestions, Trade, TradingDay } from '../../../types';
 import { DEFAULT_INSTRUMENTS } from '../../trading/instruments';
 
@@ -881,5 +881,100 @@ describe('opinion modes', () => {
     expect(() =>
       parseCoachResponse('entrycall', { direction: 'long', entry: 7740, stop: 7730, target: 7760 })
     ).toThrow(/rationale/);
+  });
+});
+
+/**
+ * The Markets chart read doubles as a draft of today's plan.
+ *
+ * The trader is looking at one symbol at a time, so the plan half must be asked for and
+ * read back as a plan for that instrument alone — and, because the read is the feature
+ * they actually asked for, a response that arrives without the plan half must still give
+ * a usable read rather than an error.
+ */
+describe('the chart read drafts today’s plan', () => {
+  const chartSeries: DailyBars = {
+    ok: true,
+    symbol: 'MES',
+    yahooSymbol: 'MES=F',
+    fetchedAt: '2026-09-18T13:00:00.000Z',
+    bars: [
+      { date: '2026-09-16', open: 7700, high: 7725, low: 7695, close: 7720, volume: 1000 },
+      { date: '2026-09-17', open: 7720, high: 7745, low: 7715, close: 7740, volume: 1100 },
+      { date: '2026-09-18', open: 7740, high: 7760, low: 7735, close: 7755, volume: 1200 },
+    ],
+  };
+
+  it('asks for the plan fields, scoped to the instrument on the chart', () => {
+    const shape = COACH_RESPONSE_SHAPES.chartread;
+    for (const field of ['"bias"', '"contracts"', '"waitingFor"', '"stayOutIf"', '"setups"']) {
+      expect(shape).toContain(field);
+    }
+    expect(shape).toContain('this instrument only');
+
+    const { userPrompt } = buildCoachPrompt('chartread', digestFor(), undefined, undefined, {
+      instrument: 'MES',
+      chartSeries,
+    });
+    expect(userPrompt).toContain('DAILY CHART DATA: MES');
+    // Without this the model plans for the whole watchlist instead of the chart on screen.
+    expect(userPrompt).toContain("draft today's plan for THIS instrument alone");
+    expect(userPrompt).toContain('do not assume they will trade');
+  });
+
+  it('parses the drafted plan fields alongside the read', () => {
+    const parsed = parseCoachResponse('chartread', {
+      headline: 'Higher closes, price near the top of the series.',
+      patternRead: 'The three closes rise and the last sits near the series high.',
+      levels: [{ price: 7760, label: 'series high' }],
+      direction: 'long',
+      entry: 7750,
+      stop: 7735,
+      target: 7790,
+      bias: 'BULLISH',
+      contracts: 2.6,
+      waitingFor: 'Hold above 7740 on the first pullback.',
+      stayOutIf: 'A close back under the series low.',
+      setups: ['Breakout', 7],
+      fitsTheirTrading: 'It fits the setup they already trade.',
+      risks: ['The series is short.'],
+      rationale: 'This is my read and it can be wrong.',
+      confidence: 'medium',
+      basedOn: ['three daily closes'],
+    }) as ChartReadResponse;
+
+    expect(parsed.bias).toBe('bullish');
+    // Whole contracts, and a fractional answer is rounded rather than shown as 2.6.
+    expect(parsed.contracts).toBe(3);
+    expect(parsed.waitingFor).toContain('7740');
+    expect(parsed.stayOutIf).toContain('series low');
+    // A non-string entry in the list is dropped, like every other list here.
+    expect(parsed.setups).toEqual(['Breakout']);
+  });
+
+  it('still returns a usable read when the plan half is missing', () => {
+    // 0 contracts and empty text are what the plan applier reads as "write nothing", so
+    // an older or thinner answer degrades to a read-only result instead of an error.
+    const parsed = parseCoachResponse('chartread', {
+      headline: 'h',
+      patternRead: 'p',
+      levels: [],
+      direction: 'skip',
+      entry: null,
+      stop: null,
+      target: null,
+      fitsTheirTrading: 'f',
+      risks: [],
+      rationale: 'r',
+      confidence: 'low',
+      basedOn: [],
+    }) as ChartReadResponse;
+
+    expect(parsed.direction).toBe('skip');
+    expect(parsed.contracts).toBe(0);
+    expect(parsed.bias).toBe('unsure');
+    expect(parsed.waitingFor).toBe('');
+    expect(parsed.stayOutIf).toBe('');
+    expect(parsed.setups).toEqual([]);
   });
 });

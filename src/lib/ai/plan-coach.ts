@@ -1,8 +1,17 @@
-import type { DailyReview, Instrument, Setup, Trade, TradingDay } from '../../types';
+import type {
+  DailyReview,
+  ImportantLevel,
+  Instrument,
+  MarketBias,
+  Setup,
+  Trade,
+  TradingDay,
+} from '../../types';
 import { buildJournalDigest, type JournalDigest } from './journal-digest';
 import { requestCoach, type CoachResult } from './coach-client';
 import type {
   CoachEntryFacts,
+  CoachPlanFields,
   CoachPositionFacts,
   PlanFieldName,
 } from './coach-types';
@@ -50,6 +59,82 @@ export function buildPlanCoachDigest(context: PlanCoachContext): JournalDigest {
     todayTradeDate: context.day.tradeDate,
     timezone: context.timezone,
   });
+}
+
+/**
+ * The plan fields a coach draft would change, ready to merge into the day.
+ *
+ * Every key is optional and the applier only sets what the draft actually spoke to, so a
+ * field the coach did not write keeps whatever the trader already typed.
+ */
+export interface CoachPlanPatch {
+  marketBias?: MarketBias;
+  contractsPlanned?: number;
+  watchedSetups?: string[];
+  waitingFor?: string;
+  stayOutIf?: string;
+  importantLevels?: ImportantLevel[];
+  /** The instrument the draft was made for, when the catalog knows it. */
+  primaryInstrument?: string;
+}
+
+/**
+ * Turns a coach draft into the fields to write into the day.
+ *
+ * One implementation for both places a draft can be accepted — the Today tab's plan
+ * builder and the Markets tab's chart read — so the two cannot drift into filling the
+ * plan differently. It is pure and returns a patch rather than saving: nothing here
+ * locks a plan, edits risk parameters or touches a trade, and the caller decides when to
+ * write it.
+ *
+ * Three rules keep it honest:
+ * - Setup names are matched back to the trader's own catalog and stored with its
+ *   spelling. A name the playbook does not know is dropped rather than injected as a
+ *   setup that cannot be opened.
+ * - An empty text field writes nothing, so a partial draft never blanks the trader's own
+ *   waiting-for or stay-out-if text.
+ * - `contracts` of 0 means the coach did not size the day, so the planned size is left
+ *   exactly as it was.
+ */
+export function buildCoachPlanPatch(params: {
+  day: TradingDay;
+  draft: CoachPlanFields;
+  setups: Setup[];
+  /**
+   * The charted instrument, as the draft was made for it. Only passed when the trader is
+   * charting a symbol the journal's catalog actually has, so a plan can never name an
+   * instrument the app cannot price.
+   */
+  primaryInstrument?: string;
+}): CoachPlanPatch {
+  const { day, draft, setups, primaryInstrument } = params;
+
+  const patch: CoachPlanPatch = { marketBias: draft.bias };
+
+  const canonicalSetups = setups
+    .filter((setup) =>
+      draft.setups.some((name) => name.trim().toLowerCase() === setup.name.toLowerCase())
+    )
+    .map((setup) => setup.name);
+  if (canonicalSetups.length) patch.watchedSetups = canonicalSetups;
+
+  if (draft.contracts >= 1) patch.contractsPlanned = draft.contracts;
+
+  if (draft.waitingFor.trim()) patch.waitingFor = draft.waitingFor.trim();
+  if (draft.stayOutIf.trim()) patch.stayOutIf = draft.stayOutIf.trim();
+
+  if (draft.levels.length) {
+    patch.importantLevels = draft.levels.map((level, index) => ({
+      id: `level-coach-${Date.now()}-${index}`,
+      tradingDayId: day.id,
+      price: level.price,
+      label: level.label || undefined,
+    }));
+  }
+
+  if (primaryInstrument) patch.primaryInstrument = primaryInstrument;
+
+  return patch;
 }
 
 /** Drafts text for one plan field. The trader decides whether to keep it. */

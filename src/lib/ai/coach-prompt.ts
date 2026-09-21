@@ -805,13 +805,19 @@ This is recorded beside the trader's own entry and compared with it later, so be
   "entry": "the level you would enter at, a number from the data, or null when you would skip",
   "stop": "the level your stop would sit at, a number, or null when you would skip",
   "target": "the level you would aim for, a number, or null when you would skip",
+  "bias": "one of bullish, bearish, neutral, unsure: the bias you would record for today's plan on this instrument",
+  "contracts": "whole number of contracts for today's plan on this instrument, sized so entry-to-stop risk stays inside the planned loss limit AND inside the room left in RISK CAPACITY. Return 0 if you would not plan a size, and 0 when you would stand aside",
+  "waitingFor": "1-2 first-person sentences on today's plan for this instrument: the condition to wait for before acting on this read",
+  "stayOutIf": "1-2 first-person sentences on today's plan: what would keep you out today",
+  "setups": ["names of setups from the trader's own playbook that fit this chart; empty only if none do"],
   "fitsTheirTrading": "1-3 sentences on how the trade you would consider squares with THIS trader's documented habits — setup record, discipline scores, repeated leaks. If it repeats one of their leaks, say so",
   "risks": ["1-3 specific things that would make acting on this read a mistake, including when the data is thin"],
   "rationale": "3-4 sentences: the read, the side, why that size fits their risk limit, and plainly that this is your opinion and can be wrong",
   "confidence": "one of low, medium, high",
   "basedOn": ["each bar, level and journal fact you used, one per item, quoting the numbers"]
 }
-Every level you return must be a number from DAILY CHART DATA or LIVE READ. If the chart data is unavailable, return skip with null levels, say so, and base fitsTheirTrading on the journal alone. Standing aside is a real answer.`,
+Every level you return must be a number from DAILY CHART DATA or LIVE READ. If the chart data is unavailable, return skip with null levels, say so, and base fitsTheirTrading on the journal alone. Standing aside is a real answer.
+You are also drafting TODAY'S PLAN around this one instrument: bias, contracts, waitingFor, stayOutIf, setups and levels above. They are for this instrument only — never for another market, and never a plan that covers several. They are written into the trader's plan only if the trader accepts them, so keep them about this chart and this trader's own playbook.`,
 };
 
 /**
@@ -886,7 +892,13 @@ export function buildCoachPrompt(
         `closes, where price sits inside the series range, any streak the data states — naming only ` +
         `levels that are numbers you were handed. Then say what YOU would do looking at it, or that ` +
         `you would stand aside. Read the journal digest the same way you always do: if the trade you ` +
-        `would consider repeats one of this trader's documented leaks, say so under fitsTheirTrading.`
+        `would consider repeats one of this trader's documented leaks, say so under fitsTheirTrading. ` +
+        `Then draft today's plan for THIS instrument alone: the bias you would record, a size that ` +
+        `keeps entry-to-stop risk inside the planned loss limit and inside the room left in RISK ` +
+        `CAPACITY, what you would wait for, what would keep you out, and which of the trader's own ` +
+        `playbook setups fit this chart. The trader is charting one symbol at a time, so the plan is ` +
+        `for that symbol only — do not plan for any other market, and do not assume they will trade ` +
+        `several today.`
       : `Critique the single trade described below. Judge the decision and the execution separately. ` +
         `Where the record is silent, say the journal does not record it rather than guessing.`;
 
@@ -992,6 +1004,16 @@ function asPositiveInt(value: unknown, field: string, fallback: number): number 
 function asEnum<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
   const raw = typeof value === 'string' ? value.trim().toLowerCase() : '';
   return (allowed as readonly string[]).includes(raw) ? (raw as T) : fallback;
+}
+
+/**
+ * Text that may be absent, for the fields a read fills only when it has something to say.
+ *
+ * Unlike `asText` this never throws: an omitted field stays empty, and the applier reads
+ * an empty field as "leave what the trader already wrote".
+ */
+function asLooseText(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 /** Levels the draft plan wants marked; anything without a usable price is dropped. */
@@ -1188,6 +1210,15 @@ export function parseCoachResponse(
       entry: hasTrade ? asNumberOrNull(obj.entry, 'entry') : null,
       stop: hasTrade ? asNumberOrNull(obj.stop, 'stop') : null,
       target: hasTrade ? asNumberOrNull(obj.target, 'target') : null,
+      // The plan fields are parsed tolerantly, unlike the read above. A chart read is the
+      // feature the trader asked for; a model that omits the plan half must not turn a
+      // usable read into an error. An empty value means "write nothing for this field",
+      // which the applier honours, and 0 contracts means the size is left alone.
+      bias: asEnum(obj.bias, ['bullish', 'bearish', 'neutral', 'unsure'] as const, 'unsure'),
+      contracts: asPositiveInt(obj.contracts, 'contracts', 0),
+      waitingFor: asLooseText(obj.waitingFor),
+      stayOutIf: asLooseText(obj.stayOutIf),
+      setups: asTextList(obj.setups, 'setups'),
       fitsTheirTrading: asText(obj.fitsTheirTrading, 'fitsTheirTrading'),
       risks: asTextList(obj.risks, 'risks'),
       rationale: asText(obj.rationale, 'rationale'),

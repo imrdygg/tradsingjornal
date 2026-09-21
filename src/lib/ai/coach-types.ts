@@ -1,4 +1,4 @@
-import type { CoachEntryCall, QuestionAnswer } from '../../types';
+import type { CoachEntryCall, MarketBias, QuestionAnswer } from '../../types';
 
 /** Re-exported so the coach's public surface stays one import for its callers. */
 export type { CoachEntryCall } from '../../types';
@@ -97,23 +97,36 @@ export interface PlannedLevel {
   label: string;
 }
 
-/** A whole draft plan for the day. */
-export interface PlanBuildResponse {
-  headline: string;
-  bias: 'bullish' | 'bearish' | 'neutral' | 'unsure';
-  /** Which side the coach would take today, or 'skip' when it would stand aside. */
-  direction: 'long' | 'short' | 'skip';
-  /** The level it would enter at, quoting the live read. Null when it would skip. */
-  entry: number | null;
-  stop: number | null;
-  target: number | null;
-  /** Contracts the risk limit and the trader's own sizing history support. */
+/**
+ * The plan fields a coach draft can write into TODAY'S plan.
+ *
+ * Shared by the two modes that draft a day — `planbuild` on the Today tab and `chartread`
+ * in the Markets tab — so one applier fills the plan for both and the two can never write
+ * the fields differently. Every field is a value the plan form itself accepts; nothing
+ * here can lock a plan or touch a trade.
+ *
+ * `contracts` is 0 when the coach did not size the day, which the applier reads as "leave
+ * the planned size alone" rather than as a plan for no contracts.
+ */
+export interface CoachPlanFields {
+  bias: MarketBias;
   contracts: number;
   waitingFor: string;
   stayOutIf: string;
   /** Setup names from the trader's own playbook that fit today. */
   setups: string[];
   levels: PlannedLevel[];
+}
+
+/** A whole draft plan for the day. */
+export interface PlanBuildResponse extends CoachPlanFields {
+  headline: string;
+  /** Which side the coach would take today, or 'skip' when it would stand aside. */
+  direction: 'long' | 'short' | 'skip';
+  /** The level it would enter at, quoting the live read. Null when it would skip. */
+  entry: number | null;
+  stop: number | null;
+  target: number | null;
   /** Plainly labelled as an opinion, with the risk of being wrong stated. */
   rationale: string;
   confidence: 'low' | 'medium' | 'high';
@@ -147,13 +160,19 @@ export interface EntryCallResponse {
   rationale: string;
 }
 
-/** A read of an instrument's recent daily bars, shown under the chart. */
-export interface ChartReadResponse {
+/**
+ * A read of an instrument's recent daily bars, shown under the chart.
+ *
+ * It doubles as a draft of today's plan for the instrument being charted: besides the
+ * read, it carries the `CoachPlanFields` a day plan needs, so the trader can turn the
+ * read straight into the day's plan for that one symbol. The chart read is asked for one
+ * instrument at a time, and the plan it drafts is always for that instrument — never for
+ * every symbol the journal knows.
+ */
+export interface ChartReadResponse extends CoachPlanFields {
   headline: string;
   /** What the daily bars actually show: direction, ranges, streaks — quoting the numbers given. */
   patternRead: string;
-  /** Levels named from the data itself (series high/low, recent closes), each labelled. */
-  levels: PlannedLevel[];
   /** The trade it would consider from this chart, or 'skip' when it would stand aside. */
   direction: 'long' | 'short' | 'skip';
   entry: number | null;

@@ -25,7 +25,6 @@ import {
   Setup,
   Instrument,
   Trade,
-  ImportantLevel,
 } from '../../types';
 import { ImportantLevelsEditor } from './ImportantLevelsEditor';
 import { PlanChangeDialog } from './PlanChangeDialog';
@@ -40,7 +39,7 @@ import { ImageLightboxModal } from '../common/ImageLightboxModal';
 import { MesScaleInBreakevenCalculator } from './MesScaleInBreakevenCalculator';
 import { PlanFieldCoach } from './PlanFieldCoach';
 import { PlanBuilderPanel } from './PlanBuilderPanel';
-import type { PlanCoachContext } from '../../lib/ai/plan-coach';
+import { buildCoachPlanPatch, type PlanCoachContext } from '../../lib/ai/plan-coach';
 import type { PlanBuildResponse } from '../../lib/ai/coach-types';
 import {
   drawdownShortfall,
@@ -272,28 +271,9 @@ export const DailyPlanForm: React.FC<DailyPlanFormProps> = ({
    * fresh ids, and everything the draft does not speak to is left exactly as it was.
    */
   const applyCoachDraft = (draft: PlanBuildResponse) => {
-    const canonicalSetups = setups
-      .filter((setup) =>
-        draft.setups.some((name) => name.trim().toLowerCase() === setup.name.toLowerCase())
-      )
-      .map((setup) => setup.name);
-
-    const levels: ImportantLevel[] = draft.levels.map((level, index) => ({
-      id: `level-coach-${Date.now()}-${index}`,
-      tradingDayId: day.id,
-      price: level.price,
-      label: level.label || undefined,
-    }));
-
-    onSaveDay({
-      ...day,
-      marketBias: draft.bias,
-      contractsPlanned: draft.contracts,
-      watchedSetups: canonicalSetups.length ? canonicalSetups : day.watchedSetups,
-      waitingFor: draft.waitingFor,
-      stayOutIf: draft.stayOutIf,
-      importantLevels: levels.length ? levels : day.importantLevels,
-    });
+    // The mapping lives in the coach module, shared with the Markets tab's chart read, so
+    // accepting a draft on either surface fills exactly the same fields the same way.
+    onSaveDay({ ...day, ...buildCoachPlanPatch({ day, draft, setups }) });
   };
 
   return (

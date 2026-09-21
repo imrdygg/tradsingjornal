@@ -17,6 +17,7 @@ import {
   TrendingDown,
   HelpCircle,
   Clock,
+  BookOpen,
 } from 'lucide-react';
 import {
   Trade,
@@ -54,6 +55,8 @@ const REVIEW_QUESTIONS: Array<{
   { key: 'wouldTakeAgain', label: 'Would you take this trade again?', desired: 'yes' },
 ];
 
+import { findPatternBySetupName } from '../../lib/playbook/patterns';
+
 interface TradeDetailModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -65,6 +68,8 @@ interface TradeDetailModalProps {
   onDelete?: (tradeId: string) => void;
   /** Saves a freshly completed execution review for a closed trade. */
   onSaveExecutionReview?: (tradeId: string, review: TradeExecutionReview) => void;
+  /** Opens the matching chart pattern in the Playbook, when this trade's setup has one. */
+  onStudyPattern?: (patternId: string) => void;
 }
 
 const money = (value: number) =>
@@ -134,7 +139,14 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
   onCloseTrade,
   onDelete,
   onSaveExecutionReview,
+  onStudyPattern,
 }) => {
+  // A trade's setup links to a playbook pattern only on an exact source-label match.
+  const canStudyPattern = useMemo(
+    () => (onStudyPattern ? findPatternBySetupName(trade?.setupName) : undefined),
+    [onStudyPattern, trade?.setupName]
+  );
+
   // Draft answers for completing a missing review.
   const [draft, setDraft] = useState<Record<string, QuestionAnswer>>({});
   // A CSV has no stop, so an imported trade's risk is a placeholder until it is set.
@@ -194,7 +206,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
   const isMultiLeg = (positionGroup?.legCount ?? 1) > 1;
 
   return (
-    <ModalOverlay>
+    <ModalOverlay onRequestClose={onClose} label="Trade detail">
       <div
         id="trade-detail-modal"
         className="relative my-6 w-full max-w-2xl rounded-2xl border border-zinc-800 bg-zinc-900 p-4 shadow-2xl sm:p-5"
@@ -235,6 +247,23 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
               {trade.session} · Entered {formatTimestamp(trade.entryTime)}
               {trade.exitTime ? ` · Exited ${formatTimestamp(trade.exitTime)}` : ''}
             </p>
+            {/*
+              Where the setup this trade was logged under is also a chart pattern in the
+              playbook, offer the study page. Matched on the exact source label only: a
+              near-match would send the trader to the wrong chart, which is worse than no
+              link at all.
+            */}
+            {canStudyPattern && (
+              <button
+                type="button"
+                id="trade-study-pattern"
+                onClick={() => onStudyPattern?.(canStudyPattern.id)}
+                className="flex items-center gap-1 text-[11px] text-emerald-400 transition-colors hover:text-emerald-300"
+              >
+                <BookOpen className="h-3 w-3" />
+                Study this pattern
+              </button>
+            )}
           </div>
 
           <button

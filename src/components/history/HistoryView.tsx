@@ -322,7 +322,11 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
 
       {/* Day Details Modal */}
       {selectedDay && (
-        <ModalOverlay backdropClassName="bg-black/85 backdrop-blur-sm">
+        <ModalOverlay
+          backdropClassName="bg-black/85 backdrop-blur-sm"
+          onRequestClose={() => setSelectedDayId(null)}
+          label={`Day detail — ${formatTradingDate(selectedDay.tradeDate)}`}
+        >
           <div className="relative my-6 w-full max-w-3xl space-y-6 rounded-2xl border border-zinc-800 bg-zinc-900 p-4 shadow-2xl sm:p-6">
             {/* Header */}
             <div className="flex items-center justify-between border-b border-zinc-800 pb-3">

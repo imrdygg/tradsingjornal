@@ -102,6 +102,8 @@ export const AppShell: React.FC<AppShellProps> = ({
       ? 'Loading'
       : syncStatus === 'error'
       ? 'Sync failed'
+      : syncStatus === 'conflict'
+      ? 'Review sync'
       : syncStatus === 'local'
       ? 'Local only'
       : '';
@@ -113,6 +115,8 @@ export const AppShell: React.FC<AppShellProps> = ({
       ? 'animate-pulse bg-amber-400'
       : syncStatus === 'error'
       ? 'bg-rose-400'
+      : syncStatus === 'conflict'
+      ? 'bg-amber-400'
       : 'bg-zinc-500';
 
   // Rendered in two places: inside the expanded narrow-screen panel and inline on sm+.
@@ -283,7 +287,11 @@ export const AppShell: React.FC<AppShellProps> = ({
                 {syncStatus && (
                   <span
                     className={`font-mono text-[10px] ${
-                      syncStatus === 'error' ? 'text-rose-300' : 'text-zinc-500'
+                      syncStatus === 'error'
+                        ? 'text-rose-300'
+                        : syncStatus === 'conflict'
+                        ? 'text-amber-300'
+                        : 'text-zinc-500'
                     }`}
                   >
                     {syncSummaryWord}

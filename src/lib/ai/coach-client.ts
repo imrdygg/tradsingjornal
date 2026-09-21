@@ -1,4 +1,5 @@
 import { Instrument, Trade, TradingDay } from '../../types';
+import { supabase } from '../supabase';
 import { instrumentSymbol } from '../trading/instruments';
 import {
   buildPositionGroups,
@@ -22,6 +23,7 @@ export type CoachErrorCode =
   | 'rate_limited'
   | 'bad_key'
   | 'bad_response'
+  | 'unauthorized'
   | 'server';
 
 export type CoachResult =
@@ -172,19 +174,45 @@ function isJsonResponse(res: Response): boolean {
  * A non-JSON response is treated as "the function is not deployed" rather than an
  * error, because that is what both `vite dev` and a missing function actually return.
  */
+/**
+ * The session token for this request, when there is one.
+ *
+ * The endpoint requires a signed-in session, so every coach call carries the
+ * trader's access token. `getSession` refreshes an expired token first, which keeps
+ * a long-open tab working without a reload. In local-only mode there is no
+ * Supabase client and no token to send.
+ */
+async function authHeaders(): Promise<Record<string, string>> {
+  if (!supabase) return {};
+  try {
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  } catch (err) {
+    // Not fatal: the request goes out without a token and the endpoint explains
+    // that signing in is required, which is the more useful message.
+    console.warn('Could not read the session for the coach request:', err);
+    return {};
+  }
+}
+
 export async function requestCoach(
   mode: CoachMode,
   digest: JournalDigest,
   trade?: CoachTradeFacts
 ): Promise<CoachResult> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  // The planreview opinion adds a market fetch to the coach round trip, so it gets a
+  // little longer before the request is abandoned.
+  const timeoutMs = mode === 'planreview' ? REQUEST_TIMEOUT_MS + 15_000 : REQUEST_TIMEOUT_MS;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const auth = await authHeaders();
 
   let res: Response;
   try {
     res = await fetch('/api/coach', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...auth },
       body: JSON.stringify({ mode, digest, trade }),
       signal: controller.signal,
     });
@@ -195,7 +223,11 @@ export async function requestCoach(
       ok: false,
       code: 'network',
       message: aborted
-        ? 'The coach took too long to answer and the request was stopped. Try again.'
+        ? mode === 'planreview'
+          ? 'Collecting the plan opinion took too long and the request was stopped. Try again.'
+          : 'The coach took too long to answer and the request was stopped. Try again.'
+        : mode === 'planreview'
+        ? 'Could not reach the coach service to review the plan. Check your connection and try again.'
         : 'Could not reach the coach service. Check your connection and try again.',
     };
   }
@@ -234,12 +266,14 @@ export async function requestCoach(
     const mapped: CoachErrorCode =
       code === 'unconfigured'
         ? 'unconfigured'
-        : code === 'rate_limited'
+        // Both the server's own ceiling and Gemini's exhausted quota leave the trader
+        // with the same move: wait, so they are reported the same way.
+        : code === 'rate_limited' || code === 'busy' || code === 'model_unavailable'
         ? 'rate_limited'
         : code === 'bad_key'
         ? 'bad_key'
-        : code === 'model_unavailable'
-        ? 'rate_limited'
+        : code === 'sign_in_required' || code === 'unauthorized'
+        ? 'unauthorized'
         : 'server';
     return { ok: false, code: mapped, message };
   }

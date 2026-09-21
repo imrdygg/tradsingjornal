@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import {
   AppShell,
@@ -13,14 +13,42 @@ import { TradeCloseModal } from './components/trades/TradeCloseModal';
 import { RiskFixupModal } from './components/trades/RiskFixupModal';
 import { TradeDetailModal } from './components/trades/TradeDetailModal';
 import { DailyReviewModal } from './components/review/DailyReviewModal';
-import { TradesView } from './components/trades/TradesView';
-import { HistoryView } from './components/history/HistoryView';
-import { AnalyticsView } from './components/analytics/AnalyticsView';
-import { InsightsView } from './components/insights/InsightsView';
-import { CoachView } from './components/coach/CoachView';
+import { PlanLockPreviewModal } from './components/today/PlanLockPreviewModal';
 import { CoachCheckpointCard } from './components/today/CoachCheckpointCard';
-import { SettingsView } from './components/settings/SettingsView';
-import { PlaybookView } from './components/playbook/PlaybookView';
+
+/**
+ * Tab views load on demand.
+ *
+ * Only Today is needed for the first paint, yet every tab used to be imported
+ * eagerly, so a phone downloaded the charts, the coach and all 26 playbook
+ * setups before showing today's plan. Each view is a named export, and
+ * `lazy()` only understands default exports, hence the `.then()` hop.
+ *
+ * The modals stay eager on purpose: they open from a tap on the most common
+ * path (recording a trade), and a suspense fallback flashing up in front of
+ * that form would cost more than the bytes it saves.
+ */
+const TradesView = lazy(() =>
+  import('./components/trades/TradesView').then((m) => ({ default: m.TradesView }))
+);
+const HistoryView = lazy(() =>
+  import('./components/history/HistoryView').then((m) => ({ default: m.HistoryView }))
+);
+const AnalyticsView = lazy(() =>
+  import('./components/analytics/AnalyticsView').then((m) => ({ default: m.AnalyticsView }))
+);
+const InsightsView = lazy(() =>
+  import('./components/insights/InsightsView').then((m) => ({ default: m.InsightsView }))
+);
+const CoachView = lazy(() =>
+  import('./components/coach/CoachView').then((m) => ({ default: m.CoachView }))
+);
+const PlaybookView = lazy(() =>
+  import('./components/playbook/PlaybookView').then((m) => ({ default: m.PlaybookView }))
+);
+const SettingsView = lazy(() =>
+  import('./components/settings/SettingsView').then((m) => ({ default: m.SettingsView }))
+);
 import {
   TradingDay,
   Trade,
@@ -30,12 +58,22 @@ import {
   Instrument,
   TradeExecutionReview,
   TradeManagement,
+  PatternStudy,
 } from './types';
 import type { SyncStatus } from './components/layout/SyncStatusBadge';
-import { storage } from './lib/storage';
+import { storage, dismissStorageFailure, measureJournalBytes } from './lib/storage';
 import type { StorageState } from './lib/storage';
+import { useStorageFailure } from './lib/storage/use-storage-failure';
+import { StorageWarningBanner } from './components/common/StorageWarningBanner';
+import { CloudConflictBanner } from './components/common/CloudConflictBanner';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
-import { loadOrMigrateJournal, saveJournal } from './lib/cloud-sync';
+import {
+  loadOrMigrateJournal,
+  loadJournal,
+  saveJournal,
+  overwriteJournal,
+  isJournalConflictError,
+} from './lib/cloud-sync';
 import { parseTradovateCSV } from './lib/trading/tradovate-import';
 import type { CsvImportSummary } from './lib/trading/tradovate-import';
 import { buildPositionGroups, findPositionGroup } from './lib/trading/position-groups';
@@ -81,6 +119,23 @@ function AuthScreen() {
   );
 }
 
+/**
+ * The one deep link this app has: a chart pattern's stable URL.
+ *
+ * Deliberately a string in and a string out, with no pattern data involved — the id is
+ * validated in the playbook chunk, which is loaded on demand. Importing the pattern list
+ * here would drag all 20 patterns' prose into the first paint to check a hash.
+ */
+const PATTERN_HASH_PREFIX = '#chart-patterns/';
+
+function readPatternFromHash(): string | null {
+  if (typeof window === 'undefined') return null;
+  const hash = window.location.hash;
+  if (!hash.startsWith(PATTERN_HASH_PREFIX)) return null;
+  const id = decodeURIComponent(hash.slice(PATTERN_HASH_PREFIX.length)).trim();
+  return id || null;
+}
+
 interface JournalAppProps {
   userId: string;
   userEmail?: string | null;
@@ -97,6 +152,9 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   const [tradingDays, setTradingDays] = useState<TradingDay[]>(() => storage.getTradingDays());
   const [trades, setTrades] = useState<Trade[]>(() => storage.getTrades());
   const [reviews, setReviews] = useState<DailyReview[]>(() => storage.getReviews());
+  const [patternStudies, setPatternStudies] = useState<PatternStudy[]>(() =>
+    storage.getPatternStudies()
+  );
 
   const [activeTab, setActiveTab] = useState<NavTab>('today');
 
@@ -145,6 +203,9 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   const [isCloseModalOpen, setIsCloseModalOpen] = useState(false);
   const [closingTrade, setClosingTrade] = useState<Trade | null>(null);
   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
+  // The plan lock preview: shows stats, the live sector heat map and a coach opinion
+  // before the day's plan is committed. Opened by the lock button, resolved by confirm.
+  const [isLockPreviewOpen, setIsLockPreviewOpen] = useState(false);
   // Trade detail view is stored as an id so it re-renders from live state and
   // immediately reflects a saved execution review.
   const [viewingTradeId, setViewingTradeId] = useState<string | null>(null);
@@ -155,81 +216,191 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(cloudEnabled ? 'loading' : 'local');
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
 
-  const currentState = useMemo<StorageState>(() => ({ profile, instruments, setups, tradingDays, trades, reviews }), [profile, instruments, setups, tradingDays, trades, reviews]);
+  // A failed localStorage write is invisible otherwise: the app keeps working
+  // while nothing is being recorded. Surface it on every tab.
+  const storageFailure = useStorageFailure();
+  const storageUsageBytes = useMemo(
+    () => (storageFailure ? measureJournalBytes() : 0),
+    [storageFailure]
+  );
+
+  const currentState = useMemo<StorageState>(
+    () => ({ profile, instruments, setups, tradingDays, trades, reviews, patternStudies }),
+    [profile, instruments, setups, tradingDays, trades, reviews, patternStudies]
+  );
 
   // Keep the latest state reachable from the sign-out handler without re-running effects.
   const currentStateRef = useRef(currentState);
   currentStateRef.current = currentState;
+
+  // The cloud revision this device last read or wrote. Kept in a ref, not state,
+  // because a successful save changing state would re-run the save effect and
+  // loop forever.
+  const cloudRevisionRef = useRef<number | null>(null);
+  // Set when another device moved the cloud copy on. It also gates the save
+  // effect: further saves could only be refused, and the trader has to pick a
+  // copy before any write can be accepted again.
+  const [syncConflict, setSyncConflict] = useState(false);
+  const [resolvingConflict, setResolvingConflict] = useState(false);
+
+  /**
+   * Adopts a snapshot as the whole journal, local storage included, so a reload
+   * or a cloud copy taken in a conflict cannot leave the two disagreeing.
+   */
+  const applyJournalState = useCallback(
+    (next: StorageState) => {
+      storage.importData(JSON.stringify(next));
+      setProfile({ ...next.profile, id: userId });
+      setInstruments(next.instruments);
+      setSetups(next.setups);
+      setTradingDays(next.tradingDays);
+      setTrades(next.trades);
+      setReviews(next.reviews);
+      setPatternStudies(next.patternStudies ?? []);
+    },
+    [userId]
+  );
 
   useEffect(() => {
     if (!cloudEnabled) return;
     let active = true;
     (async () => {
       try {
-        const cloudState = await loadOrMigrateJournal(userId, currentStateRef.current);
+        const snapshot = await loadOrMigrateJournal(userId, currentStateRef.current);
         if (!active) return;
-        storage.importData(JSON.stringify(cloudState));
-        setProfile({ ...cloudState.profile, id: userId });
-        setInstruments(cloudState.instruments);
-        setSetups(cloudState.setups);
-        setTradingDays(cloudState.tradingDays);
-        setTrades(cloudState.trades);
-        setReviews(cloudState.reviews);
+        cloudRevisionRef.current = snapshot.revision;
+        applyJournalState(snapshot.state);
         setSyncStatus('saved');
         setLastSyncedAt(new Date());
       } catch (error) {
         console.error('Cloud journal load failed:', error);
         setSyncStatus('error');
-        setImportNotification('Cloud sync is unavailable. Your local journal is still available.');
+        setImportNotification(
+          describeSyncFailure(error, 'Cloud sync is unavailable. Your local journal is still available.')
+        );
       } finally {
         if (active) setCloudReady(true);
       }
     })();
     return () => { active = false; };
+  }, [cloudEnabled, userId, applyJournalState]);
+
+  /**
+   * Writes the journal against the revision this device last saw.
+   *
+   * A refusal is reported, never retried: retrying a refused write is precisely
+   * the overwrite the revision guard exists to stop.
+   */
+  const persistJournal = useCallback(async (): Promise<'saved' | 'error' | 'conflict'> => {
+    if (!cloudEnabled) return 'saved';
+    try {
+      cloudRevisionRef.current = await saveJournal(
+        userId,
+        currentStateRef.current,
+        cloudRevisionRef.current
+      );
+      return 'saved';
+    } catch (error) {
+      if (isJournalConflictError(error)) {
+        setSyncConflict(true);
+        return 'conflict';
+      }
+      console.error('Cloud journal save failed:', error);
+      return 'error';
+    }
   }, [cloudEnabled, userId]);
 
+  // `currentState` is not read in the body: it is the trigger. Any journal edit
+  // produces a new object here and schedules the debounced save below.
   useEffect(() => {
-    if (!cloudEnabled || !cloudReady) return;
+    if (!cloudEnabled || !cloudReady || syncConflict) return;
     setSyncStatus('saving');
     const timeout = window.setTimeout(async () => {
-      try {
-        await saveJournal(userId, currentState);
+      const result = await persistJournal();
+      if (result === 'saved') {
         setSyncStatus('saved');
         setLastSyncedAt(new Date());
-      } catch (error) {
-        console.error('Cloud journal save failed:', error);
-        setSyncStatus('error');
+      } else {
+        setSyncStatus(result === 'conflict' ? 'conflict' : 'error');
       }
     }, 350);
     return () => window.clearTimeout(timeout);
-  }, [cloudEnabled, cloudReady, userId, currentState]);
+  }, [cloudEnabled, cloudReady, syncConflict, persistJournal, currentState]);
 
   const retrySave = useCallback(async () => {
     if (!cloudEnabled) return;
     setSyncStatus('saving');
+    const result = await persistJournal();
+    if (result === 'saved') {
+      setSyncStatus('saved');
+      setLastSyncedAt(new Date());
+    } else {
+      setSyncStatus(result === 'conflict' ? 'conflict' : 'error');
+    }
+  }, [cloudEnabled, persistJournal]);
+
+  /**
+   * Resolves a conflict by taking the cloud copy, discarding whatever this
+   * device changed since its last successful save.
+   */
+  const handleUseCloudCopy = useCallback(async () => {
+    setResolvingConflict(true);
+    setSyncStatus('loading');
     try {
-      await saveJournal(userId, currentStateRef.current);
+      const snapshot = await loadJournal(userId);
+      if (snapshot) {
+        cloudRevisionRef.current = snapshot.revision;
+        applyJournalState(snapshot.state);
+      } else {
+        // The other device removed the journal, so this copy is the only one left.
+        cloudRevisionRef.current = await overwriteJournal(userId, currentStateRef.current);
+      }
+      setSyncConflict(false);
       setSyncStatus('saved');
       setLastSyncedAt(new Date());
     } catch (error) {
-      console.error('Cloud journal retry failed:', error);
+      console.error('Cloud journal reload failed:', error);
       setSyncStatus('error');
+    } finally {
+      setResolvingConflict(false);
     }
-  }, [cloudEnabled, userId]);
+  }, [userId, applyJournalState]);
+
+  /**
+   * Resolves a conflict by overwriting the cloud with this device's journal,
+   * discarding the other device's version. Only ever reached from an explicit
+   * choice in the conflict banner.
+   */
+  const handleKeepThisDevice = useCallback(async () => {
+    setResolvingConflict(true);
+    setSyncStatus('saving');
+    try {
+      cloudRevisionRef.current = await overwriteJournal(userId, currentStateRef.current);
+      setSyncConflict(false);
+      setSyncStatus('saved');
+      setLastSyncedAt(new Date());
+    } catch (error) {
+      console.error('Cloud journal overwrite failed:', error);
+      setSyncStatus('error');
+    } finally {
+      setResolvingConflict(false);
+    }
+  }, [userId]);
 
   const handleSignOut = async () => {
     setSigningOut(true);
     let flushed = true;
     if (cloudEnabled && cloudReady) {
       setSyncStatus('saving');
-      try {
-        await saveJournal(userId, currentStateRef.current);
+      const result = await persistJournal();
+      if (result === 'saved') {
         setSyncStatus('saved');
         setLastSyncedAt(new Date());
-      } catch (error) {
+      } else {
+        // A refused or failed final save must not clear the local copy: that is
+        // the only place this session's work would still exist.
         flushed = false;
-        setSyncStatus('error');
-        console.error('Final cloud save failed:', error);
+        setSyncStatus(result === 'conflict' ? 'conflict' : 'error');
       }
     }
     // Only wipe the local journal once the cloud copy is safely up to date,
@@ -291,9 +462,20 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     setTradingDays(storage.getTradingDays());
   };
 
+  /**
+   * Opens the plan lock preview instead of locking outright. Locking commits the day's
+   * risk, so the trader first sees the plan's stats, a live sector heat map and an
+   * honest coach opinion, then confirms. The actual lock happens in confirmLockPlan.
+   */
   const handleLockPlan = () => {
+    setIsLockPreviewOpen(true);
+  };
+
+  /** The confirmed lock: stores the immutable baseline and closes the preview. */
+  const confirmLockPlan = () => {
     storage.lockPlan(todayTradingDay.id);
     setTradingDays(storage.getTradingDays());
+    setIsLockPreviewOpen(false);
   };
 
   /**
@@ -523,6 +705,10 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     setSetups(storage.getSetups());
   };
 
+  const handleSavePatternStudy = (study: PatternStudy) => {
+    setPatternStudies(storage.savePatternStudy(study));
+  };
+
   // Deep-link from the Morning Plan: switching to the Playbook tab focused on
   // today's watched setups. Cleared on the next manual tab change so a later
   // visit to the Playbook starts clean at the top of the list.
@@ -531,12 +717,63 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     setPlaybookFocusSetups(todayTradingDay.watchedSetups || []);
     setActiveTab('playbook');
   }, [todayTradingDay.watchedSetups]);
+
+  /**
+   * The chart-pattern deep link, as `#chart-patterns/<patternId>`.
+   *
+   * The app has no router, so one hash makes a pattern linkable and bookmarkable without
+   * pulling in a routing library for a single screen. It is written on open, cleared on
+   * close, and re-read on load and on `hashchange`, so a pasted or bookmarked link opens
+   * the same pattern again. The write is a `replaceState` on purpose: stepping through
+   * twenty patterns should not leave twenty entries in the back button.
+   */
+  const [playbookFocusPattern, setPlaybookFocusPattern] = useState<string | null>(() =>
+    readPatternFromHash()
+  );
+
+  const handleOpenPattern = useCallback((patternId: string | null) => {
+    setPlaybookFocusPattern(patternId);
+    const next = patternId ? `#chart-patterns/${patternId}` : '';
+    try {
+      window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}${next}`);
+    } catch {
+      // A blocked history write must not stop the pattern from opening.
+    }
+  }, []);
+
+  useEffect(() => {
+    const sync = () => {
+      const patternId = readPatternFromHash();
+      setPlaybookFocusPattern(patternId);
+      if (patternId) setActiveTab('playbook');
+    };
+    // Applies a pasted link on load, and any later hash edit (typed URL, bookmark).
+    sync();
+    window.addEventListener('hashchange', sync);
+    return () => window.removeEventListener('hashchange', sync);
+  }, []);
+
   const handleSelectTab = useCallback(
     (tab: NavTab) => {
       setPlaybookFocusSetups(null);
       setActiveTab(tab);
     },
     []
+  );
+
+  /**
+   * Opens a chart pattern from elsewhere in the app (a trade whose setup is one of the
+   * patterns). Closing the trade first keeps only one dialog on screen: the pattern guide
+   * replaces it rather than stacking on top of it.
+   */
+  const handleStudyPattern = useCallback(
+    (patternId: string) => {
+      setViewingTradeId(null);
+      setPlaybookFocusSetups(null);
+      handleOpenPattern(patternId);
+      setActiveTab('playbook');
+    },
+    [handleOpenPattern]
   );
 
   const handleExportData = () => {
@@ -568,7 +805,11 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     };
 
     if (cloudEnabled && cloudReady) {
-      await saveJournal(userId, fresh);
+      // Deliberate and destructive, so it takes the unconditional write: a
+      // pending conflict must not leave the emptied journal stuck locally while
+      // the cloud still holds everything the trader just wiped.
+      cloudRevisionRef.current = await overwriteJournal(userId, fresh);
+      setSyncConflict(false);
     }
 
     setTrades([]);
@@ -725,6 +966,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               openTrades={todayTrades.filter((t) => t.status === 'open')}
               onSaveDay={handleSaveDay}
               onLockPlan={handleLockPlan}
+              lockPreviewOpen={isLockPreviewOpen}
               onRecordPlanChange={handleRecordPlanChange}
               onOpenPlaybook={handleOpenPlaybook}
               onLogScaleInTrade={openAddTrade}
@@ -851,6 +1093,10 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             onToggleSetup={handleToggleSetup}
             focusSetupNames={playbookFocusSetups ?? undefined}
             watchedSetupNames={todayTradingDay.watchedSetups}
+            patternStudies={patternStudies}
+            onSavePatternStudy={handleSavePatternStudy}
+            focusPatternId={playbookFocusPattern}
+            onOpenPattern={handleOpenPattern}
           />
         );
 
@@ -900,8 +1146,22 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       lastSyncedAt={lastSyncedAt}
       onRetrySync={retrySave}
     >
+      {syncConflict && (
+        <CloudConflictBanner
+          busy={resolvingConflict}
+          onUseCloudCopy={handleUseCloudCopy}
+          onKeepThisDevice={handleKeepThisDevice}
+        />
+      )}
+      {storageFailure && (
+        <StorageWarningBanner
+          failure={storageFailure}
+          usageBytes={storageUsageBytes}
+          onDismiss={dismissStorageFailure}
+        />
+      )}
       {!cloudEnabled && <LocalOnlyNotice />}
-      {renderTabContent()}
+      <Suspense fallback={<TabLoading />}>{renderTabContent()}</Suspense>
 
       {/* Trade Form Modal (Add / Edit) */}
       <TradeFormModal
@@ -968,6 +1228,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
         }}
         onDelete={handleDeleteTrade}
         onSaveExecutionReview={handleSaveExecutionReview}
+        onStudyPattern={handleStudyPattern}
       />
 
       {/* Daily Review Modal */}
@@ -979,8 +1240,32 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
         existingReview={todayReview}
         onSaveReview={handleSaveDailyReview}
       />
+
+      {/* Plan Lock Preview: stats + live sector heat map + coach opinion before committing */}
+      <PlanLockPreviewModal
+        isOpen={isLockPreviewOpen}
+        day={todayTradingDay}
+        instruments={instruments}
+        trades={trades}
+        reviews={reviews}
+        setups={setups}
+        timezone={profile.timezone}
+        onConfirm={confirmLockPlan}
+        onBack={() => setIsLockPreviewOpen(false)}
+      />
     </AppShell>
   );
+}
+
+/**
+ * Keeps the app's plain-language fallback for cloud failures, unless the error
+ * itself carries instructions worth reading (a missing schema column, an
+ * unconfigured client). Those are more useful than "sync is unavailable".
+ */
+function describeSyncFailure(error: unknown, fallback: string): string {
+  const message = error instanceof Error ? error.message : '';
+  if (/schema\.sql|is not configured/i.test(message)) return message;
+  return fallback;
 }
 
 /**
@@ -1012,6 +1297,16 @@ function LocalOnlyNotice() {
           </p>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Placeholder while a tab's code arrives, sized so the layout does not jump. */
+function TabLoading() {
+  return (
+    <div className="flex flex-col items-center justify-center gap-2 py-16 text-zinc-400">
+      <Loader2 className="h-5 w-5 animate-spin text-emerald-400" />
+      <p className="text-xs font-mono">Loading…</p>
     </div>
   );
 }

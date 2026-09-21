@@ -25,8 +25,16 @@ async function gotoPlaybook(page: Page) {
 }
 
 test.beforeEach(async ({ page }) => {
-  // Deterministic local state: fresh journal every test run.
+  // Deterministic local state: a fresh journal for every test run.
+  //
+  // The clear is guarded by sessionStorage because an init script runs on EVERY
+  // navigation, not just the first one — so an unguarded clear would wipe the journal on
+  // reload, and no test could ever assert that anything was actually persisted. A new
+  // test gets a new page and therefore an empty sessionStorage, so each one still starts
+  // clean.
   await page.addInitScript(() => {
+    if (sessionStorage.getItem('ptj_e2e_cleared')) return;
+    sessionStorage.setItem('ptj_e2e_cleared', '1');
     for (const key of Object.keys(localStorage)) {
       if (key.startsWith('ptj_')) localStorage.removeItem(key);
     }
@@ -122,6 +130,99 @@ test.describe('Playbook tab', () => {
     const supportCard = page.locator('div.rounded-2xl', { has: page.getByText('Support', { exact: true }) }).first();
     await supportCard.getByText('Watched today').click();
     await expect(supportCard.getByText('How this setup forms')).toBeVisible();
+  });
+});
+
+/**
+ * Attaching reference charts and video clips to a setup.
+ *
+ * The upload path was shipping uncovered, which matters because a setup's media is
+ * written into the journal snapshot: if it silently failed to save, the card would look
+ * right until the next reload.
+ */
+test.describe('Setup charts & video attachments', () => {
+  /** A real 1x1 PNG — the compressor reads it through an <img>, so it must decode. */
+  const PNG = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64'
+  );
+
+  async function openBreakoutEditor(page: Page) {
+    await gotoPlaybook(page);
+    const card = page
+      .locator('div.rounded-2xl', { has: page.getByTitle('Breakout', { exact: true }) })
+      .first();
+    await card.getByTitle('Edit setup, rules, charts and video').click();
+    await expect(page.getByRole('heading', { name: /Edit Setup: Breakout/i })).toBeVisible();
+    return card;
+  }
+
+  test('the setup editor accepts screenshots and video clips', async ({ page }) => {
+    await openBreakoutEditor(page);
+
+    // The file picker must offer both kinds, or a clip can never be chosen.
+    await expect(page.locator('#setup-modal-images-file-input')).toHaveAttribute(
+      'accept',
+      /image\/\*.*video\/\*/i
+    );
+    await expect(page.locator('#setup-modal-images-container')).toContainText(
+      '0 / 6 attached'
+    );
+  });
+
+  test('attaches a chart to a setup and shows it on the card, after a reload', async ({ page }) => {
+    const card = await openBreakoutEditor(page);
+
+    await page
+      .locator('#setup-modal-images-file-input')
+      .setInputFiles({ name: 'breakout-example.png', mimeType: 'image/png', buffer: PNG });
+
+    await expect(page.locator('#setup-modal-images-container')).toContainText('1 / 6 attached');
+
+    await page.getByRole('button', { name: /Update Setup/i }).click();
+
+    // The card advertises the attachment rather than hiding it in the editor.
+    await expect(card.getByText(/Playbook Charts & Video \(1\)/)).toBeVisible();
+
+    // The real test: it is in the journal, not just React state. A reload lands back on
+    // the Today tab, so the Playbook has to be reopened before the card exists again.
+    await page.reload();
+    await gotoPlaybook(page);
+    const reloadedCard = page
+      .locator('div.rounded-2xl', { has: page.getByTitle('Breakout', { exact: true }) })
+      .first();
+    await expect(reloadedCard.getByText(/Playbook Charts & Video \(1\)/)).toBeVisible();
+  });
+
+  test('opens the attached chart in the lightbox from the card', async ({ page }) => {
+    const card = await openBreakoutEditor(page);
+
+    await page
+      .locator('#setup-modal-images-file-input')
+      .setInputFiles({ name: 'breakout-example.png', mimeType: 'image/png', buffer: PNG });
+    await page.getByRole('button', { name: /Update Setup/i }).click();
+
+    await card.getByTitle(/Click to view chart screenshot big/i).click();
+
+    await expect(page.locator('#image-lightbox-overlay')).toBeVisible();
+    await expect(page.getByRole('heading', { name: /Breakout Setup Playbook/i })).toBeVisible();
+    await page.locator('#lightbox-close-button').click();
+    await expect(page.locator('#image-lightbox-overlay')).toHaveCount(0);
+  });
+
+  test('a setup can hold several charts and they all survive a save', async ({ page }) => {
+    const card = await openBreakoutEditor(page);
+
+    await page.locator('#setup-modal-images-file-input').setInputFiles([
+      { name: 'a.png', mimeType: 'image/png', buffer: PNG },
+      { name: 'b.png', mimeType: 'image/png', buffer: PNG },
+      { name: 'c.png', mimeType: 'image/png', buffer: PNG },
+    ]);
+
+    await expect(page.locator('#setup-modal-images-container')).toContainText('3 / 6 attached');
+    await page.getByRole('button', { name: /Update Setup/i }).click();
+
+    await expect(card.getByText(/Playbook Charts & Video \(3\)/)).toBeVisible();
   });
 });
 

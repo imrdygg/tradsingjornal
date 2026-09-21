@@ -83,8 +83,9 @@ export const CoachCheckpointCard: React.FC<CoachCheckpointCardProps> = ({
         setups,
         instruments,
         todayTradeDate,
+        timezone,
       }),
-    [trades, tradingDays, reviews, setups, instruments, todayTradeDate]
+    [trades, tradingDays, reviews, setups, instruments, todayTradeDate, timezone]
   );
 
   const fingerprint = useMemo(
@@ -178,6 +179,32 @@ export const CoachCheckpointCard: React.FC<CoachCheckpointCardProps> = ({
             : ''}
         </span>
       </div>
+
+      {/*
+        The one behavioural fact worth carrying onto the Today tab: entries taken
+        straight after a loss. It is derived from timestamps, so it shows up whether or
+        not the trader ticked "revenge trade" on a review.
+      */}
+      {digest.behavior.afterLoss.afterLoss && (
+        <p
+          id="coach-checkpoint-after-loss"
+          className="text-[11px] text-amber-200/90 leading-relaxed"
+        >
+          {digest.behavior.afterLoss.afterLoss.trades} entry(ies) were opened within{' '}
+          {digest.behavior.afterLoss.windowMinutes} minutes of a losing exit and produced{' '}
+          <span className="font-mono">{money(digest.behavior.afterLoss.afterLoss.netPnL)}</span>
+          {digest.behavior.afterLoss.other && (
+            <>
+              {' '}
+              against <span className="font-mono">
+                {money(digest.behavior.afterLoss.other.netPnL)}
+              </span>{' '}
+              for everything else
+            </>
+          )}
+          .
+        </p>
+      )}
 
       {stale && (
         <div className="rounded-xl border border-amber-900/60 bg-amber-950/20 px-3.5 py-2.5">

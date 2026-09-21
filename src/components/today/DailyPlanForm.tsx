@@ -36,7 +36,10 @@ interface DailyPlanFormProps {
   instruments: Instrument[];
   openTrades?: Trade[];
   onSaveDay: (updated: TradingDay) => void;
+  /** Opens the lock preview modal; the plan locks only after the trader confirms there. */
   onLockPlan: () => void;
+  /** True while the lock preview modal is open, so the button shows the pressed state. */
+  lockPreviewOpen?: boolean;
   onRecordPlanChange: (change: {
     fieldName: string;
     oldValue: string;
@@ -58,6 +61,7 @@ export const DailyPlanForm: React.FC<DailyPlanFormProps> = ({
   openTrades,
   onSaveDay,
   onLockPlan,
+  lockPreviewOpen = false,
   onRecordPlanChange,
   onOpenPlaybook,
   onLogScaleInTrade,
@@ -185,7 +189,9 @@ export const DailyPlanForm: React.FC<DailyPlanFormProps> = ({
           <button
             id="lock-plan-btn"
             onClick={onLockPlan}
-            className="flex items-center gap-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 px-4 py-2 text-xs font-semibold text-zinc-950 transition-all shadow-sm hover:scale-[1.02] active:scale-[0.98]"
+            className={`flex items-center gap-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 px-4 py-2 text-xs font-semibold text-zinc-950 transition-all shadow-sm ${
+              lockPreviewOpen ? 'opacity-70 ring-2 ring-emerald-300' : ''
+            }`}
           >
             <Lock className="w-4 h-4" />
             LOCK TODAY'S PLAN

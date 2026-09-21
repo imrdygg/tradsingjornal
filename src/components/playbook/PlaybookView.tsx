@@ -18,13 +18,15 @@ import {
   MousePointerClick,
   PencilLine,
 } from 'lucide-react';
-import { Setup } from '../../types';
+import { Setup, PatternStudy } from '../../types';
 import { ImageUploader } from '../common/ImageUploader';
 import { ImageLightboxModal } from '../common/ImageLightboxModal';
 import { ModalOverlay } from '../common/ModalOverlay';
 import { Collapse } from '../common/Collapse';
 import { SetupDiagram } from './SetupDiagram';
 import { SetupGuide, resolveSetupGuide } from './setup-guides';
+import { ChartPatternsView } from './ChartPatternsView';
+import { PATTERNS } from '../../lib/playbook/patterns';
 import { isVideoUrl } from '../../lib/media/media-utils';
 
 interface PlaybookViewProps {
@@ -47,6 +49,13 @@ interface PlaybookViewProps {
    * of whether they arrived via the Morning Plan deep-link.
    */
   watchedSetupNames?: string[];
+  /** The trader's own study data for the chart patterns in this playbook. */
+  patternStudies?: PatternStudy[];
+  onSavePatternStudy?: (study: PatternStudy) => void;
+  /** Pattern to open on arrival, set by a deep link (`#chart-patterns/<id>`). */
+  focusPatternId?: string | null;
+  /** Reports which pattern is open so the app can keep the URL in step. */
+  onOpenPattern?: (patternId: string | null) => void;
 }
 
 /** Small labelled block used inside each setup's guide container. */
@@ -81,9 +90,25 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
   onToggleSetup,
   focusSetupNames,
   watchedSetupNames,
+  patternStudies = [],
+  onSavePatternStudy,
+  focusPatternId,
+  onOpenPattern,
 }) => {
   const [newSetupName, setNewSetupName] = useState('');
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+
+  /**
+   * Two libraries live on this tab and they answer different questions, so they are
+   * a two-way switch rather than one long page: the trader either wants the setups they
+   * actually trade, or the reference study material behind them.
+   */
+  const [section, setSection] = useState<'setups' | 'patterns'>(focusPatternId ? 'patterns' : 'setups');
+
+  // A deep link has to be able to arrive on the pattern it names, not just the tab.
+  useEffect(() => {
+    if (focusPatternId) setSection('patterns');
+  }, [focusPatternId]);
 
   // Scroll anchor for the focused setup card ("Study in Playbook" deep-link).
   const focusContainerRef = useRef<HTMLDivElement | null>(null);
@@ -226,6 +251,45 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
         </p>
       </div>
 
+      {/* The two libraries, switched. Counts come from the data, not from a label. */}
+      <div
+        role="tablist"
+        aria-label="Playbook sections"
+        className="flex gap-1.5 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-1.5"
+      >
+        {([
+          { id: 'setups' as const, label: `My setups (${setups.length})` },
+          { id: 'patterns' as const, label: `Chart patterns (${PATTERNS.length})` },
+        ]).map((entry) => (
+          <button
+            key={entry.id}
+            type="button"
+            role="tab"
+            id={`playbook-tab-${entry.id}`}
+            aria-selected={section === entry.id}
+            onClick={() => setSection(entry.id)}
+            className={`flex-1 rounded-xl px-3 py-2 text-xs font-semibold transition-colors ${
+              section === entry.id
+                ? 'bg-zinc-800 text-zinc-100'
+                : 'text-zinc-400 hover:text-zinc-200'
+            }`}
+          >
+            {entry.label}
+          </button>
+        ))}
+      </div>
+
+      {section === 'patterns' && (
+        <ChartPatternsView
+          studies={patternStudies}
+          onSaveStudy={(study) => onSavePatternStudy?.(study)}
+          focusPatternId={focusPatternId}
+          onOpenPattern={onOpenPattern}
+        />
+      )}
+
+      {section === 'setups' && (
+        <div className="space-y-6">
       {/* How to use the playbook — three plain steps so the page explains itself. */}
       <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className="flex items-start gap-2.5">
@@ -595,9 +659,15 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
         )}
       </div>
 
+        </div>
+      )}
+
       {/* Setup Edit / Create Modal with Image Attachments (unchanged) */}
       {isSetupModalOpen && (
-        <ModalOverlay>
+        <ModalOverlay
+          onRequestClose={() => setIsSetupModalOpen(false)}
+          label={editingSetup ? `Edit setup: ${editingSetup.name}` : 'New setup'}
+        >
           <div className="relative my-6 w-full max-w-lg rounded-2xl border border-zinc-800 bg-zinc-900 p-5 shadow-2xl">
             <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
               <div className="flex items-center gap-2">

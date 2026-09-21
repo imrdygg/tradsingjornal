@@ -326,7 +326,10 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
   };
 
   return (
-    <ModalOverlay>
+    <ModalOverlay
+      onRequestClose={onClose}
+      label={editingTrade ? 'Edit trade execution' : 'Record futures trade'}
+    >
       <div className="relative my-6 w-full max-w-xl rounded-2xl border border-zinc-800 bg-zinc-900 p-4 shadow-2xl sm:p-6">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
@@ -531,6 +534,7 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
               <span>Entry Date / Time</span> <span className="text-rose-400">*</span>
             </label>
             <input
+              id="trade-entry-time"
               type="datetime-local"
               value={entryTime}
               onChange={(e) => setEntryTime(e.target.value)}
@@ -619,6 +623,7 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
                   Exit Date / Time
                 </label>
                 <input
+                  id="trade-exit-time"
                   type="datetime-local"
                   value={exitTime}
                   onChange={(e) => setExitTime(e.target.value)}

@@ -81,7 +81,7 @@ export const RiskFixupModal: React.FC<RiskFixupModalProps> = ({
   );
 
   return (
-    <ModalOverlay onBackdropClick={onClose}>
+    <ModalOverlay onBackdropClick={onClose} onRequestClose={onClose} label="Fix imported risk">
       <div
         id="risk-fixup-modal"
         className="relative w-full max-w-2xl rounded-2xl border border-zinc-700/80 bg-zinc-900 p-5 shadow-2xl"

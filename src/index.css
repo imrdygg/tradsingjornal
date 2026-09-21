@@ -94,6 +94,155 @@ html.light {
   }
 }
 
+/* ---------------------------------------------------------------------------
+   Chart Pattern illustrations (playbook > chart patterns)
+
+   The same drawing is used in two places, and they need different machinery:
+
+   - On the grid, many cards animate at once, so the loop is pure CSS: no timers, no
+     JavaScript per frame, nothing that gets more expensive as the library grows. 20
+     rAF loops on one screen is exactly the cost the playbook's candle loop avoided.
+   - In the detail view there is one illustration, and the trader controls it
+     (replay / pause / speed / toggles), so that one is driven by the timeline in
+     src/lib/playbook/pattern-timeline.ts.
+
+   Percentages below are the timeline's phases mapped onto the cycle: the draw takes
+   5.6s of the 6.6s cycle (85%), then the finished chart holds for the remaining 1s
+   before the loop restarts. Each element's class comes from the phase that owns it, so
+   the annotation appears as the price path reaches it rather than all at once.
+
+   `stroke-dashoffset` is what draws the price path: the path carries `pathLength="1"`,
+   so one dash covers it and animating the offset from 1 to 0 draws it at any geometry.
+
+   Guarded by prefers-reduced-motion like every other animation in the app: a reduced-
+   motion user gets the finished chart immediately, because the un-animated state IS the
+   finished chart.
+   --------------------------------------------------------------------------- */
+@keyframes pattern-draw-loop {
+  0% {
+    stroke-dashoffset: 1;
+  }
+  85% {
+    stroke-dashoffset: 0;
+  }
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes pattern-loop-fade {
+  0% {
+    opacity: 1;
+  }
+  94% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes pattern-reveal-formation {
+  0%,
+  17% {
+    opacity: 0;
+  }
+  20%,
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes pattern-reveal-trigger {
+  0%,
+  47% {
+    opacity: 0;
+  }
+  50%,
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes pattern-reveal-breakout {
+  0%,
+  64% {
+    opacity: 0;
+  }
+  67%,
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes pattern-reveal-retest {
+  0%,
+  75% {
+    opacity: 0;
+  }
+  78%,
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes pattern-reveal-target {
+  0%,
+  76% {
+    opacity: 0;
+  }
+  79%,
+  100% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* One duration for every element of the cycle, so the negative per-card offset
+     shifts a whole card without disturbing the sequence inside it. */
+  .pattern-loop .pattern-draw,
+  .pattern-loop .pattern-fade,
+  .pattern-loop .pattern-reveal-formation,
+  .pattern-loop .pattern-reveal-trigger,
+  .pattern-loop .pattern-reveal-breakout,
+  .pattern-loop .pattern-reveal-retest,
+  .pattern-loop .pattern-reveal-target {
+    animation-duration: 6.6s;
+    animation-iteration-count: infinite;
+    animation-delay: var(--pattern-offset, 0s);
+  }
+
+  .pattern-loop .pattern-draw {
+    animation-name: pattern-draw-loop;
+    animation-timing-function: ease-in-out;
+  }
+
+  .pattern-loop .pattern-fade {
+    animation-name: pattern-loop-fade;
+    animation-timing-function: linear;
+  }
+
+  .pattern-loop .pattern-reveal-formation {
+    animation-name: pattern-reveal-formation;
+  }
+
+  .pattern-loop .pattern-reveal-trigger {
+    animation-name: pattern-reveal-trigger;
+  }
+
+  .pattern-loop .pattern-reveal-breakout {
+    animation-name: pattern-reveal-breakout;
+  }
+
+  .pattern-loop .pattern-reveal-retest {
+    animation-name: pattern-reveal-retest;
+  }
+
+  .pattern-loop .pattern-reveal-target {
+    animation-name: pattern-reveal-target;
+  }
+}
+
 /* Note: `min-h-dvh` comes from Tailwind v4 natively, so it is deliberately
    not redefined here - an unlayered rule would override the utility layer. */
 

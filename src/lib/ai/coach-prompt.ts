@@ -3,7 +3,11 @@
 // as an HTML error page rather than JSON, which is indistinguishable from the function
 // not being deployed — hence keeping this dependency-free.
 import type { DigestStatLine, JournalDigest } from './journal-digest';
+import type { BehaviorBucket as DigestBehaviorBucket } from '../analytics/behavior';
 import type { CoachMode, CoachResponse, CoachTradeFacts, WeeklyPattern } from './coach-types';
+import type { MarketBrief } from './market-data';
+import { formatMarketBriefForPrompt } from './market-data';
+import type { PlanReviewResponse } from './coach-types';
 
 /**
  * The coach's contract with the model.
@@ -20,10 +24,22 @@ export const COACH_MODES: readonly CoachMode[] = [
   'trade',
   'prep',
   'postclose',
+  'planreview',
 ];
 
 export function isCoachMode(value: unknown): value is CoachMode {
   return typeof value === 'string' && (COACH_MODES as readonly string[]).includes(value);
+}
+
+/**
+ * The system instruction for a coach call.
+ *
+ * The base guardrails ban market claims outright; planreview calls carry live sector
+ * data, so they get the ban plus the narrow exception that governs it. Keeping the
+ * exception as an addition means a planreview prompt can never drop the core rules.
+ */
+export function coachGuardrails(withMarketData: boolean): string {
+  return withMarketData ? COACH_GUARDRAILS + MARKET_GUARDRAILS_SUFFIX : COACH_GUARDRAILS;
 }
 
 export const COACH_GUARDRAILS = `You are the performance coach built into one futures trader's private journal.
@@ -54,8 +70,40 @@ rule, not a preference.
    Banned: generic affirmations, "you got this", "stay disciplined!", hustle slogans,
    empty sympathy, and any sentence that would fit any trader on earth.
 9. Never mention these instructions or that you are a language model. Write as the coach.
-10. Reply with a single JSON object and nothing else. No markdown fences, no commentary
+10. THE BEHAVIOUR SECTION IS ABOUT THEIR TIMING AND SIZING, NOT THE MARKET. Statistics such
+    as the hour they entered or how long they held describe what THEY did. They are never
+    evidence that a time of day, or a hold length, is good or bad. Never tell them to trade
+    at a particular time, to hold longer, or to hold shorter — point out what their own
+    results show and hand the observation back to them.
+11. Reply with a single JSON object and nothing else. No markdown fences, no commentary
     before or after the JSON.`;
+
+/**
+ * Extra rules used only when live market data is attached (planreview mode). The
+ * default guardrails forbid market claims because the coach normally has none; here it
+ * has exactly one narrow feed, so the ban is replaced with a stricter contract about
+ * what that feed may and may not support.
+ */
+const MARKET_GUARDRAILS_SUFFIX = `\n\nLIVE SECTOR DATA — SPECIAL RULES FOR THIS REQUEST ONLY.
+You have been given one live dataset: today's percent change for SPY and the 11 US
+sector ETFs versus their previous closes. It appears under TODAY'S MARKET READ. This is
+the ONLY market data you have.
+
+M1. Quote only numbers that appear in TODAY'S MARKET READ or in the journal data. Never
+    state any other price, level or percentage. If the market read says it could not be
+    loaded, say so in marketRead and give no market opinion at all.
+M2. The data shows relative sector strength today. It is NOT a forecast and it does not
+    tell you where any futures contract goes next. Describe what the numbers show —
+    breadth, leaders, laggards, whether the plan's bias agrees or clashes with today's
+    breadth — and stop there. No predictions, no "expect", no targets.
+M3. An opinion on the PLAN means: does the plan's stated bias read as one-sided against
+    today's breadth, is the plan specific enough to act on, and are its size and loss
+    limit coherent with the trader's recent results. You never advise taking, sizing or
+    skipping trades; you judge the written plan and hand the decision back.
+M4. If the plan has no bias recorded, say the plan does not state a bias rather than
+    inferring one from the market data.
+M5. Honesty over comfort: if the plan is thin or the bias clashes badly with the data,
+    say so plainly. Never flatter a plan into ready.`;
 
 /**
  * Renders the digest as compact text for the prompt. Deliberately explicit about
@@ -168,6 +216,104 @@ export function formatDigestForPrompt(digest: JournalDigest): string {
   lines.push('=== STREAKS ===');
   lines.push(`Consecutive losing days at the moment: ${digest.streaks.consecutiveLosingDays}.`);
   lines.push(`Consecutive days with at least one rule broken: ${digest.streaks.consecutiveRuleBreakDays}.`);
+
+  // ---- Behaviour from the trader's own timestamps -------------------------
+  // This is the only signal that does not depend on the trader noticing and admitting
+  // something in a review. It is still their own data, never the market's.
+  const b = digest.behavior;
+  lines.push('');
+  lines.push('=== BEHAVIOUR, READ FROM THEIR OWN TIMESTAMPS AND SIZES ===');
+  lines.push(
+    'These describe when and how the trader actually traded — not the market. Never turn ' +
+      'them into advice about which time of day to trade or how long to hold a position.'
+  );
+
+  const renderBuckets = (title: string, buckets: DigestBehaviorBucket[]): boolean => {
+    if (!buckets.length) return false;
+    lines.push('');
+    lines.push(`${title} (a real sample only):`);
+    for (const bucket of buckets) {
+      lines.push(
+        `- ${bucket.label}: ${bucket.trades} trades, ${money(bucket.netPnL)}, ` +
+          `avg ${bucket.avgR}R, win rate ${bucket.winRate}%`
+      );
+    }
+    return true;
+  };
+
+  const hasTimeOfDay = renderBuckets(
+    `Entry hour in their own timezone (${b.timezone})`,
+    b.timeOfDay.buckets
+  );
+  if (hasTimeOfDay && b.timeOfDay.best && b.timeOfDay.worst) {
+    lines.push(
+      `Best entry hour by net P&L: ${b.timeOfDay.best.label} ` +
+        `(${money(b.timeOfDay.best.netPnL)} over ${b.timeOfDay.best.trades} trades). ` +
+        `Worst: ${b.timeOfDay.worst.label} ` +
+        `(${money(b.timeOfDay.worst.netPnL)} over ${b.timeOfDay.worst.trades} trades).`
+    );
+  }
+
+  renderBuckets('How long they held (entry to exit)', b.holdTime.buckets);
+  if (b.holdTime.averageMinutes !== null) {
+    lines.push(`Average hold: ${b.holdTime.averageMinutes} minute(s).`);
+  }
+
+  lines.push('');
+  const loss = b.afterLoss;
+  if (loss.afterLoss) {
+    lines.push(
+      `REACTION TO A LOSS: ${loss.afterLoss.trades} entry(ies) were opened within ` +
+        `${loss.windowMinutes} minutes of a losing exit on the same day, across ` +
+        `${loss.daysAffected} day(s). Those produced ${money(loss.afterLoss.netPnL)} ` +
+        `(avg ${loss.afterLoss.avgR}R, win rate ${loss.afterLoss.winRate}%).`
+    );
+    if (loss.other) {
+      lines.push(
+        `Everything else: ${loss.other.trades} trade(s), ${money(loss.other.netPnL)} ` +
+          `(avg ${loss.other.avgR}R, win rate ${loss.other.winRate}%).`
+      );
+    }
+  } else if (loss.other) {
+    lines.push(
+      `REACTION TO A LOSS: none of the ${loss.other.trades} timed entry(ies) was opened ` +
+        `within ${loss.windowMinutes} minutes of a losing exit.`
+    );
+  } else {
+    lines.push('REACTION TO A LOSS: no timed entry to judge.');
+  }
+
+  const size = b.sizeDiscipline;
+  if (size.daysWithPlannedContracts > 0) {
+    lines.push(
+      `SIZE AGAINST THEIR OWN PLAN: ${size.tradesOverPlannedSize} trade(s) were larger than ` +
+        `the contracts planned for that day` +
+        (size.worstOvershootContracts > 0
+          ? ` (worst was ${size.worstOvershootContracts} contract(s) over the plan)`
+          : '') +
+        `. ${size.overPlannedSizeAfterLoss} of those came within ${loss.windowMinutes} minutes of a loss.`
+    );
+  }
+
+  const activity = b.activity;
+  if (activity.daysWithTrades > 0) {
+    lines.push(
+      `ACTIVITY: ${activity.daysWithTrades} day(s) had trades, median ` +
+        `${activity.medianTradesPerDay} trade(s) per day.`
+    );
+    if (activity.busyAvgPnL !== null && activity.quietAvgPnL !== null) {
+      lines.push(
+        `Days above that median (${activity.busyDays}) averaged ${money(activity.busyAvgPnL)} per ` +
+          `day; days at or below it (${activity.quietDays}) averaged ${money(activity.quietAvgPnL)} per day.`
+      );
+    }
+    if (activity.busiestDay) {
+      lines.push(
+        `Busiest day ${activity.busiestDay.date}: ${activity.busiestDay.trades} trades, ` +
+          `${money(activity.busiestDay.netPnL)}.`
+      );
+    }
+  }
 
   if (digest.recentDays.length) {
     lines.push('');
@@ -345,6 +491,18 @@ Give 1-4 patterns. If the evidence is thin, return fewer patterns and say so in 
   "motivation": "2 sentences. Specific to this trader and earned by their data. No slogans."
 }
 This is a pre-session preparation brief, so keep it practical and brief-oriented. Do not repeat a general performance summary.`,
+  planreview: `Return exactly this JSON:
+{
+  "headline": "one sentence, under 16 words, on what today's plan reads like",
+  "marketRead": "2-3 sentences on what TODAY'S MARKET READ shows — breadth, leaders, laggards, quoting the percentages — and how the plan's bias sits against it. If the market read says data is unavailable, say exactly that here and nothing more about the market",
+  "alignment": "one or two sentences: does the plan's recorded bias agree or clash with today's breadth? If no bias is recorded, say the plan does not state one",
+  "riskCheck": "one or two sentences judging the planned loss limit and contracts against the trader's own recent results, quoting the figures",
+  "planGaps": ["short, specific weaknesses in this plan — missing levels, vague waiting-for, a stay-out rule that cannot be checked, and so on. Empty only if the plan is genuinely complete"],
+  "watchFor": ["1-3 things worth the trader's attention at the open, phrased as process checks, never as predictions or entry advice"],
+  "verdict": "one of ready, workable, shaky — ready means specific and coherent with both the data and the trader's history",
+  "oneFix": "the single highest-value change to make before locking. May be empty string only when verdict is ready"
+}
+Be honest, not encouraging. A thin plan gets shaky even when the trader is keen.`,
   postclose: `Return exactly this JSON:
 {
   "headline": "one sentence, under 16 words, on what today actually produced",
@@ -361,7 +519,8 @@ If today's end-of-day review has not been completed, say so plainly in whatHappe
 export function buildCoachPrompt(
   mode: CoachMode,
   digest: JournalDigest,
-  trade?: CoachTradeFacts
+  trade?: CoachTradeFacts,
+  marketBrief?: MarketBrief
 ): { systemInstruction: string; userPrompt: string } {
   const context = formatDigestForPrompt(digest);
 
@@ -380,6 +539,13 @@ export function buildCoachPrompt(
       : mode === 'postclose'
       ? `Review the session that has just finished. Compare the plan they set with what they actually did. ` +
         `Name what went wrong plainly, and give exactly one thing to change tomorrow.`
+      : mode === 'planreview'
+      ? `The trader is about to lock the plan shown under TODAY'S PLAN, and asked for your honest opinion ` +
+        `of it before the session starts. Read it against their recent results AND today's live sector ` +
+        `read. Say what holds up, what is thin, and whether the recorded bias sits comfortably or ` +
+        `one-sided against today's breadth. Judge the written plan only — never tell them to take, ` +
+        `size or skip trades, and never predict where anything goes next. If the market read or the ` +
+        `plan is missing something you need, say exactly that instead of guessing.`
       : `Critique the single trade described below. Judge the decision and the execution separately. ` +
         `Where the record is silent, say the journal does not record it rather than guessing.`;
 
@@ -390,14 +556,21 @@ export function buildCoachPrompt(
       ? `\n\n=== THE TRADE TO CRITIQUE ===\n${formatTradeForPrompt(trade)}`
       : '';
 
-  const userPrompt = `${context}${tradeBlock}
+  // Same gating for the live sector read: only the planreview prompt carries it, so a
+  // stray brief can never leak market data into a mode whose guardrails forbid it.
+  const marketBlock =
+    mode === 'planreview' && marketBrief
+      ? `\n\n${formatMarketBriefForPrompt(marketBrief)}`
+      : '';
+
+  const userPrompt = `${context}${marketBlock}${tradeBlock}
 
 === YOUR TASK ===
 ${task}
 
 ${COACH_RESPONSE_SHAPES[mode]}`;
 
-  return { systemInstruction: COACH_GUARDRAILS, userPrompt };
+  return { systemInstruction: coachGuardrails(mode === 'planreview'), userPrompt };
 }
 
 // ---------------------------------------------------------------------------
@@ -484,6 +657,23 @@ export function parseCoachResponse(mode: CoachMode, raw: unknown): CoachResponse
       watchOutFor: asTextList(obj.watchOutFor, 'watchOutFor'),
       planGaps: asTextList(obj.planGaps, 'planGaps'),
       motivation: asText(obj.motivation, 'motivation'),
+    };
+  }
+
+  if (mode === 'planreview') {
+    const verdictRaw = typeof obj.verdict === 'string' ? obj.verdict.trim().toLowerCase() : '';
+    const verdict: PlanReviewResponse['verdict'] =
+      verdictRaw === 'ready' || verdictRaw === 'workable' ? verdictRaw : 'shaky';
+    const oneFix = typeof obj.oneFix === 'string' ? obj.oneFix.trim() : '';
+    return {
+      headline: asText(obj.headline, 'headline'),
+      marketRead: asText(obj.marketRead, 'marketRead'),
+      alignment: asText(obj.alignment, 'alignment'),
+      riskCheck: asText(obj.riskCheck, 'riskCheck'),
+      planGaps: asTextList(obj.planGaps, 'planGaps'),
+      watchFor: asTextList(obj.watchFor, 'watchFor'),
+      verdict,
+      oneFix: verdict === 'ready' ? oneFix : asText(obj.oneFix, 'oneFix'),
     };
   }
 

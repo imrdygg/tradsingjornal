@@ -7,6 +7,7 @@ import {
   UserProfile,
   PlanChange,
   PlanSnapshot,
+  PatternStudy,
 } from '../../types';
 import { DEFAULT_INSTRUMENTS } from '../trading/instruments';
 import { clearCachedNotes } from '../ai/checkpoints';
@@ -76,6 +77,7 @@ const STORAGE_KEYS = {
   DAYS: 'ptj_trading_days_v1',
   TRADES: 'ptj_trades_v1',
   REVIEWS: 'ptj_reviews_v1',
+  PATTERN_STUDIES: 'ptj_pattern_studies_v1',
   SEEDED: 'ptj_seeded_v1',
   AUTH: 'ptj_auth_status_v1',
   SUPABASE_CONFIG: 'ptj_supabase_config_v1',
@@ -88,6 +90,129 @@ export interface StorageState {
   tradingDays: TradingDay[];
   trades: Trade[];
   reviews: DailyReview[];
+  /**
+   * The trader's own material for the Chart Pattern playbook: statuses, checklists,
+   * notes and logged examples with screenshots.
+   *
+   * Optional so a snapshot saved before the feature existed still loads: everything
+   * reading it treats a missing list as empty rather than as an error.
+   */
+  patternStudies?: PatternStudy[];
+}
+
+/**
+ * Why a journal read or write did not do what it was asked to.
+ *
+ * - `quota`: the journal no longer fits in this browser's storage.
+ * - `unavailable`: storage exists but is blocked (private browsing, disabled cookies).
+ * - `corrupt`: stored JSON could not be parsed, so a default was used instead.
+ * - `unknown`: anything else.
+ */
+export type StorageFailureKind = 'quota' | 'unavailable' | 'corrupt' | 'unknown';
+
+export interface StorageFailure {
+  kind: StorageFailureKind;
+  /** The storage key involved, for the console and the report. */
+  key: string;
+  /** What the browser said, kept verbatim so nothing is lost in translation. */
+  detail: string;
+  at: number;
+}
+
+/**
+ * The most recent failure, kept until the trader dismisses it.
+ *
+ * It is deliberately sticky: a failed write means that change is gone, and
+ * clearing the warning on the next successful (smaller) write would hide the
+ * one loss that matters. Only `dismissStorageFailure` clears it.
+ */
+let lastFailure: StorageFailure | null = null;
+const failureListeners = new Set<(failure: StorageFailure | null) => void>();
+
+/**
+ * Separates "the journal filled the browser" from every other write error.
+ * Quota is the one the trader can act on — attach fewer screenshots, export a
+ * backup — so it is named precisely rather than reported as a generic failure.
+ */
+function isQuotaError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const candidate = err as { name?: string; code?: number };
+  return (
+    candidate.name === 'QuotaExceededError' ||
+    candidate.name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+    candidate.code === 22 || // Chrome / Edge legacy code
+    candidate.code === 1014 // Firefox legacy code
+  );
+}
+
+function isStorageBlockedError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const candidate = err as { name?: string };
+  return (
+    candidate.name === 'SecurityError' ||
+    candidate.name === 'InvalidStateError' ||
+    candidate.name === 'NS_ERROR_FILE_CORRUPTED'
+  );
+}
+
+function describeError(err: unknown): string {
+  if (err instanceof Error) return err.message || err.name;
+  return String(err);
+}
+
+function notifyFailureListeners(): void {
+  for (const listener of failureListeners) listener(lastFailure);
+}
+
+function reportFailure(kind: StorageFailureKind, key: string, err: unknown): void {
+  const detail = describeError(err);
+  lastFailure = { kind, key, detail, at: Date.now() };
+  console.error(`Journal storage failure (${kind}) on ${key}:`, err);
+  notifyFailureListeners();
+}
+
+/** The unresolved storage failure, or null when the journal is saving cleanly. */
+export function getStorageFailure(): StorageFailure | null {
+  return lastFailure;
+}
+
+/** Acknowledges the warning. The failed write itself cannot be replayed. */
+export function dismissStorageFailure(): void {
+  if (!lastFailure) return;
+  lastFailure = null;
+  notifyFailureListeners();
+}
+
+/**
+ * Subscribes to failure changes so the UI can react. Exists mainly so a React
+ * component can read this through `useSyncExternalStore`.
+ */
+export function subscribeToStorageFailure(
+  listener: (failure: StorageFailure | null) => void
+): () => void {
+  failureListeners.add(listener);
+  return () => {
+    failureListeners.delete(listener);
+  };
+}
+
+/**
+ * Rough size of everything this app keeps in localStorage, in bytes. Used to
+ * show the trader how close the journal is to the browser's limit, since the
+ * limit itself differs per browser and is not queryable.
+ */
+export function measureJournalBytes(): number {
+  if (typeof window === 'undefined') return 0;
+  let total = 0;
+  for (const key of Object.values(STORAGE_KEYS)) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) total += raw.length + key.length;
+    } catch {
+      // An unreadable key contributes nothing to the total.
+    }
+  }
+  return total;
 }
 
 function getItem<T>(key: string, fallback: T): T {
@@ -96,7 +221,10 @@ function getItem<T>(key: string, fallback: T): T {
     const raw = localStorage.getItem(key);
     return raw ? (JSON.parse(raw) as T) : fallback;
   } catch (err) {
+    // A parse failure is not harmless: the journal silently looks empty and
+    // fresh defaults get written back over it on the next edit. Say so.
     console.warn(`Error reading ${key} from storage:`, err);
+    reportFailure(err instanceof SyntaxError ? 'corrupt' : 'unavailable', key, err);
     return fallback;
   }
 }
@@ -106,7 +234,14 @@ function setItem<T>(key: string, value: T): void {
   try {
     localStorage.setItem(key, JSON.stringify(value));
   } catch (err) {
-    console.error(`Error saving ${key} to storage:`, err);
+    // Swallowing this used to lose the write with nothing but a console line:
+    // the trader kept working while every save silently stopped landing.
+    const kind: StorageFailureKind = isQuotaError(err)
+      ? 'quota'
+      : isStorageBlockedError(err)
+      ? 'unavailable'
+      : 'unknown';
+    reportFailure(kind, key, err);
   }
 }
 
@@ -428,6 +563,7 @@ export const storage = {
       tradingDays: this.getTradingDays(),
       trades: this.getTrades(),
       reviews: this.getReviews(),
+      patternStudies: this.getPatternStudies(),
     };
     return JSON.stringify(state, null, 2);
   },
@@ -441,6 +577,9 @@ export const storage = {
       if (parsed.tradingDays) setItem(STORAGE_KEYS.DAYS, parsed.tradingDays);
       if (parsed.trades) setItem(STORAGE_KEYS.TRADES, parsed.trades);
       if (parsed.reviews) setItem(STORAGE_KEYS.REVIEWS, parsed.reviews);
+      // Only touched when the file actually carries it, so importing an older backup
+      // cannot wipe study notes that are already here.
+      if (parsed.patternStudies) setItem(STORAGE_KEYS.PATTERN_STUDIES, parsed.patternStudies);
       return true;
     } catch (err) {
       console.error('Import failed:', err);
@@ -448,10 +587,38 @@ export const storage = {
     }
   },
 
+  getPatternStudies(): PatternStudy[] {
+    return getItem<PatternStudy[]>(STORAGE_KEYS.PATTERN_STUDIES, []);
+  },
+
+  getPatternStudy(patternId: string): PatternStudy | undefined {
+    return this.getPatternStudies().find((study) => study.patternId === patternId);
+  },
+
+  /**
+   * Upserts one pattern's study row. Rows are keyed by pattern, so this is both the
+   * create and the update path and there is never a duplicate row to reconcile.
+   */
+  savePatternStudy(study: PatternStudy): PatternStudy[] {
+    const studies = this.getPatternStudies();
+    const index = studies.findIndex((existing) => existing.patternId === study.patternId);
+    const updated: PatternStudy = { ...study, updatedAt: new Date().toISOString() };
+    const next =
+      index >= 0
+        ? [...studies.slice(0, index), updated, ...studies.slice(index + 1)]
+        : [...studies, updated];
+    setItem(STORAGE_KEYS.PATTERN_STUDIES, next);
+    return next;
+  },
+
   /**
    * Clears every journal entry — trades, daily plans and reviews — while
    * keeping the trader's settings, instruments and playbook set-ups. This is
    * the "start fresh" reset, and it cannot be undone.
+   *
+   * Pattern study rows are deliberately kept: they are playbook material, like the
+   * set-ups and their reference charts, not journal entries. Sign-out clears them with
+   * everything else, because they belong to the account rather than to the device.
    */
   resetJournal(): void {
     if (typeof window === 'undefined') return;
@@ -477,6 +644,7 @@ export const storage = {
       STORAGE_KEYS.DAYS,
       STORAGE_KEYS.TRADES,
       STORAGE_KEYS.REVIEWS,
+      STORAGE_KEYS.PATTERN_STUDIES,
       STORAGE_KEYS.SEEDED,
     ]) {
       try {
@@ -489,11 +657,4 @@ export const storage = {
     clearCachedNotes();
   },
 
-  isLoggedIn(): boolean {
-    return getItem<boolean>(STORAGE_KEYS.AUTH, true); // default authenticated for owner in personal journal
-  },
-
-  setLoggedIn(status: boolean): void {
-    setItem(STORAGE_KEYS.AUTH, status);
-  },
 };

@@ -48,6 +48,28 @@ export function formatTradingDate(dateStr: string, timezone = 'America/New_York'
   }
 }
 
+/**
+ * Hour of day (0-23) in the given timezone.
+ *
+ * `hour12: false` can yield "24" for midnight in some engines, so the result is
+ * normalised. Falls back to the host clock rather than throwing if the timezone is
+ * invalid, because a bad profile value must not break the UI.
+ */
+export function hourInTimezone(date: Date, timezone: string): number {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      hour: '2-digit',
+      hour12: false,
+    }).formatToParts(date);
+    const raw = parts.find((part) => part.type === 'hour')?.value;
+    const hour = Number(raw);
+    return Number.isFinite(hour) ? ((hour % 24) + 24) % 24 : date.getHours();
+  } catch {
+    return date.getHours();
+  }
+}
+
 export function formatTimestamp(isoString: string, timezone = 'America/New_York'): string {
   try {
     const date = new Date(isoString);

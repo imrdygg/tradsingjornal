@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   Settings2,
+  Lock,
   ChevronDown,
   RefreshCw,
 } from 'lucide-react';
@@ -174,8 +175,9 @@ export const CoachLabel: React.FC<{ text: string; tone?: 'good' | 'bad' | 'neutr
 };
 
 /**
- * Renders the coach's failure honestly, and distinguishes "not deployed here" from a
- * real error: they need completely different actions from the trader.
+ * Renders the coach's failure honestly, and distinguishes the three cases that need
+ * different actions from the trader: not deployed here, not signed in, and an actual
+ * error. Only the last one is a fault.
  */
 export const CoachErrorPanel: React.FC<{
   code: CoachErrorCode;
@@ -183,22 +185,30 @@ export const CoachErrorPanel: React.FC<{
   idSuffix: string;
 }> = ({ code, message, idSuffix }) => {
   const notConfigured = code === 'unconfigured';
-  const Icon = notConfigured ? Settings2 : AlertTriangle;
+  const needsSignIn = code === 'unauthorized';
+  // Setup and identity problems are calm and actionable; only a real failure is red.
+  const calm = notConfigured || needsSignIn;
+  const Icon = notConfigured ? Settings2 : needsSignIn ? Lock : AlertTriangle;
+  const title = notConfigured
+    ? 'Coach not available here'
+    : needsSignIn
+    ? 'Sign in required'
+    : 'Coach error';
   return (
     <div
       id={`coach-error-${idSuffix}`}
       className={`rounded-xl border px-3.5 py-3 ${
-        notConfigured ? 'border-zinc-700 bg-zinc-800/40' : 'border-rose-900/60 bg-rose-950/30'
+        calm ? 'border-zinc-700 bg-zinc-800/40' : 'border-rose-900/60 bg-rose-950/30'
       }`}
     >
       <div className="flex items-center gap-1.5 mb-1">
-        <Icon className={`w-3.5 h-3.5 ${notConfigured ? 'text-zinc-400' : 'text-rose-400'}`} />
+        <Icon className={`w-3.5 h-3.5 ${calm ? 'text-zinc-400' : 'text-rose-400'}`} />
         <span
           className={`text-[10px] font-mono uppercase font-bold ${
-            notConfigured ? 'text-zinc-400' : 'text-rose-400'
+            calm ? 'text-zinc-400' : 'text-rose-400'
           }`}
         >
-          {notConfigured ? 'Coach not available here' : 'Coach error'}
+          {title}
         </span>
       </div>
       <p className="text-xs text-zinc-300 leading-relaxed">{message}</p>

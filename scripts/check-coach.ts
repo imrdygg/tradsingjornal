@@ -1,9 +1,14 @@
 /**
- * Temporary diagnostic: invokes the deployed-shape coach handler in-process so the
- * server code and the API key can be verified without a deployment.
+ * Diagnostic: makes one real coach call in-process so the prompt, the API key and the
+ * model chain can be verified without a deployment.
+ *
+ * It calls `runCoachModels` rather than the handler on purpose. The access gates live in
+ * front of that function (a signed-in session and a per-caller limit), and a local script
+ * has neither a session to present nor a reason to be counted against one. Gating is
+ * covered by the endpoint's unit tests and by the deployed GET health check.
  */
 import 'dotenv/config';
-import handler from '../src/api/coach';
+import { runCoachModels } from '../src/api/coach';
 import { buildJournalDigest } from '../src/lib/ai/journal-digest';
 import { DEFAULT_INSTRUMENTS } from '../src/lib/trading/instruments';
 import { Trade, TradingDay } from '../src/types';
@@ -12,7 +17,14 @@ const key = process.env.GEMINI_API_KEY ?? '';
 console.log(
   `GEMINI_API_KEY: ${key ? `present (${key.length} chars, starts "${key.slice(0, 4)}...")` : 'MISSING'}`
 );
-console.log(`GEMINI_MODEL: ${process.env.GEMINI_MODEL ?? '(default gemini-flash-latest)'}`);
+console.log(`GEMINI_MODEL: ${process.env.GEMINI_MODEL ?? '(unset — the built-in chain is tried)'}`);
+
+if (!key) {
+  console.error(
+    '\nGEMINI_API_KEY is missing. Put it in .env.local (never VITE_-prefixed), then re-run.'
+  );
+  process.exit(1);
+}
 
 const day: TradingDay = {
   id: 'd1',
@@ -68,31 +80,13 @@ const digest = buildJournalDigest({
   setups: [],
   instruments: DEFAULT_INSTRUMENTS,
   todayTradeDate: '2026-09-18',
+  timezone: 'America/New_York',
 });
 
-let statusCode = 0;
-let payload: unknown = null;
-
-const res = {
-  status(code: number) {
-    statusCode = code;
-    return res;
-  },
-  json(body: unknown) {
-    payload = body;
-  },
-  setHeader() {
-    /* no headers needed */
-  },
-};
-
 async function main() {
-  await handler(
-    { method: 'POST', body: { mode: 'brief', digest } } as never,
-    res as never
-  );
-  console.log(`\nHTTP status from the handler: ${statusCode}`);
-  console.log(JSON.stringify(payload, null, 2));
+  const outcome = await runCoachModels({ apiKey: key, mode: 'brief', digest });
+  console.log(`\nStatus the endpoint would return: ${outcome.status}`);
+  console.log(JSON.stringify(outcome.body, null, 2));
 }
 
 main().catch((err) => {

@@ -141,3 +141,92 @@ test.describe('Coach tab', () => {
     await expect(page.locator('#coach-weekly-result')).toHaveCount(0);
   });
 });
+
+/**
+ * The behavioural facts come from the trader's own timestamps, so they are computed and
+ * displayed entirely locally: no AI service, no market data, no network. These specs
+ * fix the two things that would make the card dishonest — reporting a pattern from a
+ * sample that is too small, and missing an entry that clearly followed a loss.
+ */
+test.describe('Behaviour read from the trader own timestamps', () => {
+  /** Logs a completed trade with explicit entry/exit times so the sequence is readable. */
+  async function logTrade(
+    page: Page,
+    trade: { entry: number; exit: number; entryTime: string; exitTime: string }
+  ) {
+    await openAddTrade(page);
+    await page.locator('#trade-entry-price').fill(String(trade.entry));
+    await page.locator('#trade-initial-stop').fill(String(trade.entry - 20));
+    await page.locator('#trade-contracts').fill('2');
+    await page.locator('#trade-exit-price').fill(String(trade.exit));
+    await page.locator('#trade-entry-time').fill(trade.entryTime);
+    await page.locator('#trade-exit-time').fill(trade.exitTime);
+    await page.getByRole('button', { name: /Save Completed Trade/i }).click();
+    await expect(
+      page.getByRole('heading', { name: /Record Futures Trade/i })
+    ).toHaveCount(0);
+  }
+
+  test('shows nothing but an honest empty state on a fresh journal', async ({ page }) => {
+    await gotoTab(page, 'coach', /Coach/i);
+
+    const card = page.locator('#coach-behavior-card');
+    await expect(card).toBeVisible();
+    await expect(card).toContainText(/Not enough logged trades with times yet/i);
+    // Nothing may be reported without a real sample behind it.
+    await expect(page.locator('#coach-behavior-after-loss')).toHaveCount(0);
+  });
+
+  test('names the entry that followed a loss and groups the trading hour', async ({ page }) => {
+    // Three entries in the 09:00 hour, so the hour has a real sample. The middle trade
+    // is a loss that closes at 09:45, and the last entry is five minutes after it.
+    await logTrade(page, {
+      entry: 7730,
+      exit: 7740,
+      entryTime: '2026-09-18T09:15',
+      exitTime: '2026-09-18T09:20',
+    });
+    await logTrade(page, {
+      entry: 7730,
+      exit: 7720,
+      entryTime: '2026-09-18T09:30',
+      exitTime: '2026-09-18T09:45',
+    });
+    await logTrade(page, {
+      entry: 7735,
+      exit: 7750,
+      entryTime: '2026-09-18T09:50',
+      exitTime: '2026-09-18T10:00',
+    });
+
+    await gotoTab(page, 'coach', /Coach/i);
+
+    const callout = page.locator('#coach-behavior-after-loss');
+    await expect(callout).toBeVisible();
+    await expect(callout).toContainText(/1 trade\(s\) were opened within 15 minutes/i);
+    await expect(callout).toContainText(/Everything else: 2 trade\(s\)/i);
+
+    // The hour bucket is the trader's own clock time, read at face value.
+    const card = page.locator('#coach-behavior-card');
+    await expect(card).toContainText('09:00');
+    await expect(card).toContainText(/3 trades/);
+  });
+
+  test('carries the after-loss fact onto the Today tab', async ({ page }) => {
+    await logTrade(page, {
+      entry: 7730,
+      exit: 7720,
+      entryTime: '2026-09-18T09:30',
+      exitTime: '2026-09-18T09:45',
+    });
+    await logTrade(page, {
+      entry: 7735,
+      exit: 7750,
+      entryTime: '2026-09-18T09:50',
+      exitTime: '2026-09-18T10:00',
+    });
+
+    await gotoTab(page, 'today', /Morning Plan/i);
+    await expect(page.locator('#coach-checkpoint-after-loss')).toBeVisible();
+  });
+});

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Settings,
   Download,
@@ -19,6 +19,8 @@ import {
 import { UserProfile, Instrument } from '../../types';
 import { SyncStatusBadge, SyncStatus } from '../layout/SyncStatusBadge';
 import { ModalOverlay } from '../common/ModalOverlay';
+import { StorageHealthRow } from '../common/StorageWarningBanner';
+import { measureJournalBytes } from '../../lib/storage';
 import type { CsvImportSummary } from '../../lib/trading/tradovate-import';
 
 /** Result banner shown after an import, so failures are never reported as success. */
@@ -64,6 +66,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   signingOut = false,
   syncStatus,
 }) => {
+  // Recomputed on each visit rather than held in state: reading the keys is
+  // cheap, and nothing else in this tab changes what they weigh.
+  const storageBytes = useMemo(() => measureJournalBytes(), []);
+
   const [importNotice, setImportNotice] = useState<ImportNotice | null>(null);
   const [isResetOpen, setIsResetOpen] = useState(false);
   const [resetConfirmText, setResetConfirmText] = useState('');
@@ -198,6 +204,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 ? 'Your journal syncs securely across every device you sign in on.'
                 : 'Cloud sync is off. Your journal is saved in this browser only.'}
             </p>
+            {/* The storage limit is worth showing before it is hit, and this is
+                where the "export a backup" advice actually applies. Measured
+                once per visit: the tab remounts every time it is opened. */}
+            {!onSignOut && <div className="mt-1.5"><StorageHealthRow usageBytes={storageBytes} /></div>}
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
@@ -460,7 +470,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
       {/* Reset confirmation — typed phrase so it cannot happen by accident */}
       {isResetOpen && (
-        <ModalOverlay>
+        <ModalOverlay
+          onRequestClose={() => setIsResetOpen(false)}
+          label="Reset your journal"
+        >
           <div className="relative w-full max-w-md rounded-2xl border border-rose-900/70 bg-zinc-900 p-5 shadow-2xl">
             <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
               <div className="flex items-center gap-2">

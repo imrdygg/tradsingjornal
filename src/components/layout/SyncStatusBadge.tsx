@@ -1,7 +1,7 @@
 import React from 'react';
 import { Check, AlertTriangle, Loader2, HardDrive } from 'lucide-react';
 
-export type SyncStatus = 'local' | 'loading' | 'saving' | 'saved' | 'error';
+export type SyncStatus = 'local' | 'loading' | 'saving' | 'saved' | 'error' | 'conflict';
 
 interface SyncStatusBadgeProps {
   status: SyncStatus;
@@ -38,6 +38,22 @@ export const SyncStatusBadge: React.FC<SyncStatusBadgeProps> = ({
       >
         <HardDrive className="h-3 w-3" />
         <span>Local only</span>
+      </div>
+    );
+  }
+
+  // A conflict is not a failure: both copies exist and the trader has to pick
+  // one. The chip only flags it; the banner holds the two choices.
+  if (status === 'conflict') {
+    return (
+      <div
+        className={`${baseClass} border-amber-800/60 bg-amber-950/40 text-amber-300`}
+        role="status"
+        aria-live="polite"
+        title="Another device changed this journal. Choose which copy to keep in the banner above."
+      >
+        <AlertTriangle className="h-3 w-3" />
+        <span>Review sync</span>
       </div>
     );
   }

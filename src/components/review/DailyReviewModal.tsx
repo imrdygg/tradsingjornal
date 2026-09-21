@@ -214,7 +214,11 @@ export const DailyReviewModal: React.FC<DailyReviewModalProps> = ({
       : 'text-zinc-300';
 
   return (
-    <ModalOverlay backdropClassName="bg-black/85 backdrop-blur-sm">
+    <ModalOverlay
+      backdropClassName="bg-black/85 backdrop-blur-sm"
+      onRequestClose={onClose}
+      label={`End-of-day review — ${day.tradeDate}`}
+    >
       <div className="relative my-6 w-full max-w-2xl space-y-5 rounded-2xl border border-zinc-800 bg-zinc-900 p-4 shadow-2xl sm:p-6">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-zinc-800 pb-3">

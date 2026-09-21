@@ -45,7 +45,7 @@ export const PlanChangeDialog: React.FC<PlanChangeDialogProps> = ({
   };
 
   return (
-    <ModalOverlay>
+    <ModalOverlay onRequestClose={onClose} label={title}>
       <div className="relative w-full max-w-md rounded-2xl border border-zinc-700/80 bg-zinc-900 p-5 shadow-2xl">
         <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
           <div className="flex items-center gap-2">

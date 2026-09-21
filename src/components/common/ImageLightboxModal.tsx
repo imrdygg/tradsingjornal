@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { lockBodyScroll, unlockBodyScroll } from '../../lib/ui/scroll-lock';
+import { useDialogLayer } from './ModalOverlay';
 import {
   X,
   ChevronLeft,
@@ -35,6 +36,9 @@ export const ImageLightboxModal: React.FC<ImageLightboxModalProps> = ({
 }) => {
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [isZoomed, setIsZoomed] = useState(false);
+  // The lightbox opens on top of a modal, so it joins the overlay stack: only
+  // the topmost overlay answers Escape, or one press would close both.
+  const { isTopmost } = useDialogLayer(isOpen);
 
   // Sync initial index when modal opens
   useEffect(() => {
@@ -59,7 +63,7 @@ export const ImageLightboxModal: React.FC<ImageLightboxModalProps> = ({
     if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        onClose();
+        if (isTopmost()) onClose();
       } else if (e.key === 'ArrowLeft' && images.length > 1) {
         handlePrev();
       } else if (e.key === 'ArrowRight' && images.length > 1) {
@@ -68,7 +72,7 @@ export const ImageLightboxModal: React.FC<ImageLightboxModalProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose, handlePrev, handleNext, images.length]);
+  }, [isOpen, onClose, handlePrev, handleNext, images.length, isTopmost]);
 
   // Freeze the page behind the lightbox while it is open. The lock utility
   // reference-counts, so stacking (modal -> lightbox) stays balanced.
@@ -100,6 +104,9 @@ export const ImageLightboxModal: React.FC<ImageLightboxModalProps> = ({
   return createPortal(
     <div
       id="image-lightbox-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label={title || 'Chart media viewer'}
       className="fixed inset-0 z-[100] flex flex-col items-center justify-between bg-black/95 backdrop-blur-md p-3 sm:p-5 select-none animate-in fade-in duration-150"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();

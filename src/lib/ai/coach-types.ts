@@ -9,7 +9,14 @@ import { QuestionAnswer } from '../../types';
  * browser bundle entirely.
  */
 
-export type CoachMode = 'brief' | 'weekly' | 'trade' | 'prep' | 'postclose';
+export type CoachMode =
+  | 'brief'
+  | 'weekly'
+  | 'trade'
+  | 'prep'
+  | 'postclose'
+  /** Opinion on today's plan at lock time, with live sector context. */
+  | 'planreview';
 
 export interface BriefResponse {
   headline: string;
@@ -44,6 +51,24 @@ export interface TradeCritiqueResponse {
   grade: string;
 }
 
+/** Opinion on the day plan at lock time, with live sector context. */
+export interface PlanReviewResponse {
+  headline: string;
+  marketRead: string;
+  /** Sector or index the plan's bias most stands against, from the live data. */
+  alignment: string;
+  /** How the plan's size and loss limit read against the trader's own recent results. */
+  riskCheck: string;
+  /** Concrete, checkable weaknesses in today's plan. */
+  planGaps: string[];
+  /** What the data suggests watching, phrased as process, not predictions. */
+  watchFor: string[];
+  /** Plain verdict on whether the plan is ready, from 'ready' to 'shaky'. */
+  verdict: 'ready' | 'workable' | 'shaky';
+  /** One concrete fix, when the verdict is not 'ready'. */
+  oneFix: string;
+}
+
 /** Morning preparation, generated before the session closes. */
 export interface PrepResponse {
   headline: string;
@@ -70,7 +95,8 @@ export type CoachResponse =
   | WeeklyResponse
   | TradeCritiqueResponse
   | PrepResponse
-  | PostCloseResponse;
+  | PostCloseResponse
+  | PlanReviewResponse;
 
 /** Shape of a single trade, as sent for a critique. */
 export interface CoachTradeFacts {

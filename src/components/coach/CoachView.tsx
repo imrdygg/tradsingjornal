@@ -31,6 +31,7 @@ import {
   CoachResultPanel,
   money,
 } from './coach-ui';
+import { BehaviorCard } from './BehaviorCard';
 import { instrumentSymbol } from '../../lib/trading/instruments';
 import { formatTimestamp } from '../../lib/storage/date-utils';
 
@@ -110,8 +111,9 @@ export const CoachView: React.FC<CoachViewProps> = ({
         setups,
         instruments,
         todayTradeDate,
+        timezone,
       }),
-    [trades, tradingDays, reviews, setups, instruments, todayTradeDate]
+    [trades, tradingDays, reviews, setups, instruments, todayTradeDate, timezone]
   );
 
   const [briefState, setBriefState] = useState<RequestState>(IDLE);
@@ -216,6 +218,13 @@ export const CoachView: React.FC<CoachViewProps> = ({
           </ul>
         )}
       </CoachCard>
+
+      {/*
+        The same behavioural numbers the prompts are built from. Deterministic and
+        free to render, so the trader can check the coach's reasoning rather than
+        take its word for it.
+      */}
+      <BehaviorCard behavior={digest.behavior} />
 
       {/* ------------------------------------------------------------------ */}
       {/* Daily brief                                                         */}

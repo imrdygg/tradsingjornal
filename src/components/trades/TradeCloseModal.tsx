@@ -232,7 +232,7 @@ export const TradeCloseModal: React.FC<TradeCloseModalProps> = ({
   };
 
   return (
-    <ModalOverlay>
+    <ModalOverlay onRequestClose={onClose} label="Close trade and execution review">
       <div className="relative my-6 w-full max-w-xl rounded-2xl border border-zinc-800 bg-zinc-900 p-4 shadow-2xl sm:p-6">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-zinc-800 pb-3">

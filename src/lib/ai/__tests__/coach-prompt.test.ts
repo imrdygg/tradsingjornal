@@ -11,6 +11,7 @@ import {
 } from '../coach-prompt';
 import type { CoachTradeFacts } from '../coach-types';
 import { buildJournalDigest } from '../journal-digest';
+import type { MarketBrief } from '../market-data';
 import { DailyReview, DailyReviewQuestions, Trade, TradingDay } from '../../../types';
 import { DEFAULT_INSTRUMENTS } from '../../trading/instruments';
 
@@ -104,6 +105,7 @@ const digestFor = (overrides: Partial<Parameters<typeof buildJournalDigest>[0]> 
     setups: [],
     instruments: DEFAULT_INSTRUMENTS,
     todayTradeDate: '2026-09-18',
+    timezone: 'America/New_York',
     ...overrides,
   });
 
@@ -132,8 +134,8 @@ describe('coach guardrails', () => {
 });
 
 describe('isCoachMode', () => {
-  it('accepts the five real modes and nothing else', () => {
-    for (const mode of ['brief', 'weekly', 'trade', 'prep', 'postclose']) {
+  it('accepts the six real modes and nothing else', () => {
+    for (const mode of ['brief', 'weekly', 'trade', 'prep', 'postclose', 'planreview']) {
       expect(isCoachMode(mode)).toBe(true);
     }
     expect(isCoachMode('market')).toBe(false);
@@ -282,6 +284,83 @@ describe('formatDigestForPrompt', () => {
     );
     expect(text).toContain('Days that lost more than the planned loss limit: 1');
     expect(text).toContain('$50');
+  });
+});
+
+describe('planreview mode', () => {
+  const marketBrief: MarketBrief = {
+    ok: true,
+    fetchedAt: new Date().toISOString(),
+    maxAgeSeconds: 60,
+    quotes: [
+      { symbol: 'SPY', label: 'S&P 500', changePercent: 0.4, price: 580, previousClose: 577.7 },
+      { symbol: 'XLK', label: 'Technology', changePercent: 1.2, price: 200, previousClose: 197.6 },
+      { symbol: 'XLE', label: 'Energy', changePercent: -1.1, price: 80, previousClose: 80.9 },
+    ],
+  };
+
+  it('appends the live sector read only in planreview mode', () => {
+    const withMarket = buildCoachPrompt('planreview', digestFor(), undefined, marketBrief);
+    expect(withMarket.userPrompt).toContain("TODAY'S MARKET READ");
+    expect(withMarket.userPrompt).toContain('+1.20%');
+
+    for (const mode of ['brief', 'weekly', 'prep', 'postclose', 'trade'] as const) {
+      const other = buildCoachPrompt(mode, digestFor(), undefined, marketBrief);
+      expect(other.userPrompt).not.toContain("TODAY'S MARKET READ");
+    }
+  });
+
+  it('extends the guardrails with the market rules instead of replacing them', () => {
+    const { systemInstruction } = buildCoachPrompt('planreview', digestFor(), undefined, marketBrief);
+    expect(systemInstruction).toContain('NO MARKET DATA');
+    expect(systemInstruction).toContain('LIVE SECTOR DATA');
+    expect(systemInstruction).toContain('Never flatter a plan into ready');
+    // Non-market modes keep the untouched guardrails.
+    expect(buildCoachPrompt('brief', digestFor()).systemInstruction).toBe(COACH_GUARDRAILS);
+  });
+
+  it('asks the coach to judge the plan, not to predict the market', () => {
+    const { userPrompt } = buildCoachPrompt('planreview', digestFor(), undefined, marketBrief);
+    expect(userPrompt).toContain('honest opinion');
+    expect(userPrompt).toContain('never tell them to take, size or skip trades');
+    expect(userPrompt).toContain('"verdict"');
+    expect(userPrompt).toContain('"planGaps"');
+    expect(userPrompt).toContain('"marketRead"');
+  });
+
+  it('parses a valid planreview response and normalises the verdict', () => {
+    const result = parseCoachResponse('planreview', {
+      headline: 'Plan is coherent, bias is one-sided',
+      marketRead: '7 of 11 sectors up, tech leads at +1.20%.',
+      alignment: 'Your bullish bias agrees with breadth.',
+      riskCheck: '$100 limit against 2 contracts is within your recent norms.',
+      planGaps: ['No levels marked'],
+      watchFor: ['Opening range before entries'],
+      verdict: 'READY',
+      oneFix: '',
+    }) as { verdict: string; oneFix: string };
+    expect(result.verdict).toBe('ready');
+    expect(result.oneFix).toBe('');
+  });
+
+  it('demands a fix unless the verdict is ready, and falls back to shaky on a nonsense verdict', () => {
+    const base = {
+      headline: 'h',
+      marketRead: 'm',
+      alignment: 'a',
+      riskCheck: 'r',
+      planGaps: [],
+      watchFor: [],
+    };
+    expect(() => parseCoachResponse('planreview', { ...base, verdict: 'shaky' })).toThrow(
+      /oneFix/
+    );
+    const fallen = parseCoachResponse('planreview', {
+      ...base,
+      verdict: 'amazing',
+      oneFix: 'Mark your levels.',
+    }) as { verdict: string };
+    expect(fallen.verdict).toBe('shaky');
   });
 });
 
@@ -468,5 +547,62 @@ describe('parseCoachResponse', () => {
   it('rejects a bare array or a non-object', () => {
     expect(() => parseCoachResponse('brief', [1, 2, 3])).toThrow(/JSON object/);
     expect(() => parseCoachResponse('brief', null)).toThrow(/JSON object/);
+  });
+});
+
+describe('behaviour section in the prompt', () => {
+  it('forbids reading the timing data as advice about when to trade', () => {
+    expect(COACH_GUARDRAILS).toContain('NOT THE MARKET');
+    expect(COACH_GUARDRAILS).toContain('Never tell them to trade');
+  });
+
+  it('scopes the hour buckets to the trader own timezone', () => {
+    const digest = digestFor({
+      trades: [
+        makeTrade({ id: 'a', entryTime: '2026-09-18T13:30:00.000Z' }),
+        makeTrade({ id: 'b', entryTime: '2026-09-18T13:45:00.000Z' }),
+        makeTrade({ id: 'c', entryTime: '2026-09-18T13:50:00.000Z' }),
+      ],
+    });
+
+    const { userPrompt } = buildCoachPrompt('brief', digest);
+    expect(userPrompt).toContain('Entry hour in their own timezone (America/New_York)');
+    expect(userPrompt).toContain('- 09:00: 3 trades');
+  });
+
+  it('states the after-loss comparison with both sides of it', () => {
+    const digest = digestFor({
+      trades: [
+        makeTrade({
+          id: 'loss',
+          entryTime: '2026-09-18T13:00:00.000Z',
+          exitTime: '2026-09-18T13:20:00.000Z',
+          netPnL: -50,
+        }),
+        makeTrade({
+          id: 'reaction',
+          entryTime: '2026-09-18T13:30:00.000Z',
+          exitTime: '2026-09-18T13:40:00.000Z',
+          netPnL: -40,
+        }),
+      ],
+    });
+
+    const { userPrompt } = buildCoachPrompt('brief', digest);
+    expect(userPrompt).toContain('REACTION TO A LOSS');
+    expect(userPrompt).toContain('Everything else: 1 trade(s)');
+  });
+
+  it('says plainly when there is no timed entry to judge', () => {
+    const { userPrompt } = buildCoachPrompt('brief', digestFor());
+    expect(userPrompt).toContain('REACTION TO A LOSS: no timed entry to judge.');
+  });
+
+  it('reaches every mode, not just the brief', () => {
+    for (const mode of COACH_MODES) {
+      expect(buildCoachPrompt(mode, digestFor()).userPrompt).toContain(
+        'BEHAVIOUR, READ FROM THEIR OWN TIMESTAMPS AND SIZES'
+      );
+    }
   });
 });

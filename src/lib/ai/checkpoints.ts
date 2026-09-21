@@ -1,5 +1,11 @@
 import { DailyReview, Trade, TradingDay } from '../../types';
+import { hourInTimezone } from '../storage/date-utils';
 import type { CoachResponse } from './coach-types';
+
+// Re-exported so the checkpoint module keeps owning its own public surface; the
+// implementation lives in date-utils, where the behavioural analysis can reach it
+// without the analytics layer depending on the AI layer.
+export { hourInTimezone };
 
 /**
  * The two daily coach checkpoints.
@@ -54,28 +60,6 @@ export const CHECKPOINTS: Record<CheckpointId, CheckpointInfo> = {
 
 export function otherCheckpoint(id: CheckpointId): CheckpointId {
   return id === 'prep' ? 'postclose' : 'prep';
-}
-
-/**
- * Hour of day (0-23) in the given timezone.
- *
- * `hour12: false` can yield "24" for midnight in some engines, so the result is
- * normalised. Falls back to the host clock rather than throwing if the timezone is
- * invalid, because a bad profile value must not break the Today tab.
- */
-export function hourInTimezone(date: Date, timezone: string): number {
-  try {
-    const parts = new Intl.DateTimeFormat('en-US', {
-      timeZone: timezone,
-      hour: '2-digit',
-      hour12: false,
-    }).formatToParts(date);
-    const raw = parts.find((part) => part.type === 'hour')?.value;
-    const hour = Number(raw);
-    return Number.isFinite(hour) ? ((hour % 24) + 24) % 24 : date.getHours();
-  } catch {
-    return date.getHours();
-  }
 }
 
 /**

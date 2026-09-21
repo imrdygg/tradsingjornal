@@ -1,5 +1,6 @@
 import { DailyReview, Instrument, QuestionAnswer, Setup, Trade, TradingDay } from '../../types';
 import { calculateTradeRuleFollowing, DAILY_DISCIPLINE_RULES } from '../analytics/discipline';
+import { analyzeBehavior, BehaviorFacts } from '../analytics/behavior';
 import { instrumentSymbol } from '../trading/instruments';
 import { hasAssumedRisk } from '../trading/risk-fixup';
 
@@ -100,6 +101,13 @@ export interface JournalDigest {
     losingStreakPnL: number;
   };
   recentDays: DigestDay[];
+  /**
+   * Behaviour visible only in the trader's own timestamps and sizes: when they trade,
+   * how long they hold, whether they re-enter straight after a loss, and how their size
+   * compares with their own plan. This is what a self-reported review cannot show,
+   * because it only catches what the trader noticed and was willing to write down.
+   */
+  behavior: BehaviorFacts;
   /** The trader's own words, trimmed. Lets the coach quote them back. */
   traderOwnWords: {
     entryReasons: string[];
@@ -254,8 +262,10 @@ export function buildJournalDigest(input: {
   setups: Setup[];
   instruments: Instrument[];
   todayTradeDate: string;
+  /** The trader's timezone, used to read clock hours out of their own timestamps. */
+  timezone: string;
 }): JournalDigest {
-  const { trades, tradingDays, reviews, setups, instruments, todayTradeDate } = input;
+  const { trades, tradingDays, reviews, setups, instruments, todayTradeDate, timezone } = input;
 
   // Newest first. Trade dates are YYYY-MM-DD so a string sort is chronological.
   const daysByDate = new Map<string, TradingDay>();
@@ -426,6 +436,16 @@ export function buildJournalDigest(input: {
   if (reviewedTrades.length === 0) {
     caveats.push('No trade execution reviews completed, so per-trade rule following is unknown.');
   }
+  const behavior = analyzeBehavior({ trades, tradingDays, timezone });
+  const unreadableTimes = behavior.timeOfDay.unreadableEntries + behavior.holdTime.unreadable;
+  if (unreadableTimes > 0) {
+    caveats.push(
+      `${unreadableTimes} trade(s) have a missing or unreadable entry/exit time, so they are ` +
+        `absent from the timing and hold-time figures below. Do not read those figures as ` +
+        `covering every trade.`
+    );
+  }
+
   const assumedRiskCount = trades.filter(hasAssumedRisk).length;
   if (assumedRiskCount > 0) {
     caveats.push(
@@ -511,6 +531,7 @@ export function buildJournalDigest(input: {
       losingStreakPnL: round(losingStreakPnL),
     },
     recentDays,
+    behavior,
     traderOwnWords: {
       entryReasons: collectWords(closedNewestFirst.map((t) => t.entryReason)),
       tradeNotes: collectWords(closedNewestFirst.map((t) => t.notes)),

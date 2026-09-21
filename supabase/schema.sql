@@ -1,8 +1,18 @@
 create table if not exists public.journal_snapshots (
   user_id uuid primary key references auth.users(id) on delete cascade,
   data jsonb not null,
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  -- Optimistic concurrency token. The client sends the revision it last read and
+  -- the update only matches while that is still current, so a second device
+  -- cannot silently flatten the first one's journal: the refused write is
+  -- reported and the trader chooses which copy to keep.
+  revision bigint not null default 1
 );
+
+-- Existing projects created the table without the column, so add it in place.
+-- `if not exists` keeps this whole file safe to re-run.
+alter table public.journal_snapshots
+  add column if not exists revision bigint not null default 1;
 
 alter table public.journal_snapshots enable row level security;
 

@@ -92,6 +92,7 @@ const build = (input: Partial<Parameters<typeof buildJournalDigest>[0]> = {}) =>
     setups: [],
     instruments: DEFAULT_INSTRUMENTS,
     todayTradeDate: '2026-09-18',
+    timezone: 'America/New_York',
     ...input,
   });
 
@@ -489,6 +490,59 @@ describe('buildJournalDigest', () => {
     expect(numbers.some((n) => n === 'NaN' || n === 'Infinity')).toBe(false);
     expect(digest.today.hasPlan).toBe(false);
     expect(digest.recentDays).toEqual([]);
+  });
+
+  describe('behaviour from the trader own timestamps', () => {
+    it('reads entry hours in the timezone the digest was given', () => {
+      const trades = Array.from({ length: 3 }, (_, i) =>
+        makeTrade({ id: `t${i}`, entryTime: '2026-09-18T13:30:00.000Z' })
+      );
+
+      // 13:30 UTC is 09:00 in New York during daylight saving.
+      expect(build({ trades }).behavior.timeOfDay.buckets.map((b) => b.label)).toEqual(['09:00']);
+      expect(
+        build({ trades, timezone: 'UTC' }).behavior.timeOfDay.buckets.map((b) => b.label)
+      ).toEqual(['13:00']);
+      expect(build({ trades }).behavior.timezone).toBe('America/New_York');
+    });
+
+    it('warns that unreadable timestamps are missing from the timing figures', () => {
+      const digest = build({ trades: [makeTrade({ entryTime: '' })] });
+      expect(digest.dataSufficiency.caveats.join(' ')).toContain('unreadable entry/exit time');
+    });
+
+    it('compares an entry taken right after a loss against everything else', () => {
+      const digest = build({
+        trades: [
+          makeTrade({
+            id: 'loss',
+            entryTime: '2026-09-18T13:00:00.000Z',
+            exitTime: '2026-09-18T13:20:00.000Z',
+            netPnL: -50,
+          }),
+          makeTrade({
+            id: 'reaction',
+            entryTime: '2026-09-18T13:30:00.000Z',
+            exitTime: '2026-09-18T13:40:00.000Z',
+            netPnL: -40,
+          }),
+        ],
+      });
+
+      expect(digest.behavior.afterLoss.afterLoss?.trades).toBe(1);
+      expect(digest.behavior.afterLoss.afterLoss?.netPnL).toBe(-40);
+      expect(digest.behavior.afterLoss.other?.trades).toBe(1);
+    });
+
+    it('measures size against the contracts the day planned', () => {
+      const digest = build({
+        trades: [makeTrade({ contracts: 3 })],
+        tradingDays: [makeDay({ contractsPlanned: 1 })],
+      });
+
+      expect(digest.behavior.sizeDiscipline.tradesOverPlannedSize).toBe(1);
+      expect(digest.behavior.sizeDiscipline.worstOvershootContracts).toBe(2);
+    });
   });
 
   it('survives a trade whose day is missing from the journal', () => {

@@ -123,6 +123,16 @@ test.describe('Undoing a plan lock', () => {
     await expect(page.getByRole('heading', { name: /Morning Plan/i })).toBeVisible();
 
     await page.locator('#lock-plan-btn').click();
+
+    // The lock opens a preview first: plan stats, the live sector heat map and a coach
+    // opinion. In the dev server none of those services exist, so the modal reports
+    // both as failed while still leaving the lock reachable — locking must not depend
+    // on a network service being up.
+    await expect(page.getByText(/Before you lock/i)).toBeVisible();
+    await expect(page.getByText(/Sector heat map/i)).toBeVisible();
+    await expect(page.getByText(/Coach opinion on this plan/i)).toBeVisible();
+    await page.locator('#plan-lock-confirm-btn').click();
+
     await expect(page.getByText(/Immutable Baseline Stored/i)).toBeVisible();
 
     await page.locator('#unlock-plan-btn').click();

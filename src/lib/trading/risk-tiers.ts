@@ -98,6 +98,62 @@ export function countTradesByTier(trades: Trade[], excludeTradeId?: string): num
   return counts;
 }
 
+/** A slot whose cap the day's trades have reached or passed. */
+export interface TierCapStatus {
+  /** Slot number, 1–4. */
+  tier: number;
+  /** What the plan allows at this slot. */
+  cap: number;
+  /** How many trades have been taken at it. */
+  used: number;
+  /** True once the count has passed the cap, not merely reached it. */
+  over: boolean;
+  /** True when the day's most recently recorded trade was taken at this slot. */
+  filledByLatest: boolean;
+}
+
+/** The most recently recorded trade, by when it was saved. */
+function latestRecordedTrade(trades: Trade[]): Trade | undefined {
+  return trades.reduce<Trade | undefined>((latest, trade) => {
+    if (!latest) return trade;
+    const mine = trade.createdAt ?? '';
+    const theirs = latest.createdAt ?? '';
+    if (mine !== theirs) return mine > theirs ? trade : latest;
+    // Same timestamp — a bulk import — so the id keeps the pick stable across renders.
+    return trade.id > latest.id ? trade : latest;
+  }, undefined);
+}
+
+/**
+ * The slots whose cap the day has used up, most serious first.
+ *
+ * `used` counts every trade taken at a slot, open or closed: a cap is about how many trades
+ * the plan allows, not how many are still running. Only slots with a cap set are considered,
+ * so a day with no caps produces nothing to flag.
+ *
+ * `filledByLatest` separates "your last trade just used this up" from "this slot was already
+ * spent", which is the difference between a nudge and a reminder.
+ */
+export function tierCapStatuses(trades: Trade[], caps?: number[] | null): TierCapStatus[] {
+  const limits = normalizeTierCaps(caps);
+  if (!limits.some((cap) => cap > 0)) return [];
+
+  const used = countTradesByTier(trades);
+  const latest = latestRecordedTrade(trades);
+
+  return limits
+    .map((cap, index) => ({
+      tier: index + 1,
+      cap,
+      used: used[index],
+      over: cap > 0 && used[index] > cap,
+      filledByLatest: cap > 0 && latest?.riskTier === index + 1,
+    }))
+    .filter((status) => status.cap > 0 && status.used >= status.cap)
+    // Breaches first, then by slot, so the line that matters most is read first.
+    .sort((a, b) => Number(b.over) - Number(a.over) || a.tier - b.tier);
+}
+
 export interface RiskSizedContracts {
   /** Whole contracts, never below 1: one contract is the smallest position there is. */
   contracts: number;

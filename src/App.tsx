@@ -94,7 +94,7 @@ import type { CsvImportSummary } from './lib/trading/tradovate-import';
 import { buildPositionGroups, findPositionGroup } from './lib/trading/position-groups';
 import { findAssumedRiskTrades, RiskFixItem } from './lib/trading/risk-fixup';
 import { instrumentSymbol } from './lib/trading/instruments';
-import { riskTierAmounts } from './lib/trading/risk-tiers';
+import { riskTierAmounts, tierCapStatuses } from './lib/trading/risk-tiers';
 import { acknowledgementFor, isLessonAcknowledged } from './lib/storage/lesson-ack';
 import {
   assessPlannedSize,
@@ -558,6 +558,17 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     todayTrades,
     trades,
   ]);
+
+  /**
+   * The risk slots today's trades have used up.
+   *
+   * Read from the day's own trades and caps, the same pair the trade form warns with, so the
+   * summary and the form can never disagree about whether a slot is spent.
+   */
+  const tierCapFlags = useMemo(
+    () => tierCapStatuses(todayTrades, todayTradingDay.riskTierCaps),
+    [todayTrades, todayTradingDay.riskTierCaps]
+  );
 
   // Today's Review (if any)
   const todayReview = useMemo(() => {
@@ -1190,6 +1201,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               onOpenAddTrade={openAddTrade}
               onOpenEndDay={() => setIsReviewModalOpen(true)}
               isPlanLocked={!!todayTradingDay.lockedAt}
+              capStatuses={tierCapFlags}
             />
 
 

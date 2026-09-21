@@ -9,6 +9,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { DayStatus, RiskMode } from '../../types';
+import type { TierCapStatus } from '../../lib/trading/risk-tiers';
 
 interface TodaySummaryProps {
   realizedPnL: number;
@@ -21,6 +22,13 @@ interface TodaySummaryProps {
   onOpenAddTrade: () => void;
   onOpenEndDay: () => void;
   isPlanLocked: boolean;
+  /**
+   * Slots whose cap today's trades have used up, when the plan set any.
+   *
+   * Computed by the caller from the same day and caps the trade form warns with, so the two
+   * can never disagree about the same slot.
+   */
+  capStatuses?: TierCapStatus[];
 }
 
 export const TodaySummary: React.FC<TodaySummaryProps> = ({
@@ -34,6 +42,7 @@ export const TodaySummary: React.FC<TodaySummaryProps> = ({
   onOpenAddTrade,
   onOpenEndDay,
   isPlanLocked,
+  capStatuses = [],
 }) => {
   const pnlColor =
     realizedPnL > 0
@@ -72,6 +81,42 @@ export const TodaySummary: React.FC<TodaySummaryProps> = ({
           </div>
         </div>
       )}
+
+      {/*
+        Slots the day has used up.
+
+        Shown here because the summary is what is on screen the moment a trade is saved: the
+        plan's cap is decided in the morning and is easy to forget by the third trade.
+      */}
+      {capStatuses.map((status) => (
+        <div
+          key={status.tier}
+          data-testid={`cap-flag-${status.tier}`}
+          data-cap-over={status.over ? 'true' : 'false'}
+          role="status"
+          className={`mb-4 flex items-start gap-2.5 rounded-xl border p-3 text-xs ${
+            status.over
+              ? 'border-rose-800/80 bg-rose-950/40 text-rose-200'
+              : 'border-amber-800/70 bg-amber-950/30 text-amber-200'
+          }`}
+        >
+          <AlertTriangle
+            className={`h-4 w-4 shrink-0 ${status.over ? 'text-rose-400' : 'text-amber-400'}`}
+          />
+          <div>
+            <strong className="font-semibold">
+              {status.over
+                ? `Trade #${status.tier} is over its cap: `
+                : `Trade #${status.tier} is full: `}
+            </strong>
+            {status.over
+              ? `${status.used} taken against a plan of ${status.cap}. That slot was meant to be spent.`
+              : `${status.used} of ${status.cap} taken.${
+                  status.filledByLatest ? ' Your last trade filled it.' : ''
+                } No more at #${status.tier} today.`}
+          </div>
+        </div>
+      ))}
 
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4 items-center">
         {/* Realized P&L */}

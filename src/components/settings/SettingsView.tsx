@@ -513,7 +513,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     id={`settings-risk-tier-${index}`}
                     type="number"
                     min="1"
-                    step="5"
+                    // Any whole amount: a fixed step would flag round figures like $40 as
+                    // invalid, because the step is measured from `min`.
+                    step="any"
                     value={draft}
                     onChange={(e) =>
                       setTierDrafts((prev) => ({ ...prev, [index]: e.target.value }))

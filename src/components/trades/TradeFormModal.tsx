@@ -674,7 +674,10 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
                 id="trade-custom-risk"
                 type="number"
                 min="1"
-                step="5"
+                // Any amount, deliberately. A fixed step would make the browser reject
+                // perfectly good risks — `min="1" step="5"` refuses $40 — and the form
+                // would silently refuse to save with no error to explain why.
+                step="any"
                 placeholder="Custom risk ($) — e.g. 40"
                 value={customRisk}
                 onChange={(e) => {

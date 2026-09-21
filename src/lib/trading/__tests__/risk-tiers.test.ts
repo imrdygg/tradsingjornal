@@ -9,11 +9,15 @@ import {
   riskTierAmounts,
   riskTierLabel,
   sizeForRisk,
+  tierCapStatuses,
 } from '../risk-tiers';
 
 /** Only the fields the cap helpers read are filled in. */
-const tierTrade = (id: string, riskTier: number | null | undefined): Trade =>
-  ({ id, riskTier } as Trade);
+const tierTrade = (
+  id: string,
+  riskTier: number | null | undefined,
+  createdAt = '2026-09-21T14:00:00.000Z'
+): Trade => ({ id, riskTier, createdAt } as Trade);
 
 describe('riskTierAmounts', () => {
   it('returns the built-in ladder for a profile that has none', () => {
@@ -90,6 +94,83 @@ describe('countTradesByTier', () => {
   it('leaves out a trade when it is the one being edited', () => {
     const counts = countTradesByTier([tierTrade('a', 2), tierTrade('b', 2)], 'b');
     expect(counts).toEqual([0, 1, 0, 0]);
+  });
+});
+
+describe('tierCapStatuses', () => {
+  const caps = [0, 2, 1, 0];
+
+  it('says nothing when the plan set no caps', () => {
+    expect(tierCapStatuses([tierTrade('a', 1), tierTrade('b', 1)], [0, 0, 0, 0])).toEqual([]);
+    expect(tierCapStatuses([tierTrade('a', 1)], undefined)).toEqual([]);
+  });
+
+  it('flags a slot that has reached its cap, with the counts', () => {
+    const statuses = tierCapStatuses(
+      [tierTrade('a', 2, '2026-09-21T14:00:00.000Z'), tierTrade('b', 2, '2026-09-21T14:10:00.000Z')],
+      caps
+    );
+
+    expect(statuses).toHaveLength(1);
+    expect(statuses[0]).toMatchObject({ tier: 2, cap: 2, used: 2, over: false });
+  });
+
+  it('stays quiet while a slot still has room', () => {
+    expect(tierCapStatuses([tierTrade('a', 2)], caps)).toEqual([]);
+  });
+
+  it('marks the slot the day’s last trade filled', () => {
+    const statuses = tierCapStatuses(
+      [
+        tierTrade('older', 2, '2026-09-21T14:00:00.000Z'),
+        tierTrade('latest', 2, '2026-09-21T15:00:00.000Z'),
+      ],
+      caps
+    );
+
+    expect(statuses[0].filledByLatest).toBe(true);
+  });
+
+  it('does not blame the last trade for a slot it did not fill', () => {
+    // Slot #2 is full, but the newest trade was taken at #1.
+    const statuses = tierCapStatuses(
+      [
+        tierTrade('one', 2, '2026-09-21T14:00:00.000Z'),
+        tierTrade('two', 2, '2026-09-21T14:05:00.000Z'),
+        tierTrade('newest', 1, '2026-09-21T15:00:00.000Z'),
+      ],
+      caps
+    );
+
+    expect(statuses).toHaveLength(1);
+    expect(statuses[0].filledByLatest).toBe(false);
+  });
+
+  it('reports a breach separately and puts it first', () => {
+    // #3 is at its cap of 1 and #2 has gone over its cap of 2.
+    const statuses = tierCapStatuses(
+      [
+        tierTrade('a', 2),
+        tierTrade('b', 2),
+        tierTrade('c', 2, '2026-09-21T14:30:00.000Z'),
+        tierTrade('d', 3),
+      ],
+      caps
+    );
+
+    expect(statuses.map((status) => status.tier)).toEqual([2, 3]);
+    expect(statuses[0]).toMatchObject({ tier: 2, cap: 2, used: 3, over: true });
+    expect(statuses[1]).toMatchObject({ tier: 3, cap: 1, used: 1, over: false });
+  });
+
+  it('never says anything about the custom slot', () => {
+    // Custom trades have no number to cap, so they cannot fill a slot.
+    const statuses = tierCapStatuses(
+      [tierTrade('a', null), tierTrade('b', null), tierTrade('c', null)],
+      [1, 1, 1, 1]
+    );
+
+    expect(statuses).toEqual([]);
   });
 });
 

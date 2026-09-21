@@ -108,6 +108,9 @@ const SETUP_DIAGRAMS: Record<string, Record<Direction, DiagramSpec>> = {
         [58, 51, 60, 49],
         [49, 66, 70, 46],
       ],
+      // The retrace level the guide tells the trader to work with: the midpoint of the
+      // engulfing body is where a missed entry is usually given a second chance.
+      level: { price: 57.5, label: 'Engulfing 50%' },
     },
     bearish: {
       // Uptrend, small green candle, big red body that engulfs it.
@@ -116,6 +119,7 @@ const SETUP_DIAGRAMS: Record<string, Record<Direction, DiagramSpec>> = {
         [54, 60, 63, 52],
         [62, 44, 65, 41],
       ],
+      level: { price: 53, label: 'Engulfing 50%' },
     },
   },
 
@@ -209,6 +213,9 @@ const SETUP_DIAGRAMS: Record<string, Record<Direction, DiagramSpec>> = {
         [44, 58, 60, 42],
         [58, 72, 75, 56],
       ],
+      // The turn is only a turn once the swing that failed is taken: this is the level
+      // the confirmation candle has to close through.
+      level: { price: 50, label: 'Swing high' },
     },
     bearish: {
       // Uptrend, long-wick shooting star at the high, then structure flips down.
@@ -220,6 +227,7 @@ const SETUP_DIAGRAMS: Record<string, Record<Direction, DiagramSpec>> = {
         [62, 48, 64, 46],
         [48, 32, 50, 29],
       ],
+      level: { price: 56, label: 'Swing low' },
     },
   },
 
@@ -235,6 +243,9 @@ const SETUP_DIAGRAMS: Record<string, Record<Direction, DiagramSpec>> = {
         [50, 64, 67, 48],
         [64, 76, 79, 62],
       ],
+      // The pullback low is the line the whole idea rests on: the trend is intact while
+      // it holds, and the continuation entry sits just above it.
+      level: { price: 40, label: 'Pullback low' },
     },
     bearish: {
       // Downtrend, weak pullback that stalls, then downtrend resumes.
@@ -247,6 +258,7 @@ const SETUP_DIAGRAMS: Record<string, Record<Direction, DiagramSpec>> = {
         [56, 42, 58, 40],
         [42, 28, 44, 25],
       ],
+      level: { price: 68, label: 'Pullback high' },
     },
   },
 
@@ -261,6 +273,9 @@ const SETUP_DIAGRAMS: Record<string, Record<Direction, DiagramSpec>> = {
         [44, 58, 60, 42],
         [58, 68, 71, 56],
       ],
+      // Even the placeholder shows the one line every structure idea shares: the last
+      // higher low, which is what makes the next leg a continuation rather than a guess.
+      level: { price: 34, label: 'Last higher low' },
     },
     bearish: {
       // No fixed shape: a generic breakdown as a placeholder.
@@ -272,6 +287,7 @@ const SETUP_DIAGRAMS: Record<string, Record<Direction, DiagramSpec>> = {
         [56, 42, 58, 40],
         [42, 32, 44, 29],
       ],
+      level: { price: 58, label: 'Last lower high' },
     },
   },
 
@@ -777,6 +793,9 @@ const SETUP_DIAGRAMS: Record<string, Record<Direction, DiagramSpec>> = {
         [58, 66, 69, 56],
         [66, 74, 77, 64],
       ],
+      // The star's high: the middle candle's own extreme, which the third candle has to
+      // clear for the three-bar pattern to be complete.
+      level: { price: 46, label: 'Star high' },
     },
     bearish: {
       // Evening star: a push up, a stall, then a full-bodied reversal down.
@@ -788,6 +807,166 @@ const SETUP_DIAGRAMS: Record<string, Record<Direction, DiagramSpec>> = {
         [48, 38, 50, 35],
         [38, 28, 40, 25],
       ],
+      level: { price: 54, label: 'Star low' },
+    },
+  },
+
+  'Pin Bar': {
+    bullish: {
+      // Downtrend into a hammer: a long lower wick is rejected and price turns up.
+      candles: [
+        [70, 58, 73, 55],
+        [58, 48, 60, 45],
+        [50, 54, 56, 36],
+        [54, 66, 69, 52],
+        [66, 76, 79, 64],
+      ],
+      level: { price: 56, label: 'Pin high' },
+    },
+    bearish: {
+      // Uptrend into a shooting star: a long upper wick is rejected and price turns down.
+      candles: [
+        [30, 42, 45, 28],
+        [42, 52, 54, 40],
+        [52, 48, 66, 46],
+        [48, 36, 50, 34],
+        [36, 26, 38, 23],
+      ],
+      level: { price: 46, label: 'Pin low' },
+    },
+  },
+
+  'Prior Day High Break': {
+    bullish: {
+      // Coils under the prior session's high, breaks it, then holds it on the retest.
+      candles: [
+        [40, 48, 50, 38],
+        [48, 46, 54, 42],
+        [44, 52, 54, 43],
+        [52, 62, 65, 50],
+        [62, 58, 64, 55],
+        [58, 70, 73, 56],
+      ],
+      level: { price: 54, label: 'Prior day high' },
+    },
+    bearish: {
+      // Coils over the prior session's low, breaks it, then rejects it on the retest.
+      candles: [
+        [64, 56, 66, 52],
+        [56, 52, 58, 46],
+        [52, 54, 56, 46],
+        [54, 44, 55, 42],
+        [44, 45, 48, 43],
+        [45, 34, 46, 31],
+      ],
+      level: { price: 46, label: 'Prior day low' },
+    },
+  },
+
+  'Gap and Go': {
+    bullish: {
+      // Opens above the prior close and never trades back into the gap: continuation.
+      candles: [
+        [30, 44, 46, 28],
+        [44, 42, 46, 40],
+        [52, 64, 66, 52],
+        [64, 60, 66, 58],
+        [60, 74, 78, 58],
+      ],
+      // The gap edge is the line: while price holds above it the gap is unfilled, and a
+      // close back through it is the reason to stop calling it a gap and go.
+      level: { price: 52, label: 'Gap edge' },
+    },
+    bearish: {
+      // Opens below the prior close and holds under the gap: continuation down.
+      candles: [
+        [70, 56, 72, 54],
+        [56, 58, 60, 54],
+        [48, 36, 48, 34],
+        [36, 40, 42, 34],
+        [40, 26, 42, 23],
+      ],
+      level: { price: 48, label: 'Gap edge' },
+    },
+  },
+
+  'Fib Retracement': {
+    bullish: {
+      // Impulse up, then a controlled retrace into the 50–61.8% zone, then continuation.
+      candles: [
+        [30, 50, 52, 28],
+        [50, 44, 52, 42],
+        [44, 40, 46, 38],
+        [40, 52, 56, 39],
+        [52, 64, 68, 50],
+        [64, 74, 77, 62],
+      ],
+      // The zone floor: below here the impulse is being undone rather than retraced.
+      level: { price: 38, label: '61.8% retrace' },
+    },
+    bearish: {
+      // Impulse down, then a retrace up into the zone, then continuation lower.
+      candles: [
+        [72, 52, 74, 50],
+        [52, 60, 62, 50],
+        [60, 62, 64, 58],
+        [62, 50, 64, 48],
+        [50, 40, 52, 38],
+        [40, 28, 42, 25],
+      ],
+      level: { price: 64, label: '61.8% retrace' },
+    },
+  },
+
+  'Triangle Breakout': {
+    bullish: {
+      // Ascending triangle: a flat top tested twice while the lows keep rising.
+      candles: [
+        [36, 48, 54, 34],
+        [48, 42, 52, 40],
+        [42, 52, 54, 46],
+        [52, 58, 60, 50],
+        [58, 68, 72, 56],
+      ],
+      level: { price: 54, label: 'Flat top' },
+    },
+    bearish: {
+      // Descending triangle: a flat bottom tested twice while the highs keep falling.
+      candles: [
+        [64, 52, 66, 46],
+        [52, 56, 58, 48],
+        [56, 50, 54, 46],
+        [50, 38, 52, 36],
+        [38, 28, 40, 25],
+      ],
+      level: { price: 46, label: 'Flat bottom' },
+    },
+  },
+
+  'Breaker Block': {
+    bullish: {
+      // The block that failed to hold price down becomes the support price returns to.
+      candles: [
+        [68, 56, 70, 54],
+        [56, 46, 58, 44],
+        [46, 58, 60, 44],
+        [58, 52, 60, 50],
+        [52, 66, 70, 50],
+        [66, 78, 81, 64],
+      ],
+      level: { price: 52, label: 'Breaker block' },
+    },
+    bearish: {
+      // The block that failed to hold price up becomes the resistance price returns to.
+      candles: [
+        [32, 44, 46, 30],
+        [44, 54, 56, 42],
+        [54, 42, 56, 40],
+        [42, 48, 50, 42],
+        [48, 34, 50, 32],
+        [34, 22, 36, 19],
+      ],
+      level: { price: 48, label: 'Breaker block' },
     },
   },
 };

@@ -484,6 +484,114 @@ export const SETUP_GUIDES: Record<string, SetupGuide> = {
     invalidation:
       'Price taking out the extreme of the middle candle and holding there — the reversal never took control.',
   },
+
+  'Pin Bar': {
+    summary:
+      'A single candle with a long wick and a small body — a rejection — showing that a price was offered, refused, and closed back away from it.',
+    formation: [
+      'Price runs into a level in the direction of the existing move and pokes beyond it.',
+      'The candle closes back near where it opened, leaving most of its range as one long wick.',
+      'The body sits at the opposite end of the range: on a hammer the close is high, on a shooting star it is low.',
+    ],
+    howToTrade: [
+      'The wick marks the level that was defended; the body marks where price was accepted.',
+      'Enter on a break of the pin bar\u2019s own extreme (its high for a bullish pin, its low for a bearish one), not on the wick itself.',
+      'Stop goes beyond the wick — if that price is reached again the rejection failed.',
+      'A pin bar means most at a level the trader already marked. In open space it is just a long candle.',
+    ],
+    invalidation:
+      'Price trading back through the wick and holding beyond it — the level was not defended, it was simply passed.',
+  },
+
+  'Prior Day High Break': {
+    summary:
+      'Trading the break of the previous session\u2019s high or low, the level every participant can see and where the resting orders sit.',
+    formation: [
+      'The prior session leaves a clear high or low that the current session opens below or above.',
+      'Price coils against that level rather than running away from it — the level is being tested, not ignored.',
+      'A candle closes through the level, and the broken level is then held on the retest.',
+    ],
+    howToTrade: [
+      'Mark the prior day\u2019s high and low before the open; they are the reference for the session.',
+      'Enter on the close through the level or on the retest that holds it from the new side.',
+      'Stop goes back inside the range, beyond the level and the retest candle.',
+      'The retest is the part that matters: a break with no retest is one failed attempt away from an inverse move.',
+    ],
+    invalidation:
+      'Price closing back inside the prior session\u2019s range and holding there — the level was swept rather than broken.',
+  },
+
+  'Gap and Go': {
+    summary:
+      'A session that opens away from the prior close and keeps going, with the gap treated as support or resistance rather than something to be filled.',
+    formation: [
+      'The session opens meaningfully away from the previous close, on a catalyst or an overnight move.',
+      'Price holds the gap edge and does not trade back through it.',
+      'The first pullback stays above (or below) the gap edge and the move continues in the gap\u2019s direction.',
+    ],
+    howToTrade: [
+      'Enter on the first pullback that holds the gap edge, not on the open itself — the open is a coin flip, the held gap is evidence.',
+      'Stop goes just back through the gap edge; a filled gap is the thesis breaking, not a discount.',
+      'Targets come from the next higher-timeframe level, since a gap usually travels further than the open implies.',
+      'Gaps are the setup most likely to invert: if the edge does not hold, the same level becomes the fill trade instead (see Opening Gap Fill).',
+    ],
+    invalidation:
+      'A close back through the gap edge — the gap is being filled and the continuation idea is over.',
+  },
+
+  'Fib Retracement': {
+    summary:
+      'Joining an impulse after it retraces into a measured fraction of itself — usually the 50% to 61.8% zone — instead of chasing the move.',
+    formation: [
+      'A clear impulse leg prints, with a defined start and end.',
+      'Price turns back against the impulse in a controlled way, with smaller candles than the impulse.',
+      'The retrace stalls inside the measured zone and a candle closes back in the impulse\u2019s direction.',
+    ],
+    howToTrade: [
+      'Draw the retracement from the impulse start to its end, then wait for price to come into the zone.',
+      'Enter on the first close back in the impulse direction inside the zone, not on the touch.',
+      'Stop goes beyond the 61.8% level and the retrace low/high — past there the impulse is being undone, not retraced.',
+      'A retracement is only a retracement while the impulse origin holds. Deeper than that, it is a reversal and belongs to a different setup.',
+    ],
+    invalidation:
+      'Price clearing the origin of the impulse — the leg that was supposed to be retraced has been fully reversed.',
+  },
+
+  'Triangle Breakout': {
+    summary:
+      'A compression where one side of the range is flat and the other keeps advancing — pressure building until the flat side gives way.',
+    formation: [
+      'Price makes at least two touches of the same level, forming the flat side.',
+      'The opposite side advances: higher lows under a flat top (ascending), or lower highs over a flat bottom (descending).',
+      'A candle closes through the flat side, ideally with an expansion body rather than a wick.',
+    ],
+    howToTrade: [
+      'Mark the flat level; it is the line that decides which way the compression resolves.',
+      'Enter on the close through it, or on the retest of the level from the new side.',
+      'Stop goes inside the triangle, beyond the level and the last swing within the shape.',
+      'The measured move is the height of the widest part of the triangle projected from the break, which keeps targets honest instead of hopeful.',
+    ],
+    invalidation:
+      'Price breaking the advancing side first (the rising lows or falling highs) — the compression resolved the other way.',
+  },
+
+  'Breaker Block': {
+    summary:
+      'The zone that failed to hold price becomes the opposite one: supply that broke upward becomes the demand price returns to, and vice versa.',
+    formation: [
+      'Price forms a zone in one direction — the last candle before a move that failed to follow through.',
+      'Price reverses through that zone instead of respecting it, closing beyond it with conviction.',
+      'Price returns to the zone from the other side and it holds as support or resistance.',
+    ],
+    howToTrade: [
+      'Mark the candle or zone that failed, not the level where the move succeeded.',
+      'Enter on the retest of that zone from the new side, once a candle closes away from it.',
+      'Stop goes beyond the far edge of the zone: if the failed zone never mattered, neither does the trade.',
+      'The strongest version is the zone that trapped real orders, which is why the reversal has to be decisive rather than a slow drift.',
+    ],
+    invalidation:
+      'Price closing back through the zone and holding inside it — the failed zone is failing again, in your direction this time.',
+  },
 };
 
 /**

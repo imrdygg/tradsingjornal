@@ -613,6 +613,23 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
                   ) : (
                     /* Custom setups: editable description instead of the built-in guide */
                     <div className="space-y-3">
+                      {/*
+                        A custom setup has no chart of its own, so it gets the generic pair
+                        rather than an empty space — with the caption saying plainly that
+                        this is what it is, so nobody reads it as a picture of their setup.
+                      */}
+                      <div className="space-y-2">
+                        <div className="grid grid-cols-2 gap-3">
+                          <SetupDiagram setupName={s.name} direction="bullish" animate={isExpanded} />
+                          <SetupDiagram setupName={s.name} direction="bearish" animate={isExpanded} />
+                        </div>
+                        <p className="text-[10px] text-zinc-500 leading-relaxed">
+                          This setup has no built-in chart, so these are the generic rising and
+                          falling examples — the dashed line is the last higher low or lower high.
+                          Attach your own chart screenshots above to keep your version instead.
+                        </p>
+                      </div>
+
                       <GuideSection
                         icon={<Edit2 className="w-3.5 h-3.5 text-zinc-300" />}
                         title="Your playbook notes"

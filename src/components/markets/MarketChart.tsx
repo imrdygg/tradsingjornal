@@ -9,7 +9,10 @@ import type { ChartSymbol } from '../../lib/trading/chart-symbols';
  * the Today tab's bundle path entirely: a trader who never opens Markets never downloads
  * the provider's library. The widget is recreated when the symbol or theme changes —
  * the provider's own widget supports symbol changes in place, but recreating keeps the
- * studies, interval and theme state predictable for one small symbol set.
+ * interval and theme state predictable for one small symbol set.
+ *
+ * The chart is candlesticks and nothing else: no indicators are requested, so the picture
+ * on screen is the same series the coach is handed and asked to read.
  */
 declare global {
   interface Window {
@@ -110,7 +113,12 @@ export const MarketChart: React.FC<MarketChartProps> = ({ symbol, theme, height 
           calendar: false,
           withdateranges: true,
           details: false,
-          studies: ['RSI@tv-basicstudies', 'MASimple@tv-basicstudies'],
+          // No studies, deliberately: the chart is the candles and nothing else. The RSI
+          // opened in its own pane under the candles, which stole height from the price
+          // chart on every mount, and the moving average drew a line the coach's read does
+          // not describe — an indicator on screen that the read never mentions invites the
+          // trader to attribute the read to it. The provider's own toolbar is still there,
+          // so an indicator can be added by hand when it is wanted.
         });
       })
       .catch(() => {

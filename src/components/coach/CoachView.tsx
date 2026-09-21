@@ -31,6 +31,7 @@ import {
   CoachResultPanel,
   money,
 } from './coach-ui';
+import { COACH_WAIT_STEPS } from '../common/AiThinking';
 import { BehaviorCard } from './BehaviorCard';
 import { instrumentSymbol } from '../../lib/trading/instruments';
 import { formatTimestamp } from '../../lib/storage/date-utils';
@@ -90,7 +91,9 @@ const GenerateButton: React.FC<{
     disabled={loading || disabled}
     className="flex items-center gap-2 rounded-xl bg-amber-500/90 hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed text-zinc-950 px-4 py-2 text-xs font-bold shadow-sm transition-all hover:scale-[1.02] active:scale-[0.98]"
   >
-    <Sparkles className={`w-4 h-4 ${loading ? 'animate-pulse' : ''}`} />
+    <Sparkles
+      className={`w-4 h-4 ${loading ? 'ai-button-spark' : ''}`}
+    />
     {loading ? loadingLabel : label}
   </button>
 );
@@ -286,7 +289,9 @@ export const CoachView: React.FC<CoachViewProps> = ({
           />
         )}
 
-        {briefState.loading && <CoachLoading label="Reading your plan, trades and reviews…" />}
+        {briefState.loading && (
+          <CoachLoading label="Reading your plan, trades and reviews…" steps={COACH_WAIT_STEPS('plan')} />
+        )}
 
         {briefState.failure && (
           <CoachErrorPanel
@@ -412,7 +417,12 @@ export const CoachView: React.FC<CoachViewProps> = ({
               />
             )}
 
-            {tradeState.loading && <CoachLoading label="Reading the trade, its plan and your review…" />}
+            {tradeState.loading && (
+              <CoachLoading
+                label="Reading the trade, its plan and your review…"
+                steps={COACH_WAIT_STEPS('trade')}
+              />
+            )}
 
             {tradeState.failure && (
               <CoachErrorPanel
@@ -537,7 +547,9 @@ export const CoachView: React.FC<CoachViewProps> = ({
           />
         )}
 
-        {weeklyState.loading && <CoachLoading label="Comparing your days, rules and risk…" />}
+        {weeklyState.loading && (
+          <CoachLoading label="Comparing your days, rules and risk…" steps={COACH_WAIT_STEPS('weeks')} />
+        )}
 
         {weeklyState.failure && (
           <CoachErrorPanel

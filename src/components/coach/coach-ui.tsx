@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { CoachErrorCode } from '../../lib/ai/coach-client';
 import { Collapse } from '../common/Collapse';
+import { AiThinking } from '../common/AiThinking';
 
 /**
  * Presentational pieces shared by the Coach tab and the Today checkpoint card.
@@ -158,11 +159,16 @@ export const CoachFact: React.FC<{ label: string; value: string }> = ({ label, v
   </div>
 );
 
-export const CoachLoading: React.FC<{ label: string }> = ({ label }) => (
-  <div className="flex items-center gap-2 text-xs text-zinc-400 py-2" role="status">
-    <Sparkles className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
-    {label}
-  </div>
+/**
+ * The coach's waiting state, rendered through the shared AiThinking animation.
+ *
+ * The old version was one pulsing icon, which read as "finished" or "broken" as easily
+ * as "working". The replacement moves continuously — a dot wave, an orbiting ring and a
+ * shimmer through the text — and cycles staged messages so a long wait still reads as
+ * progress. It is inline and a few pixels tall, so it never blocks the page.
+ */
+export const CoachLoading: React.FC<{ label: string; steps?: string[] }> = ({ label, steps }) => (
+  <AiThinking label={label} steps={steps} />
 );
 
 export const CoachLabel: React.FC<{ text: string; tone?: 'good' | 'bad' | 'neutral' }> = ({

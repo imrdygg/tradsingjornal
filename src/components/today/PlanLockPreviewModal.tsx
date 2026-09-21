@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { TradingDay, Instrument, Trade, DailyReview, Setup } from '../../types';
 import { ModalOverlay } from '../common/ModalOverlay';
+import { AiThinking } from '../common/AiThinking';
 import { findInstrument, instrumentSymbol } from '../../lib/trading/instruments';
 import { DEFAULT_RISK_TIER_AMOUNTS, normalizeTierCaps } from '../../lib/trading/risk-tiers';
 import { money } from '../coach/coach-ui';
@@ -476,9 +477,8 @@ export const PlanLockPreviewModal: React.FC<PlanLockPreviewModalProps> = ({
           </div>
 
           {market.loading && (
-            <div className="flex items-center gap-2 py-6 justify-center text-xs text-zinc-400" role="status">
-              <RefreshCw className="w-4 h-4 animate-spin text-emerald-400" />
-              Collecting today's sector data…
+            <div className="py-4" role="status">
+              <AiThinking label="Collecting today's sector data…" />
             </div>
           )}
 
@@ -514,14 +514,16 @@ export const PlanLockPreviewModal: React.FC<PlanLockPreviewModalProps> = ({
           </span>
 
           {review.loading && (
-            <div className="space-y-2 py-2" role="status">
-              <div className="flex items-center gap-2 text-xs text-zinc-400">
-                <RefreshCw className="w-4 h-4 animate-spin text-amber-400" />
-                Reading your plan and today's market, then writing an honest opinion…
-              </div>
-              <p className="text-[10px] text-zinc-500 font-mono">
-                Fetching sector data · comparing bias with breadth · checking size against your recent results
-              </p>
+            <div className="py-2" role="status">
+              <AiThinking
+                label="Reading your plan and today's market, then writing an honest opinion…"
+                steps={[
+                  'Fetching sector data…',
+                  'Comparing bias with breadth…',
+                  'Checking size against your recent results…',
+                  'Writing an honest opinion…',
+                ]}
+              />
             </div>
           )}
 

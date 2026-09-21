@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import type { PlanBuildResponse } from '../../lib/ai/coach-types';
 import type { CoachResult } from '../../lib/ai/coach-client';
+import { AiThinking } from '../common/AiThinking';
 import {
   askPlanBuild,
   fetchInstrumentQuote,
@@ -143,6 +144,18 @@ export const PlanBuilderPanel: React.FC<PlanBuilderPanelProps> = ({
         {loading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
         {loading ? 'Reading the market and your journal…' : "Build today's plan"}
       </button>
+
+      {loading && (
+        <AiThinking
+          label="Reading the market and your journal…"
+          steps={[
+            'Reading your journal…',
+            'Pulling a live read of the market…',
+            'Drafting bias, entry, stop and size…',
+            'Writing the reasoning…',
+          ]}
+        />
+      )}
 
       {disabled && (
         <p className="text-[11px] text-zinc-500">

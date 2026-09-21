@@ -14,6 +14,7 @@ import {
   Plus,
   Sun,
   Moon,
+  CandlestickChart,
 } from 'lucide-react';
 import { getCurrentTradingDate } from '../../lib/storage/date-utils';
 import { SyncStatusBadge, SyncStatus } from './SyncStatusBadge';
@@ -28,6 +29,7 @@ export type NavTab =
   | 'insights'
   | 'coach'
   | 'playbook'
+  | 'markets'
   | 'settings';
 
 interface AppShellProps {
@@ -80,6 +82,7 @@ export const AppShell: React.FC<AppShellProps> = ({
     { id: 'analytics', label: 'Analytics', icon: BarChart3 },
     { id: 'insights', label: 'Insights', icon: Lightbulb },
     { id: 'coach', label: 'Coach', icon: Sparkles },
+    { id: 'markets', label: 'Markets', icon: CandlestickChart },
     { id: 'playbook', label: 'Playbook', icon: BookOpen },
     { id: 'settings', label: 'Settings', icon: SettingsIcon },
   ];
@@ -102,8 +105,6 @@ export const AppShell: React.FC<AppShellProps> = ({
       ? 'Loading'
       : syncStatus === 'error'
       ? 'Sync failed'
-      : syncStatus === 'conflict'
-      ? 'Review sync'
       : syncStatus === 'local'
       ? 'Local only'
       : '';
@@ -112,11 +113,9 @@ export const AppShell: React.FC<AppShellProps> = ({
     syncStatus === 'saved'
       ? 'bg-emerald-400'
       : syncStatus === 'saving' || syncStatus === 'loading'
-      ? 'animate-pulse bg-amber-400'
+      ? 'sync-dot-working bg-amber-400'
       : syncStatus === 'error'
       ? 'bg-rose-400'
-      : syncStatus === 'conflict'
-      ? 'bg-amber-400'
       : 'bg-zinc-500';
 
   // Rendered in two places: inside the expanded narrow-screen panel and inline on sm+.
@@ -289,8 +288,6 @@ export const AppShell: React.FC<AppShellProps> = ({
                     className={`font-mono text-[10px] ${
                       syncStatus === 'error'
                         ? 'text-rose-300'
-                        : syncStatus === 'conflict'
-                        ? 'text-amber-300'
                         : 'text-zinc-500'
                     }`}
                   >

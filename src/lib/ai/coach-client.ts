@@ -216,6 +216,7 @@ const MODES_WITH_LIVE_FETCH: readonly CoachMode[] = [
   'planbuild',
   'scalein',
   'entrycall',
+  'chartread',
 ];
 
 export async function requestCoach(

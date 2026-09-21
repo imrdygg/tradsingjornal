@@ -20,6 +20,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { Trade, Instrument } from '../../types';
+import { AiThinking } from '../common/AiThinking';
 import { findInstrument, DEFAULT_INSTRUMENTS } from '../../lib/trading/instruments';
 import {
   calculateScaleInPlan,
@@ -416,6 +417,18 @@ export const MesScaleInBreakevenCalculator: React.FC<MesScaleInBreakevenCalculat
             )}
             {advice.loading ? 'Reading your position and the live price…' : 'Ask the coach about this add'}
           </button>
+
+          {advice.loading && (
+            <AiThinking
+              label="Reading your position and the live price…"
+              steps={[
+                'Reading your position…',
+                'Checking the live price…',
+                'Measuring the add against your loss limit…',
+                'Writing the call…',
+              ]}
+            />
+          )}
 
           {!canAskCoach && (
             <p className="text-[11px] text-zinc-500 leading-relaxed">

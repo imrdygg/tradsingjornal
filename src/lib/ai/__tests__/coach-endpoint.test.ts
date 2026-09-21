@@ -70,6 +70,7 @@ describe('mode coverage', () => {
         'planbuild',
         'scalein',
         'entrycall',
+        'chartread',
       ].sort()
     );
   });

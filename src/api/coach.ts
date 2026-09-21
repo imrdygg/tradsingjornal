@@ -12,7 +12,7 @@ import type {
   CoachTradeFacts,
 } from '../lib/ai/coach-types';
 import type { JournalDigest } from '../lib/ai/journal-digest';
-import { getInstrumentQuote, getMarketBrief } from '../lib/ai/market-data';
+import { getDailyBars, getInstrumentQuote, getMarketBrief } from '../lib/ai/market-data';
 import type { MarketBrief } from '../lib/ai/market-data';
 
 /**
@@ -818,7 +818,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     res.status(400).json({
       error:
         'Unknown coach mode. Expected brief, weekly, trade, prep, postclose, planreview, ' +
-        'planfield, planbuild, scalein or entrycall.',
+        'planfield, planbuild, scalein, entrycall or chartread.',
     });
     return;
   }
@@ -878,6 +878,15 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     extras.entry = entry;
   }
 
+  if (mode === 'chartread') {
+    const symbol = typeof extrasRaw.instrument === 'string' ? extrasRaw.instrument.trim().toUpperCase() : '';
+    if (!symbol) {
+      res.status(400).json({ error: 'Chart-read mode needs the instrument to read.' });
+      return;
+    }
+    extras.instrument = symbol;
+  }
+
   // The live futures read, for the modes whose guardrails allow it to be quoted. The
   // symbol is taken from the position or entry when the request did not name one, so a
   // caller cannot ask about one instrument while describing another.
@@ -889,6 +898,13 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     // A failure here degrades inside getInstrumentQuote to ok:false with a reason, and
     // the guardrails require the model to stand aside rather than fill the gap.
     extras.instrumentQuote = await getInstrumentQuote(instrument);
+  }
+
+  // The daily-bar series behind a chart read. Only that mode's guardrails allow it to
+  // be quoted; a failed fetch degrades to ok:false with a reason, and the model must
+  // stand aside rather than describe a chart it never saw.
+  if (mode === 'chartread') {
+    extras.chartSeries = await getDailyBars(extras.instrument || '');
   }
 
   // Only requests that would actually reach Gemini are counted, so a malformed request

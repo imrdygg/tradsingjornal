@@ -30,7 +30,9 @@ export type CoachMode =
    * The coach's own direction and entry for a position the trader has just opened,
    * stored beside the trade so the two calls can be compared later.
    */
-  | 'entrycall';
+  | 'entrycall'
+  /** A read of an instrument's recent daily bars: what the data shows and what it would do. */
+  | 'chartread';
 
 /** The plan fields the coach will draft text for, one at a time. */
 export type PlanFieldName = 'waitingFor' | 'stayOutIf';
@@ -145,6 +147,28 @@ export interface EntryCallResponse {
   rationale: string;
 }
 
+/** A read of an instrument's recent daily bars, shown under the chart. */
+export interface ChartReadResponse {
+  headline: string;
+  /** What the daily bars actually show: direction, ranges, streaks — quoting the numbers given. */
+  patternRead: string;
+  /** Levels named from the data itself (series high/low, recent closes), each labelled. */
+  levels: PlannedLevel[];
+  /** The trade it would consider from this chart, or 'skip' when it would stand aside. */
+  direction: 'long' | 'short' | 'skip';
+  entry: number | null;
+  stop: number | null;
+  target: number | null;
+  /** How that hypothetical trade squares with the trader's own process record. */
+  fitsTheirTrading: string;
+  /** What would make acting on this read a mistake. */
+  risks: string[];
+  rationale: string;
+  confidence: 'low' | 'medium' | 'high';
+  /** The exact bars and journal facts the read leaned on, quoted for checking. */
+  basedOn: string[];
+}
+
 export interface BriefResponse {
   headline: string;
   yesterday: string;
@@ -227,7 +251,8 @@ export type CoachResponse =
   | PlanFieldResponse
   | PlanBuildResponse
   | ScaleInResponse
-  | EntryCallResponse;
+  | EntryCallResponse
+  | ChartReadResponse;
 
 export function isCoachEntryCall(value: unknown): value is CoachEntryCall {
   if (!value || typeof value !== 'object') return false;

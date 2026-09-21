@@ -8,6 +8,8 @@ import { YesterdayFocusBanner } from './components/today/YesterdayFocusBanner';
 import { DrawdownRoomStrip } from './components/today/DrawdownRoomStrip';
 import { TodaySummary } from './components/today/TodaySummary';
 import { DailyPlanForm } from './components/today/DailyPlanForm';
+import { GlobalSearch } from './components/common/GlobalSearch';
+import { CollapsibleSection } from './components/common/CollapsibleSection';
 import { TradeCard } from './components/trades/TradeCard';
 import { TradeFormModal } from './components/trades/TradeFormModal';
 import { TradeCloseModal } from './components/trades/TradeCloseModal';
@@ -48,6 +50,14 @@ const CoachView = lazy(() =>
   import('./components/coach/CoachView').then((m) => ({ default: m.CoachView }))
 );
 /**
+ * Markets loads on demand like the other tab views. Besides the bytes, the point is the
+ * provider's chart script: it is injected only when this view mounts, so a trader who
+ * never opens Markets never downloads it.
+ */
+const MarketsView = lazy(() =>
+  import('./components/markets/MarketsView').then((m) => ({ default: m.MarketsView }))
+);
+/**
  * The review trend chart loads with the click that reveals it.
  *
  * It is the only thing that draws a chart on the Today tab, and Today is the first paint:
@@ -80,15 +90,9 @@ import { storage, dismissStorageFailure, measureJournalBytes } from './lib/stora
 import type { StorageState } from './lib/storage';
 import { useStorageFailure } from './lib/storage/use-storage-failure';
 import { StorageWarningBanner } from './components/common/StorageWarningBanner';
-import { CloudConflictBanner } from './components/common/CloudConflictBanner';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
-import {
-  loadOrMigrateJournal,
-  loadJournal,
-  saveJournal,
-  overwriteJournal,
-  isJournalConflictError,
-} from './lib/cloud-sync';
+import { loadOrMigrateJournal, overwriteJournal } from './lib/cloud-sync';
+import { countLocalOnlyRecords, createJournalSaver } from './lib/journal-sync';
 import { parseTradovateCSV } from './lib/trading/tradovate-import';
 import type { CsvImportSummary } from './lib/trading/tradovate-import';
 import { buildPositionGroups, findPositionGroup } from './lib/trading/position-groups';
@@ -276,11 +280,6 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   // because a successful save changing state would re-run the save effect and
   // loop forever.
   const cloudRevisionRef = useRef<number | null>(null);
-  // Set when another device moved the cloud copy on. It also gates the save
-  // effect: further saves could only be refused, and the trader has to pick a
-  // copy before any write can be accepted again.
-  const [syncConflict, setSyncConflict] = useState(false);
-  const [resolvingConflict, setResolvingConflict] = useState(false);
 
   /**
    * Adopts a snapshot as the whole journal, local storage included, so a reload
@@ -310,6 +309,19 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       try {
         const snapshot = await loadOrMigrateJournal(userId, currentStateRef.current);
         if (!active) return;
+        // Adopting the cloud copy is the one moment a sync can overwrite work this
+        // device is holding, so anything the cloud does not already have is set aside
+        // first. It costs a check on sign-in and nothing in normal use, where the two
+        // copies agree.
+        const localOnly = countLocalOnlyRecords(currentStateRef.current, snapshot.state);
+        if (localOnly > 0) {
+          storage.saveRecoveryCopy(
+            JSON.stringify(currentStateRef.current),
+            `This device was holding ${localOnly} ${
+              localOnly === 1 ? 'record' : 'records'
+            } the cloud copy did not have when it signed in and downloaded the cloud copy over them.`
+          );
+        }
         cloudRevisionRef.current = snapshot.revision;
         applyJournalState(snapshot.state);
         setSyncStatus('saved');
@@ -328,34 +340,41 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   }, [cloudEnabled, userId, applyJournalState]);
 
   /**
-   * Writes the journal against the revision this device last saw.
+   * The one path the journal takes to the cloud.
    *
-   * A refusal is reported, never retried: retrying a refused write is precisely
-   * the overwrite the revision guard exists to stop.
+   * Writes are serialised rather than fired in parallel: the debounce below does not
+   * cancel a write already in flight, so two saves could both carry the revision this
+   * device last read and the second was refused by the first — reported to the trader as
+   * another device's change when it was this device refusing itself.
+   *
+   * A refusal that survives that (a genuine write from another device) is resolved here
+   * by saving this device's copy, which is the one being typed into. The copy it replaces
+   * is set aside first, so resolving is never the reason work is gone.
    */
-  const persistJournal = useCallback(async (): Promise<'saved' | 'error' | 'conflict'> => {
-    if (!cloudEnabled) return 'saved';
-    try {
-      cloudRevisionRef.current = await saveJournal(
+  const persistJournal = useMemo(
+    () =>
+      createJournalSaver({
         userId,
-        currentStateRef.current,
-        cloudRevisionRef.current
-      );
-      return 'saved';
-    } catch (error) {
-      if (isJournalConflictError(error)) {
-        setSyncConflict(true);
-        return 'conflict';
-      }
-      console.error('Cloud journal save failed:', error);
-      return 'error';
-    }
-  }, [cloudEnabled, userId]);
+        readState: () => currentStateRef.current,
+        readRevision: () => cloudRevisionRef.current,
+        writeRevision: (revision) => {
+          cloudRevisionRef.current = revision;
+        },
+        onRemoteReplaced: (remote) => {
+          if (!remote) return;
+          storage.saveRecoveryCopy(
+            JSON.stringify(remote),
+            'A save from this device replaced it while syncing — it had been written by another device.'
+          );
+        },
+      }),
+    [userId]
+  );
 
   // `currentState` is not read in the body: it is the trigger. Any journal edit
   // produces a new object here and schedules the debounced save below.
   useEffect(() => {
-    if (!cloudEnabled || !cloudReady || syncConflict) return;
+    if (!cloudEnabled || !cloudReady) return;
     setSyncStatus('saving');
     const timeout = window.setTimeout(async () => {
       const result = await persistJournal();
@@ -363,11 +382,11 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
         setSyncStatus('saved');
         setLastSyncedAt(new Date());
       } else {
-        setSyncStatus(result === 'conflict' ? 'conflict' : 'error');
+        setSyncStatus('error');
       }
     }, 350);
     return () => window.clearTimeout(timeout);
-  }, [cloudEnabled, cloudReady, syncConflict, persistJournal, currentState]);
+  }, [cloudEnabled, cloudReady, persistJournal, currentState]);
 
   const retrySave = useCallback(async () => {
     if (!cloudEnabled) return;
@@ -377,57 +396,9 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       setSyncStatus('saved');
       setLastSyncedAt(new Date());
     } else {
-      setSyncStatus(result === 'conflict' ? 'conflict' : 'error');
+      setSyncStatus('error');
     }
   }, [cloudEnabled, persistJournal]);
-
-  /**
-   * Resolves a conflict by taking the cloud copy, discarding whatever this
-   * device changed since its last successful save.
-   */
-  const handleUseCloudCopy = useCallback(async () => {
-    setResolvingConflict(true);
-    setSyncStatus('loading');
-    try {
-      const snapshot = await loadJournal(userId);
-      if (snapshot) {
-        cloudRevisionRef.current = snapshot.revision;
-        applyJournalState(snapshot.state);
-      } else {
-        // The other device removed the journal, so this copy is the only one left.
-        cloudRevisionRef.current = await overwriteJournal(userId, currentStateRef.current);
-      }
-      setSyncConflict(false);
-      setSyncStatus('saved');
-      setLastSyncedAt(new Date());
-    } catch (error) {
-      console.error('Cloud journal reload failed:', error);
-      setSyncStatus('error');
-    } finally {
-      setResolvingConflict(false);
-    }
-  }, [userId, applyJournalState]);
-
-  /**
-   * Resolves a conflict by overwriting the cloud with this device's journal,
-   * discarding the other device's version. Only ever reached from an explicit
-   * choice in the conflict banner.
-   */
-  const handleKeepThisDevice = useCallback(async () => {
-    setResolvingConflict(true);
-    setSyncStatus('saving');
-    try {
-      cloudRevisionRef.current = await overwriteJournal(userId, currentStateRef.current);
-      setSyncConflict(false);
-      setSyncStatus('saved');
-      setLastSyncedAt(new Date());
-    } catch (error) {
-      console.error('Cloud journal overwrite failed:', error);
-      setSyncStatus('error');
-    } finally {
-      setResolvingConflict(false);
-    }
-  }, [userId]);
 
   const handleSignOut = async () => {
     setSigningOut(true);
@@ -439,10 +410,10 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
         setSyncStatus('saved');
         setLastSyncedAt(new Date());
       } else {
-        // A refused or failed final save must not clear the local copy: that is
-        // the only place this session's work would still exist.
+        // A failed final save must not clear the local copy: that is the only place
+        // this session's work would still exist.
         flushed = false;
-        setSyncStatus(result === 'conflict' ? 'conflict' : 'error');
+        setSyncStatus('error');
       }
     }
     // Only wipe the local journal once the cloud copy is safely up to date,
@@ -963,6 +934,14 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     setTradingDays(storage.getTradingDays());
   };
 
+  /**
+   * A trading day to open in the History tab's day detail, handed over from the home
+   * page's search: a plan or review match has no modal of its own on Today, so the
+   * result lands where the day can actually be read. Cleared once consumed, and on any
+   * manual tab change, so a later History visit starts clean.
+   */
+  const [historyFocusDayId, setHistoryFocusDayId] = useState<string | null>(null);
+
   // Deep-link from the Morning Plan: switching to the Playbook tab focused on
   // today's watched setups. Cleared on the next manual tab change so a later
   // visit to the Playbook starts clean at the top of the list.
@@ -1010,6 +989,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   const handleSelectTab = useCallback(
     (tab: NavTab) => {
       setPlaybookFocusSetups(null);
+      setHistoryFocusDayId(null);
       setActiveTab(tab);
     },
     []
@@ -1059,11 +1039,10 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     };
 
     if (cloudEnabled && cloudReady) {
-      // Deliberate and destructive, so it takes the unconditional write: a
-      // pending conflict must not leave the emptied journal stuck locally while
-      // the cloud still holds everything the trader just wiped.
+      // Deliberate and destructive, so it takes the unconditional write: the
+      // emptied journal must not sit locally while the cloud still holds
+      // everything the trader just wiped.
       cloudRevisionRef.current = await overwriteJournal(userId, fresh);
-      setSyncConflict(false);
     }
 
     setTrades([]);
@@ -1147,7 +1126,27 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       case 'today':
         return (
           <div className="space-y-6">
-            {/* Yesterday's Focus Lesson Banner — held for the day once acknowledged. */}
+            {/*
+              Journal-wide search: one box that finds trades by tags, setups, notes, P&L
+              and date/time. First at the top because finding a past record is the one
+              action that can start from any other.
+            */}
+            <GlobalSearch
+              trades={trades}
+              tradingDays={tradingDays}
+              reviews={reviews}
+              instruments={instruments}
+              timezone={profile.timezone}
+              onViewTrade={(trade) => setViewingTradeId(trade.id)}
+              onOpenDay={(dayId) => {
+                setActiveTab('history');
+                setHistoryFocusDayId(dayId);
+              }}
+            />
+
+            {/* Yesterday's Focus Lesson Banner — held for the day once acknowledged.
+                Deliberately NOT collapsible: the lesson is the one thing the page must
+                keep in view. */}
             {yesterdayFocus && (
               <YesterdayFocusBanner
                 yesterdayFocus={yesterdayFocus}
@@ -1169,44 +1168,82 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
                   </div>
                 }
               >
-                <ReviewTrendPanel
-                  reviews={reviews}
-                  tradingDays={tradingDays}
-                  trades={trades}
-                />
+                <CollapsibleSection
+                  id="section-review-trend"
+                  title="End-of-day review trend"
+                  meta={
+                    <span className="font-mono text-[11px] text-zinc-400">
+                      {reviews.length} reviewed
+                    </span>
+                  }
+                  persistKey="review-trend"
+                >
+                  <ReviewTrendPanel reviews={reviews} tradingDays={tradingDays} trades={trades} />
+                </CollapsibleSection>
               </Suspense>
             )}
 
             {/* Coach checkpoint: morning prep before the close, review after it. */}
-            <CoachCheckpointCard
-              trades={trades}
-              tradingDays={tradingDays}
-              reviews={reviews}
-              setups={setups}
-              instruments={instruments}
-              todayTradeDate={todayTradingDay.tradeDate}
-              timezone={profile.timezone}
-              maxDrawdown={profile.maxDrawdown ?? null}
-            />
+            <CollapsibleSection
+              id="section-coach-checkpoint"
+              title="Coach checkpoint"
+              persistKey="coach-checkpoint"
+            >
+              <CoachCheckpointCard
+                trades={trades}
+                tradingDays={tradingDays}
+                reviews={reviews}
+                setups={setups}
+                instruments={instruments}
+                todayTradeDate={todayTradingDay.tradeDate}
+                timezone={profile.timezone}
+                maxDrawdown={profile.maxDrawdown ?? null}
+              />
+            </CollapsibleSection>
 
             {/* Today's Risk & Performance Summary Card */}
-            <TodaySummary
-              realizedPnL={todayRealizedPnL}
-              totalTrades={todayTrades.length}
-              wins={todayWins}
-              losses={todayLosses}
-              plannedMaxLoss={todayTradingDay.plannedLossLimit}
-              riskMode={todayTradingDay.riskMode}
-              planStatus={todayTradingDay.status}
-              onOpenAddTrade={openAddTrade}
-              onOpenEndDay={() => setIsReviewModalOpen(true)}
-              isPlanLocked={!!todayTradingDay.lockedAt}
-              capStatuses={tierCapFlags}
-            />
-
+            <CollapsibleSection
+              id="section-today-summary"
+              title="Today's summary"
+              meta={
+                <span
+                  className={`font-mono text-[11px] font-semibold ${
+                    todayRealizedPnL > 0
+                      ? 'text-emerald-400'
+                      : todayRealizedPnL < 0
+                      ? 'text-rose-400'
+                      : 'text-zinc-400'
+                  }`}
+                >
+                  {todayRealizedPnL >= 0 ? '+' : '-'}${Math.abs(todayRealizedPnL).toFixed(2)} ·{' '}
+                  {todayWins}W/{todayLosses}L
+                </span>
+              }
+              persistKey="today-summary"
+            >
+              <TodaySummary
+                realizedPnL={todayRealizedPnL}
+                totalTrades={todayTrades.length}
+                wins={todayWins}
+                losses={todayLosses}
+                plannedMaxLoss={todayTradingDay.plannedLossLimit}
+                riskMode={todayTradingDay.riskMode}
+                planStatus={todayTradingDay.status}
+                onOpenAddTrade={openAddTrade}
+                onOpenEndDay={() => setIsReviewModalOpen(true)}
+                isPlanLocked={!!todayTradingDay.lockedAt}
+                capStatuses={tierCapFlags}
+              />
+            </CollapsibleSection>
 
             {/* The coach's call on each entry against the trader's own, for today */}
-            <CoachEntryComparison trades={todayTrades} instruments={instruments} />
+            <CollapsibleSection
+              id="section-coach-comparison"
+              title="Coach vs your entries"
+              persistKey="coach-comparison"
+            >
+              <CoachEntryComparison trades={todayTrades} instruments={instruments} />
+            </CollapsibleSection>
 
             {/* Quick Actions & Notification */}
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1255,38 +1292,60 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             />
 
             {/* Morning Plan & Guardrails Form */}
-            <DailyPlanForm
-              day={todayTradingDay}
-              setups={setups}
-              instruments={instruments}
-              openTrades={todayTrades.filter((t) => t.status === 'open')}
-              todayTrades={todayTrades}
-              onSaveDay={handleSaveDay}
-              onLockPlan={handleLockPlan}
-              lockPreviewOpen={isLockPreviewOpen}
-              onRecordPlanChange={handleRecordPlanChange}
-              onOpenPlaybook={handleOpenPlaybook}
-              onLogScaleInTrade={openAddTrade}
-              onUnlockPlan={handleUnlockPlan}
-              coachContext={coachContext}
-              drawdownCapacity={riskCapacity}
-              plannedSizeRisk={plannedSizeRisk}
-              riskTiers={riskTiers}
-            />
+            <CollapsibleSection
+              id="section-morning-plan"
+              title="Morning plan"
+              meta={
+                <span
+                  className={`rounded-md border px-2 py-0.5 font-mono text-[10px] ${
+                    todayTradingDay.lockedAt
+                      ? 'border-emerald-800 bg-emerald-950/50 text-emerald-300'
+                      : 'border-amber-800/70 bg-amber-950/40 text-amber-300'
+                  }`}
+                >
+                  {todayTradingDay.lockedAt ? 'Locked' : 'Not locked'}
+                </span>
+              }
+              persistKey="morning-plan"
+            >
+              <DailyPlanForm
+                day={todayTradingDay}
+                setups={setups}
+                instruments={instruments}
+                openTrades={todayTrades.filter((t) => t.status === 'open')}
+                todayTrades={todayTrades}
+                onSaveDay={handleSaveDay}
+                onLockPlan={handleLockPlan}
+                lockPreviewOpen={isLockPreviewOpen}
+                onRecordPlanChange={handleRecordPlanChange}
+                onOpenPlaybook={handleOpenPlaybook}
+                onLogScaleInTrade={openAddTrade}
+                onUnlockPlan={handleUnlockPlan}
+                coachContext={coachContext}
+                drawdownCapacity={riskCapacity}
+                plannedSizeRisk={plannedSizeRisk}
+                riskTiers={riskTiers}
+              />
+            </CollapsibleSection>
 
             {/* Today's Recorded Trades Section */}
-            <div id="today-trades" className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 font-mono flex items-center gap-2">
+            <CollapsibleSection
+              id="today-trades"
+              title={
+                <span className="text-xs font-bold uppercase tracking-wider text-zinc-400 font-mono flex items-center gap-2">
                   <Layers className="w-4 h-4 text-zinc-300" />
                   Today's Trade Executions ({todayTrades.length})
-                </h3>
+                </span>
+              }
+              meta={
                 <span className="text-[11px] text-zinc-400 font-mono">
                   {todayTrades.filter((t) => t.status === 'open').length} Open •{' '}
                   {todayTrades.filter((t) => t.status === 'closed').length} Closed
                 </span>
-              </div>
-
+              }
+              persistKey="today-trades"
+              className="space-y-3"
+            >
               {todayTrades.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-zinc-800 bg-zinc-900/20 p-8 text-center space-y-3">
                   <p className="text-xs text-zinc-400">
@@ -1321,7 +1380,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
                   ))}
                 </div>
               )}
-            </div>
+            </CollapsibleSection>
           </div>
         );
 
@@ -1354,6 +1413,8 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             reviews={reviews}
             setups={setups}
             instruments={instruments}
+            focusDayId={historyFocusDayId}
+            onConsumeFocusDay={() => setHistoryFocusDayId(null)}
           />
         );
 
@@ -1388,6 +1449,22 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             todayTradeDate={todayTradingDay.tradeDate}
             timezone={profile.timezone}
             maxDrawdown={profile.maxDrawdown ?? null}
+          />
+        );
+
+      case 'markets':
+        return (
+          <MarketsView
+            trades={trades}
+            tradingDays={tradingDays}
+            reviews={reviews}
+            setups={setups}
+            instruments={instruments}
+            todayTradeDate={todayTradingDay.tradeDate}
+            timezone={profile.timezone}
+            maxDrawdown={profile.maxDrawdown ?? null}
+            primaryInstrument={instrumentSymbol(instruments, todayTradingDay.primaryInstrument)}
+            theme={theme}
           />
         );
 
@@ -1459,13 +1536,6 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       lastSyncedAt={lastSyncedAt}
       onRetrySync={retrySave}
     >
-      {syncConflict && (
-        <CloudConflictBanner
-          busy={resolvingConflict}
-          onUseCloudCopy={handleUseCloudCopy}
-          onKeepThisDevice={handleKeepThisDevice}
-        />
-      )}
       {storageFailure && (
         <StorageWarningBanner
           failure={storageFailure}

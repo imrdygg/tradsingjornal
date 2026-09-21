@@ -98,6 +98,20 @@ export function askEntryCall(
 }
 
 /**
+ * The coach's read of one instrument's recent daily bars — the request behind the
+ * Markets view's "What does the coach see?" button.
+ *
+ * The server fetches the same series the chart shows and hands it to the model with the
+ * journal digest, so the opinion quotes the numbers on screen and weighs them against
+ * the trader's own documented habits.
+ */
+export function askChartRead(context: PlanCoachContext, symbol: string): Promise<CoachResult> {
+  return requestCoach('chartread', buildPlanCoachDigest(context), undefined, {
+    instrument: symbol,
+  });
+}
+
+/**
  * The live futures read, through the same public endpoint the plan preview uses.
  *
  * Returns null on any failure: the price is context for the panel, never a

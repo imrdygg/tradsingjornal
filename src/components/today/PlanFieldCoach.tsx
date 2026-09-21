@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Sparkles, RefreshCw, Check, X, AlertTriangle } from 'lucide-react';
+import { AiThinking } from '../common/AiThinking';
 import type { PlanFieldResponse } from '../../lib/ai/coach-types';
 import type { CoachResult } from '../../lib/ai/coach-client';
 import { askPlanField, type PlanCoachContext } from '../../lib/ai/plan-coach';
@@ -65,9 +66,15 @@ export const PlanFieldCoach: React.FC<PlanFieldCoachProps> = ({
       </button>
 
       {loading && (
-        <p className="text-[11px] text-zinc-500 leading-relaxed" role="status">
-          Reading your plan, your results and today's live prices…
-        </p>
+        <AiThinking
+          label="Reading your plan, your results and today's live prices…"
+          steps={[
+            'Reading your plan…',
+            'Reading your results…',
+            'Checking today\'s live prices…',
+            'Drafting…',
+          ]}
+        />
       )}
 
       {!loading && draft && (

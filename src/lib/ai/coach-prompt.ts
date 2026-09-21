@@ -13,9 +13,13 @@ import type {
   PlanFieldName,
   WeeklyPattern,
 } from './coach-types';
-import type { InstrumentQuote, MarketBrief } from './market-data';
-import { formatInstrumentQuoteForPrompt, formatMarketBriefForPrompt } from './market-data';
-import type { PlanReviewResponse } from './coach-types';
+import type { DailyBar, DailyBars, InstrumentQuote, MarketBrief } from './market-data';
+import {
+  formatDailyBarsForPrompt,
+  formatInstrumentQuoteForPrompt,
+  formatMarketBriefForPrompt,
+} from './market-data';
+import type { ChartReadResponse, PlanReviewResponse } from './coach-types';
 
 /**
  * The coach's contract with the model.
@@ -37,6 +41,7 @@ export const COACH_MODES: readonly CoachMode[] = [
   'planbuild',
   'scalein',
   'entrycall',
+  'chartread',
 ];
 
 /**
@@ -51,11 +56,18 @@ export const COACH_OPINION_MODES: readonly CoachMode[] = [
   'planbuild',
   'scalein',
   'entrycall',
+  'chartread',
 ];
 
 export function isCoachMode(value: unknown): value is CoachMode {
   return typeof value === 'string' && (COACH_MODES as readonly string[]).includes(value);
 }
+
+/**
+ * The modes whose prompt is built around a chart dataset rather than the journal digest
+ * alone. These fetch daily bars server-side and always get a `chartSymbol` extra.
+ */
+export const COACH_CHART_MODES: readonly CoachMode[] = ['chartread'];
 
 /** True when this mode may state a direction or an entry, from live data only. */
 export function allowsMarketOpinion(mode: CoachMode): boolean {
@@ -784,16 +796,35 @@ The position's real numbers are in THE POSITION. Do the arithmetic from those nu
   "rationale": "2-3 sentences: what you read in the live numbers and why that side, stated as your opinion"
 }
 This is recorded beside the trader's own entry and compared with it later, so be specific and be honest about what the numbers do and do not show.`,
+  chartread: `Return exactly this JSON:
+{
+  "headline": "one sentence, under 16 words, on what this chart shows",
+  "patternRead": "3-5 sentences on what the DAILY CHART DATA actually shows: direction of the closes, where the last close sits in the series range, streaks or contraction the numbers state. Name only levels that are numbers you were handed. If the data is unavailable, say exactly that and nothing more about the chart",
+  "levels": [{ "price": 0, "label": "series high" }],
+  "direction": "the side you would take looking at this chart: long, short, or skip",
+  "entry": "the level you would enter at, a number from the data, or null when you would skip",
+  "stop": "the level your stop would sit at, a number, or null when you would skip",
+  "target": "the level you would aim for, a number, or null when you would skip",
+  "fitsTheirTrading": "1-3 sentences on how the trade you would consider squares with THIS trader's documented habits — setup record, discipline scores, repeated leaks. If it repeats one of their leaks, say so",
+  "risks": ["1-3 specific things that would make acting on this read a mistake, including when the data is thin"],
+  "rationale": "3-4 sentences: the read, the side, why that size fits their risk limit, and plainly that this is your opinion and can be wrong",
+  "confidence": "one of low, medium, high",
+  "basedOn": ["each bar, level and journal fact you used, one per item, quoting the numbers"]
+}
+Every level you return must be a number from DAILY CHART DATA or LIVE READ. If the chart data is unavailable, return skip with null levels, say so, and base fitsTheirTrading on the journal alone. Standing aside is a real answer.`,
 };
 
 /**
- * The extras a prompt may carry: the wire-level `CoachExtras` plus the two things only
- * the server can attach — the live read it fetched, and the field's current text.
+ * The extras a prompt may carry: the wire-level `CoachExtras` plus the three things only
+ * the server can attach — the live read it fetched, the field's current text, and the
+ * daily-bar series behind a chart read.
  */
 export type CoachPromptExtras = CoachExtras & {
   instrumentQuote?: InstrumentQuote;
   /** What the trader has already typed in the field being drafted. */
   currentFieldValue?: string;
+  /** The daily-bar series the chart-read mode is asked to interpret. */
+  chartSeries?: DailyBars;
 };
 
 export function buildCoachPrompt(
@@ -848,6 +879,14 @@ export function buildCoachPrompt(
         `which side you would be on right now, at what level, with what stop and target, from the live ` +
         `read. Do not anchor to their direction: make your own read, and be willing to be on the other ` +
         `side of them.`
+      : mode === 'chartread'
+      ? `The trader is looking at a chart of ${'{instrument}'} right now and asked for your read of it. ` +
+        `You have been given the same recent daily bars the chart shows, under DAILY CHART DATA, plus ` +
+        `a live quote under LIVE READ. Describe what the series actually shows — direction of the ` +
+        `closes, where price sits inside the series range, any streak the data states — naming only ` +
+        `levels that are numbers you were handed. Then say what YOU would do looking at it, or that ` +
+        `you would stand aside. Read the journal digest the same way you always do: if the trade you ` +
+        `would consider repeats one of this trader's documented leaks, say so under fitsTheirTrading.`
       : `Critique the single trade described below. Judge the decision and the execution separately. ` +
         `Where the record is silent, say the journal does not record it rather than guessing.`;
 
@@ -888,9 +927,17 @@ export function buildCoachPrompt(
       ? `\n\n${formatPlanFieldRequest(extras.field, extras.currentFieldValue)}`
       : '';
 
+  // The daily-bar series behind a chart read. Fetched server-side; a chart read without
+  // the series degrades inside the formatter to a plain "data unavailable" block, and
+  // the guardrails make the model stand aside rather than describe a chart it cannot see.
+  const chartBlock =
+    mode === 'chartread' && extras?.chartSeries
+      ? `\n\n${formatDailyBarsForPrompt(extras.chartSeries)}`
+      : '';
+
   const userPrompt =
-    `${context}${marketBlock}${instrumentBlock}${tradeBlock}${positionBlock}${entryBlock}${fieldBlock}` +
-    `\n\n=== YOUR TASK ===\n${task}\n\n${COACH_RESPONSE_SHAPES[mode]}`;
+    `${context}${marketBlock}${instrumentBlock}${chartBlock}${tradeBlock}${positionBlock}${entryBlock}${fieldBlock}` +
+    `\n\n=== YOUR TASK ===\n${task.replace('{instrument}', extras?.instrument || 'the instrument')}\n\n${COACH_RESPONSE_SHAPES[mode]}`;
 
   return {
     systemInstruction: coachGuardrails(mode === 'planreview', allowsMarketOpinion(mode)),
@@ -1127,6 +1174,25 @@ export function parseCoachResponse(
       stop: inTrade ? asNumberOrNull(obj.stop, 'stop') : null,
       target: inTrade ? asNumberOrNull(obj.target, 'target') : null,
       rationale: asText(obj.rationale, 'rationale'),
+    };
+  }
+
+  if (mode === 'chartread') {
+    const direction = asEnum(obj.direction, ['long', 'short', 'skip'] as const, 'skip');
+    const hasTrade = direction !== 'skip';
+    return {
+      headline: asText(obj.headline, 'headline'),
+      patternRead: asText(obj.patternRead, 'patternRead'),
+      levels: asLevels(obj.levels),
+      direction,
+      entry: hasTrade ? asNumberOrNull(obj.entry, 'entry') : null,
+      stop: hasTrade ? asNumberOrNull(obj.stop, 'stop') : null,
+      target: hasTrade ? asNumberOrNull(obj.target, 'target') : null,
+      fitsTheirTrading: asText(obj.fitsTheirTrading, 'fitsTheirTrading'),
+      risks: asTextList(obj.risks, 'risks'),
+      rationale: asText(obj.rationale, 'rationale'),
+      confidence: asEnum(obj.confidence, ['low', 'medium', 'high'] as const, 'low'),
+      basedOn: asTextList(obj.basedOn, 'basedOn'),
     };
   }
 

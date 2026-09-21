@@ -492,6 +492,229 @@ export function formatSignedPercent(value: number | null): string {
   return `${value > 0 ? '+' : ''}${value.toFixed(2)}%`;
 }
 
+// ---------------------------------------------------------------------------
+// Daily bars for the chart-opinion mode
+//
+// The chart itself is the provider's widget (visuals live on their infrastructure);
+// the coach, however, needs the numbers behind what the trader is looking at, fetched
+// server-side so the numbers it quotes are the numbers this app gave it — never ones
+// recalled from training. One call, several daily bars, strictly numbers.
+// ---------------------------------------------------------------------------
+
+/** One recent daily bar, every field nullable because partial payloads are useful. */
+export interface DailyBar {
+  /** Session date (YYYY-MM-DD) in exchange terms. */
+  date: string;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  close: number | null;
+  volume: number | null;
+}
+
+/** A short series of recent daily bars for one futures contract. */
+export interface DailyBars {
+  ok: boolean;
+  symbol: string;
+  /** The provider ticker the bars came from, e.g. MES=F. */
+  yahooSymbol: string | null;
+  bars: DailyBar[];
+  fetchedAt: string;
+  /** Why the series is missing or partial, in trader-readable language. */
+  note?: string;
+}
+
+/**
+ * The provider request for recent daily bars.
+ *
+ * `range=1mo` with `interval=1d` returns the last ~21 sessions: enough for the coach to
+ * see the last few swings and the general level without the prompt ballooning.
+ */
+function dailyBarsPath(yahooSymbol: string): string {
+  return `/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?range=1mo&interval=1d`;
+}
+
+/** A finite number, or null — the same tolerance every quote read here applies. */
+function readBarNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * Recent daily bars for one futures contract, for the chart-opinion mode.
+ *
+ * Never throws: an unmapped symbol, a dead provider or a malformed payload degrade to
+ * `ok: false` with a reason, and the chart guardrails make the model stand aside rather
+ * than fill the gap from memory — the same contract the other reads here follow.
+ */
+export async function getDailyBars(symbol: string): Promise<DailyBars> {
+  const journalSymbol = (symbol || '').trim().toUpperCase();
+  const yahooSymbol = futuresQuoteSymbol(journalSymbol);
+  const fetchedAt = new Date().toISOString();
+
+  const empty: DailyBars = {
+    ok: false,
+    symbol: journalSymbol,
+    yahooSymbol,
+    bars: [],
+    fetchedAt,
+  };
+
+  if (!journalSymbol) return { ...empty, note: 'No instrument was named.' };
+  if (!yahooSymbol) {
+    return {
+      ...empty,
+      note: `No live data source is mapped for ${journalSymbol}, so no chart read is available for it.`,
+    };
+  }
+
+  const path = dailyBarsPath(yahooSymbol);
+  for (const host of YAHOO_HOSTS) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    try {
+      const res = await fetch(`https://${host}${path}`, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (journal chart read)' },
+        signal: controller.signal,
+      });
+      if (!res.ok) continue;
+      const payload = (await res.json()) as {
+        chart?: {
+          result?: Array<{
+            meta?: Record<string, unknown>;
+            timestamp?: number[];
+            indicators?: {
+              quote?: Array<{
+                open?: (number | null)[];
+                high?: (number | null)[];
+                low?: (number | null)[];
+                close?: (number | null)[];
+                volume?: (number | null)[];
+              }>;
+            };
+          }>;
+        };
+      };
+      const result = payload.chart?.result?.[0];
+      const quote = result?.indicators?.quote?.[0];
+      const timestamps = result?.timestamp;
+      if (!result || !timestamps || !quote) continue;
+
+      const bars: DailyBar[] = [];
+      for (let i = 0; i < timestamps.length; i += 1) {
+        const date = new Date(timestamps[i] * 1000).toISOString().slice(0, 10);
+        const open = readBarNumber(quote.open?.[i]);
+        const high = readBarNumber(quote.high?.[i]);
+        const low = readBarNumber(quote.low?.[i]);
+        const close = readBarNumber(quote.close?.[i]);
+        // A bar with no close is not a session, it is a hole; skip it.
+        if (close === null) continue;
+        bars.push({ date, open, high, low, close, volume: readBarNumber(quote.volume?.[i]) });
+      }
+
+      if (bars.length === 0) continue;
+
+      const series: DailyBars = {
+        ok: true,
+        symbol: journalSymbol,
+        yahooSymbol,
+        bars,
+        fetchedAt,
+      };
+      return series;
+    } catch {
+      // Try the next host.
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  return {
+    ...empty,
+    note: `Daily chart data for ${journalSymbol} could not be loaded right now.`,
+  };
+}
+
+const price = (n: number | null) =>
+  n === null
+    ? 'n/a'
+    : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/**
+ * Turns the daily series into the factual block the chart-opinion prompt quotes from.
+ *
+ * Numbers only, newest last (the order a chart reads in), with the series statistics —
+ * ranges, average close, direction of the closes — computed here and labelled as
+ * computed, so the model does arithmetic on exactly the numbers it was handed and no
+ * others.
+ */
+export function formatDailyBarsForPrompt(bars: DailyBars): string {
+  const lines: string[] = [];
+  lines.push(`=== DAILY CHART DATA: ${bars.symbol} — recent daily bars, oldest first ===`);
+
+  if (!bars.ok || bars.bars.length === 0) {
+    lines.push(`DATA STATUS: unavailable. ${bars.note ?? ''}`.trim());
+    lines.push(
+      'There is no chart data for this instrument. Say so plainly, give no pattern read ' +
+        'and no levels at all, and fall back to what the journal data alone supports.'
+    );
+    return lines.join('\n');
+  }
+
+  const closed = bars.bars.filter((b) => b.close !== null) as Array<DailyBar & { close: number }>;
+  const highs = bars.bars.map((b) => b.high).filter((n): n is number => n !== null);
+  const lows = bars.bars.map((b) => b.low).filter((n): n is number => n !== null);
+  const periodHigh = highs.length ? Math.max(...highs) : null;
+  const periodLow = lows.length ? Math.min(...lows) : null;
+  const avgClose =
+    closed.length > 0
+      ? closed.reduce((sum, b) => sum + b.close, 0) / closed.length
+      : null;
+
+  lines.push(
+    `Sessions in the series: ${bars.bars.length} daily bars ending ${bars.bars[bars.bars.length - 1].date}.`
+  );
+  lines.push('Every bar, as date: open / high / low / close (volume):');
+  for (const bar of bars.bars) {
+    lines.push(
+      `- ${bar.date}: ${price(bar.open)} / ${price(bar.high)} / ${price(bar.low)} / ${price(bar.close)} (${bar.volume ?? 'n/a'})`
+    );
+  }
+
+  if (periodHigh !== null && periodLow !== null) {
+    lines.push(`Range of the series: low ${price(periodLow)} to high ${price(periodHigh)}.`);
+  }
+  if (avgClose !== null) {
+    lines.push(`Average close of the series: ${price(Math.round(avgClose * 100) / 100)}.`);
+  }
+  if (closed.length >= 2) {
+    const first = closed[0].close;
+    const last = closed[closed.length - 1].close;
+    const drift = last - first;
+    lines.push(
+      `Close moved from ${price(first)} to ${price(last)} across the series (${drift >= 0 ? '+' : ''}${price(Math.round(drift * 100) / 100)}).`
+    );
+    // Consecutive down closes at the tail — a factual count, not a forecast.
+    let downStreak = 0;
+    for (let i = closed.length - 1; i > 0; i -= 1) {
+      if (closed[i].close < closed[i - 1].close) downStreak += 1;
+      else break;
+    }
+    let upStreak = 0;
+    for (let i = closed.length - 1; i > 0; i -= 1) {
+      if (closed[i].close > closed[i - 1].close) upStreak += 1;
+      else break;
+    }
+    if (downStreak >= 3) lines.push(`The last ${downStreak} sessions closed lower than the session before.`);
+    if (upStreak >= 3) lines.push(`The last ${upStreak} sessions closed higher than the session before.`);
+  }
+
+  lines.push(
+    'These are the only chart numbers you have. Every level you mention must be one of the numbers above; ' +
+      'anything else (support, resistance, trendlines, patterns you were not given) would be invented.'
+  );
+  return lines.join('\n');
+}
+
 /**
  * Turns the brief into the compact factual block the coach prompt quotes from.
  *

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   History as HistoryIcon,
   Calendar,
@@ -22,6 +22,14 @@ interface HistoryViewProps {
   reviews: DailyReview[];
   setups: Setup[];
   instruments: Instrument[];
+  /**
+   * A day to open in the detail modal on arrival, handed over from the home page's
+   * search (a plan/review match has no other place to be read). Consumed by the caller
+   * once applied, so it never re-opens a modal the trader already closed.
+   */
+  focusDayId?: string | null;
+  /** Clears the focus request once it has been applied. */
+  onConsumeFocusDay?: () => void;
 }
 
 export const HistoryView: React.FC<HistoryViewProps> = ({
@@ -30,6 +38,8 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
   reviews,
   setups,
   instruments,
+  focusDayId = null,
+  onConsumeFocusDay,
 }) => {
   const [selectedDayId, setSelectedDayId] = useState<string | null>(null);
 
@@ -125,6 +135,18 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
   const selectedDay = useMemo(() => {
     return tradingDays.find((d) => d.id === selectedDayId) || null;
   }, [tradingDays, selectedDayId]);
+
+  // Apply a handed-over day once on arrival. The effect re-runs only when the request
+  // changes, and consuming it means a modal the trader closed stays closed.
+  useEffect(() => {
+    if (!focusDayId) return;
+    // A day the journal no longer holds (a reset, or an import without its day) is
+    // dropped rather than left pointing at nothing.
+    if (tradingDays.some((day) => day.id === focusDayId)) {
+      setSelectedDayId(focusDayId);
+    }
+    onConsumeFocusDay?.();
+  }, [focusDayId, tradingDays, onConsumeFocusDay]);
 
   const selectedDayTrades = useMemo(() => {
     if (!selectedDayId) return [];

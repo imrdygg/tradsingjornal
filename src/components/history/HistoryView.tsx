@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { TradingDay, Trade, DailyReview, Setup, Instrument } from '../../types';
 import { formatTradingDate, formatTimestamp } from '../../lib/storage/date-utils';
+import { dayHasRecordedActivity } from '../../lib/history/day-activity';
 import { TradeCard } from '../trades/TradeCard';
 import { ModalOverlay } from '../common/ModalOverlay';
 
@@ -87,9 +88,42 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
     return map;
   }, [tradingDays, trades, reviews]);
 
+  /**
+   * How many trades each day holds, open and closed together.
+   *
+   * Counted separately from `dayStats`, which only totals closed trades for the P&L
+   * figures: a day whose only trade is still open has a record on it and belongs in the
+   * archive, even though its realized P&L is zero.
+   */
+  const tradesPerDay = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const trade of trades) {
+      counts.set(trade.tradingDayId, (counts.get(trade.tradingDayId) ?? 0) + 1);
+    }
+    return counts;
+  }, [trades]);
+
+  /**
+   * The days worth archiving at all.
+   *
+   * The journal keeps a day object for every date the app has been opened on, so an
+   * untouched one exists for each of them. Listing those read as traded days that came to
+   * nothing, so a day is only offered once something was actually recorded on it.
+   */
+  const daysWithActivity = useMemo(
+    () =>
+      tradingDays.filter((day) =>
+        dayHasRecordedActivity(day, {
+          tradeCount: tradesPerDay.get(day.id) ?? 0,
+          review: dayStats.get(day.id)?.review,
+        })
+      ),
+    [tradingDays, tradesPerDay, dayStats]
+  );
+
   // Filtered days list
   const filteredDays = useMemo(() => {
-    return tradingDays.filter((day) => {
+    return daysWithActivity.filter((day) => {
       const stats = dayStats.get(day.id);
       if (!stats) return false;
 
@@ -121,7 +155,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
       return true;
     });
   }, [
-    tradingDays,
+    daysWithActivity,
     dayStats,
     startDate,
     endDate,
@@ -272,7 +306,9 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
       {/* Days List */}
       {filteredDays.length === 0 ? (
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900/30 p-8 text-center text-zinc-400 text-xs">
-          No historical trading days found matching the specified filters.
+          {daysWithActivity.length === 0
+            ? 'Nothing to archive yet. A day appears here once it has a trade, a plan or an end-of-day review — dates you only opened the app on are left out.'
+            : 'No historical trading days found matching the specified filters.'}
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">

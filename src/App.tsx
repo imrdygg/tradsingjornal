@@ -5,6 +5,7 @@ import {
   NavTab,
 } from './components/layout/AppShell';
 import { YesterdayFocusBanner } from './components/today/YesterdayFocusBanner';
+import { DrawdownRoomStrip } from './components/today/DrawdownRoomStrip';
 import { TodaySummary } from './components/today/TodaySummary';
 import { DailyPlanForm } from './components/today/DailyPlanForm';
 import { TradeCard } from './components/trades/TradeCard';
@@ -15,6 +16,9 @@ import { TradeDetailModal } from './components/trades/TradeDetailModal';
 import { DailyReviewModal } from './components/review/DailyReviewModal';
 import { PlanLockPreviewModal } from './components/today/PlanLockPreviewModal';
 import { CoachCheckpointCard } from './components/today/CoachCheckpointCard';
+import { CoachEntryComparison } from './components/today/CoachEntryComparison';
+import { askEntryCall, type PlanCoachContext } from './lib/ai/plan-coach';
+import type { EntryCallResponse } from './lib/ai/coach-types';
 
 /**
  * Tab views load on demand.
@@ -43,6 +47,16 @@ const InsightsView = lazy(() =>
 const CoachView = lazy(() =>
   import('./components/coach/CoachView').then((m) => ({ default: m.CoachView }))
 );
+/**
+ * The review trend chart loads with the click that reveals it.
+ *
+ * It is the only thing that draws a chart on the Today tab, and Today is the first paint:
+ * pulling recharts in eagerly to render a panel that is hidden until a lesson is
+ * acknowledged would undo the reason the tab views are split up in the first place.
+ */
+const ReviewTrendPanel = lazy(() =>
+  import('./components/today/ReviewTrendPanel').then((m) => ({ default: m.ReviewTrendPanel }))
+);
 const PlaybookView = lazy(() =>
   import('./components/playbook/PlaybookView').then((m) => ({ default: m.PlaybookView }))
 );
@@ -53,6 +67,7 @@ import {
   TradingDay,
   Trade,
   DailyReview,
+  LessonAcknowledgement,
   Setup,
   UserProfile,
   Instrument,
@@ -79,6 +94,13 @@ import type { CsvImportSummary } from './lib/trading/tradovate-import';
 import { buildPositionGroups, findPositionGroup } from './lib/trading/position-groups';
 import { findAssumedRiskTrades, RiskFixItem } from './lib/trading/risk-fixup';
 import { instrumentSymbol } from './lib/trading/instruments';
+import { acknowledgementFor, isLessonAcknowledged } from './lib/storage/lesson-ack';
+import {
+  assessPlannedSize,
+  assessRiskCapacity,
+  estimateStopDistance,
+} from './lib/analytics/risk-capacity';
+import { findInstrument } from './lib/trading/instruments';
 import { Plus, Award, Sparkles, Layers, Cloud, CloudOff, Loader2 } from 'lucide-react';
 
 function AuthScreen() {
@@ -148,10 +170,17 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
 
   const [profile, setProfile] = useState<UserProfile>(() => ({ ...storage.getProfile(), id: userId }));
   const [instruments, setInstruments] = useState<Instrument[]>(() => storage.getInstruments());
-  const [setups, setSetups] = useState<Setup[]>(() => storage.getSetups());
+  // The catalog is merged on read, so built-in setups added since this journal was created
+  // arrive here instead of only on a fresh install.
+  const [setups, setSetups] = useState<Setup[]>(() => storage.ensureSetupCatalog());
   const [tradingDays, setTradingDays] = useState<TradingDay[]>(() => storage.getTradingDays());
   const [trades, setTrades] = useState<Trade[]>(() => storage.getTrades());
   const [reviews, setReviews] = useState<DailyReview[]>(() => storage.getReviews());
+  // The lesson the trader has accepted. Held in state so the banner and the review trend
+  // below it react to the click, and persisted so a reload does not undo it.
+  const [lessonAck, setLessonAck] = useState<LessonAcknowledgement | null>(() =>
+    storage.getLessonAck()
+  );
   const [patternStudies, setPatternStudies] = useState<PatternStudy[]>(() =>
     storage.getPatternStudies()
   );
@@ -225,8 +254,17 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   );
 
   const currentState = useMemo<StorageState>(
-    () => ({ profile, instruments, setups, tradingDays, trades, reviews, patternStudies }),
-    [profile, instruments, setups, tradingDays, trades, reviews, patternStudies]
+    () => ({
+      profile,
+      instruments,
+      setups,
+      tradingDays,
+      trades,
+      reviews,
+      patternStudies,
+      lessonAck,
+    }),
+    [profile, instruments, setups, tradingDays, trades, reviews, patternStudies, lessonAck]
   );
 
   // Keep the latest state reachable from the sign-out handler without re-running effects.
@@ -252,11 +290,14 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       storage.importData(JSON.stringify(next));
       setProfile({ ...next.profile, id: userId });
       setInstruments(next.instruments);
-      setSetups(next.setups);
+      // Re-runs the catalog merge against the snapshot just adopted: a cloud copy taken
+      // before this release would otherwise reintroduce the same missing setups.
+      setSetups(storage.ensureSetupCatalog());
       setTradingDays(next.tradingDays);
       setTrades(next.trades);
       setReviews(next.reviews);
       setPatternStudies(next.patternStudies ?? []);
+      setLessonAck(next.lessonAck ?? null);
     },
     [userId]
   );
@@ -420,6 +461,19 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     return storage.getYesterdayFocus();
   }, [reviews, tradingDays]);
 
+  /**
+   * Whether the lesson on screen is the one already accepted.
+   *
+   * Compared by date AND text, so the banner stays acknowledged for the rest of the day but
+   * comes back the moment a different lesson is written into the next review.
+   */
+  const lessonAcknowledged = isLessonAcknowledged(lessonAck, yesterdayFocus);
+
+  const handleAcknowledgeLesson = useCallback(() => {
+    if (!yesterdayFocus) return;
+    setLessonAck(storage.saveLessonAck(acknowledgementFor(yesterdayFocus)));
+  }, [yesterdayFocus]);
+
   // Today's Trades
   const todayTrades = useMemo(() => {
     return trades.filter((t) => t.tradingDayId === todayTradingDay.id);
@@ -450,6 +504,51 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   const todayLosses = useMemo(() => {
     return todayClosedTrades.filter((t) => t.grossPnL < 0).length;
   }, [todayClosedTrades]);
+
+  /**
+   * The account's remaining drawdown room, from the whole closed record.
+   *
+   * Computed here as well as on Analytics from the same function, so the line beside today's
+   * plan and the panel that explains it can never disagree about the same account.
+   */
+  const riskCapacity = useMemo(
+    () =>
+      assessRiskCapacity({
+        trades: trades.filter((t) => t.status === 'closed'),
+        maxDrawdown: profile.maxDrawdown ?? null,
+        dailyLossLimit: todayTradingDay.plannedLossLimit || profile.defaultDailyLossLimit,
+      }),
+    [trades, profile.maxDrawdown, profile.defaultDailyLossLimit, todayTradingDay.plannedLossLimit]
+  );
+
+  /**
+   * What the day's planned size would risk at the trader's own stop distance.
+   *
+   * The plan's loss limit is what they are willing to lose; this is what the position they
+   * asked for would actually cost. Both are measured against the same remaining room, from
+   * the same capacity object, so the strip, the plan form and the lock preview agree.
+   */
+  const plannedSizeRisk = useMemo(() => {
+    const instrument = findInstrument(instruments, todayTradingDay.primaryInstrument);
+    return assessPlannedSize({
+      capacity: riskCapacity,
+      contracts: todayTradingDay.contractsPlanned,
+      pointValue: instrument.pointValue,
+      symbol: instrumentSymbol(instruments, instrument.id),
+      stopDistance: estimateStopDistance({
+        openTrades: todayTrades.filter((t) => t.status === 'open'),
+        closedTrades: trades.filter((t) => t.status === 'closed'),
+        instrumentId: instrument.id,
+      }),
+    });
+  }, [
+    riskCapacity,
+    instruments,
+    todayTradingDay.primaryInstrument,
+    todayTradingDay.contractsPlanned,
+    todayTrades,
+    trades,
+  ]);
 
   // Today's Review (if any)
   const todayReview = useMemo(() => {
@@ -505,6 +604,75 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     storage.recordPlanChange(todayTradingDay.id, change);
     setTradingDays(storage.getTradingDays());
   };
+
+  /**
+   * Everything the coach needs about this journal, in one object.
+   *
+   * Built from the live state rather than cached for the session, because the whole value
+   * of these answers is that they reflect the journal as it is right now.
+   */
+  const coachContext = useMemo<PlanCoachContext>(
+    () => ({
+      day: todayTradingDay,
+      // The account drawdown travels with the journal context, so a plan or size the coach
+      // suggests can be measured against the room that is actually left.
+      maxDrawdown: profile.maxDrawdown ?? null,
+      instruments,
+      setups,
+      trades,
+      tradingDays,
+      reviews,
+      timezone: profile.timezone,
+    }),
+    [todayTradingDay, instruments, setups, trades, tradingDays, reviews, profile.timezone]
+  );
+
+  /**
+   * Asks the coach for its own call on an entry that was just recorded, and stores it
+   * beside the trade.
+   *
+   * Deliberately fire-and-forget: the trade is already saved by the time this runs, so a
+   * coach outage, a rate limit or a slow model costs the trader nothing but a missing
+   * comparison row. It never touches the plan or the position.
+   */
+  const recordCoachEntryCall = useCallback(
+    async (trade: Trade) => {
+      if (!trade.entryPrice || !trade.initialStop) return;
+
+      const result = await askEntryCall(coachContext, {
+        symbol: instrumentSymbol(instruments, trade.instrumentId),
+        direction: trade.direction,
+        contracts: trade.contracts,
+        entryPrice: trade.entryPrice,
+        initialStop: trade.initialStop,
+        setupName: trade.setupName,
+        entryReason: trade.entryReason,
+        session: trade.session,
+      });
+      if (!result.ok || !('direction' in result.data)) return;
+
+      const call = result.data as EntryCallResponse;
+      // Re-read rather than trusting the captured trade: it may have been closed or
+      // deleted while the coach was answering, and a coach call must never resurrect it.
+      const current = storage.getTrades().find((t) => t.id === trade.id);
+      if (!current) return;
+
+      storage.saveTrade({
+        ...current,
+        coachCall: {
+          direction: call.direction,
+          entry: call.entry,
+          stop: call.stop,
+          target: call.target,
+          rationale: call.rationale,
+          marketPrice: result.instrument?.price ?? null,
+          createdAt: new Date().toISOString(),
+        },
+      });
+      setTrades(storage.getTrades());
+    },
+    [coachContext, instruments]
+  );
 
   /**
    * Adds or updates a trade from the record form.
@@ -585,6 +753,11 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     setTrades(storage.getTrades());
     setEditingTrade(null);
     setTradePrefill(null);
+
+    // A brand-new entry gets the coach's own call recorded against it. Edits do not: the
+    // comparison is with the moment of entry, and re-asking later would compare the
+    // trader against an answer they never saw at the time.
+    if (!stored) void recordCoachEntryCall(tradeToSave);
   };
 
   const handleConfirmCloseTrade = (
@@ -826,7 +999,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     if (success) {
       setProfile(storage.getProfile());
       setInstruments(storage.getInstruments());
-      setSetups(storage.getSetups());
+      setSetups(storage.ensureSetupCatalog());
       setTradingDays(storage.getTradingDays());
       setTrades(storage.getTrades());
       setReviews(storage.getReviews());
@@ -893,9 +1066,34 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       case 'today':
         return (
           <div className="space-y-6">
-            {/* Yesterday's Focus Lesson Banner */}
+            {/* Yesterday's Focus Lesson Banner — held for the day once acknowledged. */}
             {yesterdayFocus && (
-              <YesterdayFocusBanner yesterdayFocus={yesterdayFocus} />
+              <YesterdayFocusBanner
+                yesterdayFocus={yesterdayFocus}
+                acknowledged={lessonAcknowledged}
+                acknowledgedAt={lessonAck?.acknowledgedAt ?? null}
+                onAcknowledge={handleAcknowledgeLesson}
+              />
+            )}
+
+            {/*
+              The review trend opens only after the lesson is accepted. It is the evidence
+              behind the lesson: what the last weeks of execution actually looked like.
+            */}
+            {lessonAcknowledged && (
+              <Suspense
+                fallback={
+                  <div className="mb-4 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4 text-xs text-zinc-400">
+                    Loading your review trend…
+                  </div>
+                }
+              >
+                <ReviewTrendPanel
+                  reviews={reviews}
+                  tradingDays={tradingDays}
+                  trades={trades}
+                />
+              </Suspense>
             )}
 
             {/* Coach checkpoint: morning prep before the close, review after it. */}
@@ -907,6 +1105,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               instruments={instruments}
               todayTradeDate={todayTradingDay.tradeDate}
               timezone={profile.timezone}
+              maxDrawdown={profile.maxDrawdown ?? null}
             />
 
             {/* Today's Risk & Performance Summary Card */}
@@ -922,6 +1121,10 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               onOpenEndDay={() => setIsReviewModalOpen(true)}
               isPlanLocked={!!todayTradingDay.lockedAt}
             />
+
+
+            {/* The coach's call on each entry against the trader's own, for today */}
+            <CoachEntryComparison trades={todayTrades} instruments={instruments} />
 
             {/* Quick Actions & Notification */}
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -958,6 +1161,17 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               )}
             </div>
 
+            {/*
+              What the account can still absorb, directly above what today is allowed to
+              risk. The plan's loss limit can read unchanged while the room behind it is
+              nearly gone, and this is the moment that gap matters most.
+            */}
+            <DrawdownRoomStrip
+              capacity={riskCapacity}
+              plannedSize={plannedSizeRisk}
+              onOpenRisk={() => setActiveTab('analytics')}
+            />
+
             {/* Morning Plan & Guardrails Form */}
             <DailyPlanForm
               day={todayTradingDay}
@@ -971,6 +1185,9 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               onOpenPlaybook={handleOpenPlaybook}
               onLogScaleInTrade={openAddTrade}
               onUnlockPlan={handleUnlockPlan}
+              coachContext={coachContext}
+              drawdownCapacity={riskCapacity}
+              plannedSizeRisk={plannedSizeRisk}
             />
 
             {/* Today's Recorded Trades Section */}
@@ -1064,6 +1281,11 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             reviews={reviews}
             setups={setups}
             instruments={instruments}
+            maxDrawdown={profile.maxDrawdown ?? null}
+            dailyLossLimit={todayTradingDay.plannedLossLimit || profile.defaultDailyLossLimit}
+            onUpdateMaxDrawdown={(value) =>
+              handleUpdateProfile({ ...profile, maxDrawdown: value })
+            }
           />
         );
 
@@ -1080,6 +1302,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             instruments={instruments}
             todayTradeDate={todayTradingDay.tradeDate}
             timezone={profile.timezone}
+            maxDrawdown={profile.maxDrawdown ?? null}
           />
         );
 
@@ -1250,6 +1473,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
         reviews={reviews}
         setups={setups}
         timezone={profile.timezone}
+        maxDrawdown={profile.maxDrawdown ?? null}
         onConfirm={confirmLockPlan}
         onBack={() => setIsLockPreviewOpen(false)}
       />

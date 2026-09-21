@@ -23,6 +23,13 @@ export interface Setup {
   active: boolean;
   description?: string;
   images?: string[]; // Array of chart screenshot data URLs / image URLs
+  /**
+   * Built-in catalog version this setup arrived in.
+   *
+   * Absent means it has been in the catalog since before it was versioned (treated as 1),
+   * so a built-in the trader deleted on purpose is never resurrected by a later release.
+   */
+  since?: number;
   createdAt: string;
 }
 
@@ -105,6 +112,26 @@ export interface TradeManagement {
   notes?: string;
 }
 
+/**
+ * The coach's own call on an entry, recorded beside the trade.
+ *
+ * It is stored (rather than recomputed) because the comparison is between two things
+ * that happened at one moment: the coach's read then and the trader's entry then. Asking
+ * again later, on different prices would compare the trader against an answer they were
+ * never shown. Defined here, beside the trade it belongs to; the coach types re-export
+ * it so there is one definition.
+ */
+export interface CoachEntryCall {
+  direction: 'long' | 'short' | 'flat';
+  entry: number | null;
+  stop: number | null;
+  target: number | null;
+  rationale: string;
+  /** The live price the call was made against, when the read worked. */
+  marketPrice: number | null;
+  createdAt: string;
+}
+
 export interface Trade {
   id: string;
   userId: string;
@@ -154,6 +181,8 @@ export interface Trade {
   images?: string[]; // Array of chart screenshot data URLs / image URLs
   executionReview?: TradeExecutionReview;
   tradeManagement?: TradeManagement;
+  /** The coach's direction and level for this entry, when it made a call. */
+  coachCall?: CoachEntryCall;
   createdAt: string;
   updatedAt: string;
 }
@@ -194,8 +223,36 @@ export interface UserProfile {
   timezone: string; // e.g. 'America/New_York'
   defaultInstrument: string; // e.g. 'MES'
   defaultDailyLossLimit: number; // e.g. 100
+  /**
+   * The account-level drawdown the trader has committed to, in dollars.
+   *
+   * It is measured from the equity high-water mark, the way a funding firm measures a
+   * trailing drawdown, rather than from a fixed starting balance. That is the shape that
+   * makes growing the number meaningful: a new high resets the room available, so risk can
+   * grow with the account without the floor ever moving down.
+   *
+   * Optional because a profile saved before this existed has no number, and the app must
+   * be able to say "no limit set" rather than invent one.
+   */
+  maxDrawdown?: number;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * The trader's acknowledgement of one carried-forward lesson.
+ *
+ * Stored with the lesson's own date and text, not as a plain flag: the acknowledgement has
+ * to hold for the rest of the day and then stop applying the moment a different lesson is
+ * set up. Comparing the stored pair is what makes "until a new one is set up" exact
+ * instead of a timer the app would have to guess at.
+ */
+export interface LessonAcknowledgement {
+  /** The trading date the lesson came from. */
+  date: string;
+  /** The lesson text, as it read when it was acknowledged. */
+  focus: string;
+  acknowledgedAt: string;
 }
 
 // ---------------------------------------------------------------------------

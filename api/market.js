@@ -18,6 +18,134 @@ var SECTOR_ETFS = [
 ];
 var YAHOO_HOSTS = ["query1.finance.yahoo.com", "query2.finance.yahoo.com"];
 var FETCH_TIMEOUT_MS = 4e3;
+var FUTURES_QUOTE_SYMBOLS = {
+  // Equity index futures, micro and full size.
+  MES: "MES=F",
+  ES: "ES=F",
+  MNQ: "MNQ=F",
+  NQ: "NQ=F",
+  MYM: "MYM=F",
+  YM: "YM=F",
+  M2K: "M2K=F",
+  RTY: "RTY=F",
+  // Metals and energy.
+  MGC: "MGC=F",
+  GC: "GC=F",
+  SIL: "SIL=F",
+  SI: "SI=F",
+  MCL: "MCL=F",
+  CL: "CL=F",
+  // FX.
+  M6E: "M6E=F",
+  "6E": "6E=F"
+};
+function futuresQuoteSymbol(symbol) {
+  const key = (symbol || "").trim().toUpperCase();
+  return FUTURES_QUOTE_SYMBOLS[key] ?? null;
+}
+var INSTRUMENT_CACHE_TTL_MS = 2e4;
+var instrumentCache = /* @__PURE__ */ new Map();
+function readNumber(meta, key) {
+  const value = meta[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+async function fetchChartMeta(yahooSymbol) {
+  const path = `/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?range=1d&interval=5m`;
+  for (const host of YAHOO_HOSTS) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    try {
+      const res = await fetch(`https://${host}${path}`, {
+        headers: { "User-Agent": "Mozilla/5.0 (journal coach)" },
+        signal: controller.signal
+      });
+      if (!res.ok) continue;
+      const payload = await res.json();
+      const meta = payload.chart?.result?.[0]?.meta;
+      if (meta) return { ok: true, meta };
+    } catch {
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return { ok: false };
+}
+async function getInstrumentQuote(symbol) {
+  const journalSymbol = (symbol || "").trim().toUpperCase();
+  const yahooSymbol = futuresQuoteSymbol(journalSymbol);
+  const now = Date.now();
+  if (!journalSymbol) {
+    return {
+      ok: false,
+      symbol: "",
+      yahooSymbol: null,
+      price: null,
+      previousClose: null,
+      changePercent: null,
+      dayHigh: null,
+      dayLow: null,
+      volume: null,
+      fetchedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      note: "No instrument was named, so no live read could be made."
+    };
+  }
+  const cached = instrumentCache.get(journalSymbol);
+  if (cached && cached.expiresAt > now) return cached.quote;
+  const base = {
+    ok: false,
+    symbol: journalSymbol,
+    yahooSymbol,
+    price: null,
+    previousClose: null,
+    changePercent: null,
+    dayHigh: null,
+    dayLow: null,
+    volume: null,
+    fetchedAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  if (!yahooSymbol) {
+    const quote2 = {
+      ...base,
+      note: `No live quote source is mapped for ${journalSymbol}, so no live read is available for it.`
+    };
+    instrumentCache.set(journalSymbol, { quote: quote2, expiresAt: now + INSTRUMENT_CACHE_TTL_MS });
+    return quote2;
+  }
+  const attempt = await fetchChartMeta(yahooSymbol);
+  if (!attempt.ok) {
+    const quote2 = {
+      ...base,
+      note: `Live data for ${journalSymbol} could not be loaded right now.`
+    };
+    instrumentCache.set(journalSymbol, { quote: quote2, expiresAt: now + INSTRUMENT_CACHE_TTL_MS });
+    return quote2;
+  }
+  const meta = attempt.meta;
+  const price = readNumber(meta, "regularMarketPrice");
+  const previousClose = readNumber(meta, "chartPreviousClose") ?? readNumber(meta, "previousClose");
+  const directPercent = readNumber(meta, "regularMarketChangePercent");
+  const changePercent = directPercent ?? (price !== null && previousClose ? (price - previousClose) / previousClose * 100 : null);
+  const quote = {
+    ok: price !== null,
+    symbol: journalSymbol,
+    yahooSymbol,
+    price,
+    previousClose,
+    changePercent: changePercent === null ? null : Math.round(changePercent * 100) / 100,
+    dayHigh: readNumber(meta, "regularMarketDayHigh"),
+    dayLow: readNumber(meta, "regularMarketDayLow"),
+    volume: readNumber(meta, "regularMarketVolume"),
+    fetchedAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  if (!quote.ok) {
+    return {
+      ...quote,
+      note: `Live data for ${journalSymbol} came back without a price.`
+    };
+  }
+  instrumentCache.set(journalSymbol, { quote, expiresAt: now + INSTRUMENT_CACHE_TTL_MS });
+  return quote;
+}
 function extractChangePercent(meta) {
   const direct = meta["regularMarketChangePercent"];
   if (typeof direct === "number" && Number.isFinite(direct)) return direct;
@@ -108,19 +236,39 @@ async function getMarketBrief() {
 }
 
 // src/api/market.ts
-var ENDPOINT_VERSION = 1;
+var ENDPOINT_VERSION = 2;
+function readQuery(req, name) {
+  const raw = req.query?.[name];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  return typeof value === "string" ? value.trim() : "";
+}
 async function handler(req, res) {
-  res.setHeader("Cache-Control", "public, max-age=30, stale-while-revalidate=60");
+  res.setHeader("Cache-Control", "public, max-age=20, stale-while-revalidate=40");
   if (req.method !== "GET") {
     res.status(405).json({ error: "Method not allowed. Use GET." });
     return;
   }
+  const symbol = readQuery(req, "symbol");
   try {
+    if (symbol) {
+      const quote = await getInstrumentQuote(symbol);
+      res.status(200).json({
+        ok: quote.ok,
+        service: "market",
+        version: ENDPOINT_VERSION,
+        kind: "instrument",
+        note: quote.note,
+        fetchedAt: quote.fetchedAt,
+        instrument: quote
+      });
+      return;
+    }
     const brief = await getMarketBrief();
     res.status(200).json({
       ok: brief.ok,
       service: "market",
       version: ENDPOINT_VERSION,
+      kind: "sectors",
       note: brief.note,
       fetchedAt: brief.fetchedAt,
       maxAgeSeconds: brief.maxAgeSeconds,

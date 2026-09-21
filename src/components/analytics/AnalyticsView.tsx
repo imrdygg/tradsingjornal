@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   BarChart3,
   TrendingUp,
@@ -11,6 +11,7 @@ import {
   DollarSign,
   Activity,
   Layers,
+  Scale,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -18,6 +19,8 @@ import {
   Area,
   BarChart,
   Bar,
+  Line,
+  ComposedChart,
   XAxis,
   YAxis,
   Tooltip,
@@ -32,6 +35,130 @@ import {
   calculateSessionBreakdown,
   calculateSetupBreakdown,
 } from '../../lib/analytics/aggregations';
+import {
+  groupComparisons,
+  isThinSample,
+  summariseEntryComparisons,
+  summariseComparisonsByDay,
+  type ComparisonGroupRow,
+} from '../../lib/ai/entry-comparison';
+import { instrumentSymbol } from '../../lib/trading/instruments';
+import {
+  assessRiskCapacity,
+  buildEquityCurve,
+  type RiskStance,
+} from '../../lib/analytics/risk-capacity';
+
+/**
+ * One breakdown table of the coach scoreboard — by side, by setup, by session, or
+ * anything else worth slicing.
+ *
+ * A group built on one or two calls gets a "thin" mark rather than a confident
+ * percentage, because a single agreed entry reads as 100% and means nothing. That is the
+ * whole point of showing the sample size beside the rate.
+ */
+const ComparisonBreakdown: React.FC<{
+  id: string;
+  title: string;
+  rows: ComparisonGroupRow[];
+  emptyLabel: string;
+  /** Header for the first column, so a slice can name its own dimension. */
+  groupLabel?: string;
+}> = ({ id, title, rows, emptyLabel, groupLabel = 'Group' }) => (
+  <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4 space-y-2.5" id={id}>
+    <h4 className="text-[11px] font-bold uppercase tracking-wider text-zinc-300 font-mono">
+      {title}
+    </h4>
+
+    {rows.length === 0 ? (
+      <p className="text-[11px] text-zinc-500 leading-relaxed">{emptyLabel}</p>
+    ) : (
+      <div className="overflow-x-auto">
+        <table className="w-full text-[11px] font-mono">
+          <thead>
+            <tr className="border-b border-zinc-800 text-zinc-400 text-left">
+              <th className="pb-1.5 font-medium">{groupLabel}</th>
+              <th className="pb-1.5 font-medium">Calls</th>
+              <th className="pb-1.5 font-medium">Same</th>
+              <th className="pb-1.5 font-medium">Against</th>
+              <th className="pb-1.5 font-medium">Rate</th>
+              <th className="pb-1.5 font-medium text-right">Avg edge</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-zinc-800/40">
+            {rows.map((row) => {
+              const thin = isThinSample(row);
+              return (
+                <tr key={row.label} className="text-zinc-300">
+                  <td className="py-1.5">
+                    <span className="flex items-center gap-1.5">
+                      <span className="truncate max-w-[10rem]" title={row.label}>
+                        {row.label}
+                      </span>
+                      {thin && (
+                        <span
+                          className="shrink-0 rounded border border-amber-800/70 bg-amber-950/40 px-1 py-0.5 text-[9px] uppercase text-amber-300"
+                          title={`Only ${row.agreed + row.opposed} call(s) where the coach took a side — too few to read as a rate.`}
+                        >
+                          thin
+                        </span>
+                      )}
+                    </span>
+                  </td>
+                  <td className="py-1.5 text-zinc-400">{row.compared}</td>
+                  <td className="py-1.5 text-emerald-400">{row.agreed}</td>
+                  <td className="py-1.5 text-rose-400">{row.opposed}</td>
+                  <td className="py-1.5">
+                    {row.agreementRate === null ? '—' : `${row.agreementRate}%`}
+                  </td>
+                  <td className="py-1.5 text-right">
+                    {row.avgTraderEdgePoints === null
+                      ? '—'
+                      : `${row.avgTraderEdgePoints > 0 ? '+' : ''}${row.avgTraderEdgePoints}`}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    )}
+  </div>
+);
+
+/**
+ * How each stance reads on the page.
+ *
+ * The labels describe the ROOM, not the response: `Tight room` says what is left without
+ * telling the trader to do anything about it, because the size that is right for a tight
+ * account depends on what they are trading, not on a label a chart chose.
+ */
+/** Signed dollars, so a figure that can be negative is never ambiguous. */
+const signedMoney = (n: number) =>
+  `${n > 0 ? '+' : n < 0 ? '-' : ''}$${Math.abs(n).toFixed(2)}`;
+
+/** Green above zero, red below, neutral at flat. */
+const pnlTone = (n: number) =>
+  n > 0 ? 'text-emerald-400' : n < 0 ? 'text-rose-400' : 'text-zinc-100';
+
+const STANCE_STYLES: Record<RiskStance, { label: string; className: string }> = {
+  'limit-reached': {
+    label: 'Limit reached',
+    className: 'border-rose-800/70 bg-rose-950/40 text-rose-200',
+  },
+  defensive: {
+    label: 'Tight room',
+    className: 'border-amber-800/70 bg-amber-950/40 text-amber-200',
+  },
+  normal: {
+    label: 'Normal room',
+    className: 'border-zinc-700 bg-zinc-900/70 text-zinc-300',
+  },
+  ample: {
+    label: 'Ample room',
+    className: 'border-emerald-800/70 bg-emerald-950/40 text-emerald-200',
+  },
+};
 
 interface AnalyticsViewProps {
   trades: Trade[];
@@ -39,6 +166,15 @@ interface AnalyticsViewProps {
   reviews: DailyReview[];
   setups: Setup[];
   instruments: Instrument[];
+  /**
+   * The account drawdown the trader has agreed to. Null means none is set, which the panel
+   * says plainly rather than drawing a floor at zero.
+   */
+  maxDrawdown?: number | null;
+  /** Today's planned loss, so the remaining room can be read in whole losing days. */
+  dailyLossLimit?: number | null;
+  /** Writes a new limit. The panel is deliberately an editor as well as a readout. */
+  onUpdateMaxDrawdown?: (value: number) => void;
 }
 
 export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
@@ -46,6 +182,10 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
   tradingDays,
   reviews,
   setups,
+  instruments,
+  maxDrawdown = null,
+  dailyLossLimit = null,
+  onUpdateMaxDrawdown,
 }) => {
   // Filters
   const [dateRange, setDateRange] = useState<'7d' | '30d' | 'all'>('all');
@@ -53,16 +193,17 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
   const [filterSession, setFilterSession] = useState<string>('all');
   const [filterSetup, setFilterSetup] = useState<string>('all');
 
-  // Filter closed trades
-  const filteredTrades = useMemo(() => {
-    const closed = trades.filter((t) => t.status === 'closed');
-    const now = new Date().getTime();
-
-    return closed.filter((t) => {
+  /**
+   * The shared filter, so the coach scoreboard reads exactly the same slice of the journal
+   * as the performance figures beside it — otherwise the two would disagree about what
+   * "this period" means.
+   */
+  const passesFilters = useCallback(
+    (t: Trade) => {
       // Date range
       if (dateRange !== 'all') {
-        const tTime = new Date(t.entryTime).getTime();
-        const daysAgo = (now - tTime) / (1000 * 60 * 60 * 24);
+        const now = new Date().getTime();
+        const daysAgo = (now - new Date(t.entryTime).getTime()) / (1000 * 60 * 60 * 24);
         if (dateRange === '7d' && daysAgo > 7) return false;
         if (dateRange === '30d' && daysAgo > 30) return false;
       }
@@ -80,8 +221,83 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
       }
 
       return true;
-    });
-  }, [trades, tradingDays, dateRange, filterRiskMode, filterSession, filterSetup]);
+    },
+    [tradingDays, dateRange, filterRiskMode, filterSession, filterSetup]
+  );
+
+  // Filter closed trades
+  const filteredTrades = useMemo(
+    () => trades.filter((t) => t.status === 'closed' && passesFilters(t)),
+    [trades, passesFilters]
+  );
+
+  /**
+   * Every trade in the same slice, open ones included.
+   *
+   * The coach's call is made at the moment of entry, so a position still open says just
+   * as much about its read as a closed one does, and restricting this to closed trades
+   * would hide today's calls until the position was over.
+   */
+  const coachTrades = useMemo(() => trades.filter(passesFilters), [trades, passesFilters]);
+
+  const coachScore = useMemo(() => summariseEntryComparisons(coachTrades), [coachTrades]);
+
+  /**
+   * The comparison by trading day. The date comes from the parent day, not the entry
+   * timestamp, so a late-night entry lands on the day the trader was actually trading.
+   */
+  const coachDaily = useMemo(() => {
+    const dateByDayId = new Map(tradingDays.map((d) => [d.id, d.tradeDate]));
+    return summariseComparisonsByDay(
+      coachTrades,
+      (t) => dateByDayId.get(t.tradingDayId) ?? null
+    );
+  }, [coachTrades, tradingDays]);
+
+  /**
+   * Where the coach's read holds up and where it does not: the same calls sliced by the
+   * setup the entry was logged as, by the session it was taken in, and by the instrument
+   * that was traded.
+   */
+  const coachBySetup = useMemo(
+    () => groupComparisons(coachTrades, (t) => t.setupName || null),
+    [coachTrades]
+  );
+
+  const coachBySession = useMemo(
+    () => groupComparisons(coachTrades, (t) => t.session || null),
+    [coachTrades]
+  );
+
+  /**
+   * The same calls split by instrument.
+   *
+   * Labelled through `instrumentSymbol` rather than read off the id, so a trade shows the
+   * contract it was actually taken in (MNQ, not "mnq"), and an id the journal no longer
+   * recognises is shown uppercased rather than relabelled MES.
+   *
+   * Note the fill edge is in POINTS, which is only comparable within one instrument: five
+   * points is $25 on MES and $10 on MNQ. The edge column is therefore a per-instrument
+   * number here, not something to total across the rows.
+   */
+  const coachByInstrument = useMemo(
+    () => groupComparisons(coachTrades, (t) => instrumentSymbol(instruments, t.instrumentId)),
+    [coachTrades, instruments]
+  );
+
+  /**
+   * The same calls split by the side actually traded, which is the split a directional
+   * trader is most likely to be skewed on: an edge that only shows up on longs (or a coach
+   * that only ever reads one way) is an asymmetry the overall rate would hide.
+   *
+   * The fill edge stays comparable across the two rows because `traderPriceEdge`
+   * normalises its sign for the side, so "+5" means the better fill on a long and on a
+   * short alike.
+   */
+  const coachBySide = useMemo(
+    () => groupComparisons(coachTrades, (t) => (t.direction === 'long' ? 'Long' : 'Short')),
+    [coachTrades]
+  );
 
   // Core Statistics Calculation
   const stats = useMemo(() => {
@@ -138,25 +354,65 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
     };
   }, [filteredTrades, reviews, tradingDays, dateRange]);
 
-  // Chart 1: Cumulative P&L Curve
-  const cumulativeData = useMemo(() => {
-    // Sort trades chronologically
-    const sorted = [...filteredTrades].sort(
-      (a, b) => new Date(a.entryTime).getTime() - new Date(b.entryTime).getTime()
-    );
+  /**
+   * Every closed trade in the journal, regardless of the page's filters.
+   *
+   * The drawdown limit belongs to the account, not to the slice being displayed: reading
+   * "room left" off a filtered week would report the peak of that week as the account's
+   * high-water mark and quietly overstate how much room is really there.
+   */
+  const closedTrades = useMemo(() => trades.filter((t) => t.status === 'closed'), [trades]);
 
-    let runningTotal = 0;
-    return sorted.map((t, idx) => {
-      runningTotal = Math.round((runningTotal + t.grossPnL) * 100) / 100;
-      const dateStr = t.entryTime ? t.entryTime.slice(5, 10) : `#${idx + 1}`;
-      return {
-        index: idx + 1,
-        tradeLabel: `${dateStr} (${idx + 1})`,
-        cumulativePnL: runningTotal,
-        tradePnL: t.grossPnL,
-      };
-    });
-  }, [filteredTrades]);
+  /**
+   * Where the account stands against the agreed drawdown.
+   *
+   * The limit is measured from the high-water mark, so the numbers move when a new peak is
+   * set as well as when money is given back — which is the whole reason this needs to be
+   * computed rather than eyeballed off the curve.
+   */
+  const capacity = useMemo(
+    () => assessRiskCapacity({ trades: closedTrades, maxDrawdown, dailyLossLimit }),
+    [closedTrades, maxDrawdown, dailyLossLimit]
+  );
+
+  /**
+   * Each trade's own drawdown floor, from the account-wide record.
+   *
+   * Kept apart from the plotted curve so a filtered chart still draws the real floor: the
+   * peak that sets it may sit outside the range being shown, and pretending otherwise
+   * would make the room look larger exactly when it is being read most closely.
+   */
+  const floorByTradeId = useMemo(() => {
+    const map = new Map<string, number | null>();
+    for (const point of buildEquityCurve(closedTrades, maxDrawdown)) {
+      map.set(point.tradeId, point.floor);
+    }
+    return map;
+  }, [closedTrades, maxDrawdown]);
+
+  /**
+   * The limit as typed, so the field can be cleared mid-edit without the stored number
+   * being overwritten by a half-typed one.
+   */
+  const [drawdownDraft, setDrawdownDraft] = useState<string>(
+    maxDrawdown === null ? '' : String(maxDrawdown)
+  );
+  useEffect(() => {
+    setDrawdownDraft(maxDrawdown === null ? '' : String(maxDrawdown));
+  }, [maxDrawdown]);
+
+  // Chart 1: Cumulative P&L Curve, with the drawdown floor that trails the peak.
+  const cumulativeData = useMemo(
+    () =>
+      buildEquityCurve(filteredTrades, null).map((point) => ({
+        tradeLabel: point.label,
+        cumulativePnL: point.cumulative,
+        tradePnL: point.pnl,
+        floor: floorByTradeId.get(point.tradeId) ?? null,
+        drawdown: point.drawdown,
+      })),
+    [filteredTrades, floorByTradeId]
+  );
 
   // Chart 2: Aggregated by Session
   const sessionData = useMemo(() => {
@@ -394,6 +650,404 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
         </div>
       </div>
 
+      {/*
+        Coach scoreboard.
+
+        It reports agreement on side and the fill difference separately, and refuses to
+        combine them into a single score, because the two answer different questions: one is
+        about reading the moment, the other about execution. Both are tracked over time,
+        since a handful of entries says nothing either way.
+      */}
+      <div
+        id="coach-scoreboard"
+        className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4 sm:p-5 space-y-4"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-300 font-mono flex items-center gap-2">
+            <Scale className="w-4 h-4 text-amber-400" />
+            Coach scoreboard — agreement &amp; fill edge
+          </h3>
+          <span className="text-[11px] font-mono text-zinc-400">
+            {coachScore.compared} of {coachTrades.length} entries have a coach call
+          </span>
+        </div>
+
+        {coachScore.compared === 0 ? (
+          <p className="text-xs text-zinc-400 leading-relaxed">
+            Nothing to score yet. The coach records its own side, entry, stop and target every
+            time you save an entry, and this is where the two are compared, day by day. That
+            needs the coach service, so calls are recorded on the deployed site rather than a
+            local dev server.
+          </p>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {/* Directional calls */}
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3.5 space-y-1">
+                <span className="text-[10px] uppercase font-mono tracking-wider text-zinc-400 block">
+                  Calls it took a side on
+                </span>
+                <span className="text-xl font-bold font-mono text-zinc-100">
+                  {coachScore.agreed + coachScore.opposed}
+                </span>
+                <span className="text-[10px] text-zinc-400 font-mono block">
+                  {coachScore.coachFlat} it would have skipped
+                </span>
+              </div>
+
+              {/* Agreement */}
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3.5 space-y-1">
+                <span className="text-[10px] uppercase font-mono tracking-wider text-zinc-400 block">
+                  Same side as you
+                </span>
+                <span
+                  className={`text-xl font-bold font-mono ${
+                    coachScore.agreementRate === null
+                      ? 'text-zinc-200'
+                      : coachScore.agreementRate >= 50
+                      ? 'text-emerald-400'
+                      : 'text-rose-400'
+                  }`}
+                >
+                  {coachScore.agreementRate === null ? '—' : `${coachScore.agreementRate}%`}
+                </span>
+                <span className="text-[10px] text-zinc-400 font-mono block">
+                  {coachScore.agreed} agreed / {coachScore.opposed} opposed
+                </span>
+              </div>
+
+              {/* Opposed */}
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3.5 space-y-1">
+                <span className="text-[10px] uppercase font-mono tracking-wider text-zinc-400 block">
+                  Took the other side
+                </span>
+                <span className="text-xl font-bold font-mono text-rose-300">
+                  {coachScore.opposed}
+                </span>
+                <span className="text-[10px] text-zinc-400 font-mono block">
+                  entries it was against
+                </span>
+              </div>
+
+              {/* Fill edge */}
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3.5 space-y-1">
+                <span className="text-[10px] uppercase font-mono tracking-wider text-zinc-400 block">
+                  Avg fill edge
+                </span>
+                <span
+                  className={`text-xl font-bold font-mono ${
+                    coachScore.avgTraderEdgePoints === null
+                      ? 'text-zinc-200'
+                      : coachScore.avgTraderEdgePoints >= 0
+                      ? 'text-emerald-400'
+                      : 'text-rose-400'
+                  }`}
+                >
+                  {coachScore.avgTraderEdgePoints === null
+                    ? '—'
+                    : `${coachScore.avgTraderEdgePoints > 0 ? '+' : ''}${coachScore.avgTraderEdgePoints} pts`}
+                </span>
+                <span className="text-[10px] text-zinc-400 font-mono block">
+                  your fill vs its level (+ is better)
+                </span>
+              </div>
+            </div>
+
+            {coachDaily.length > 1 ? (
+              <div className="h-56 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart
+                    data={coachDaily.map((row) => ({ ...row, label: row.date.slice(5) }))}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+                    <XAxis dataKey="label" stroke="#71717a" fontSize={10} tickLine={false} />
+                    <YAxis
+                      yAxisId="calls"
+                      stroke="#71717a"
+                      fontSize={10}
+                      tickLine={false}
+                      allowDecimals={false}
+                    />
+                    <YAxis
+                      yAxisId="rate"
+                      orientation="right"
+                      domain={[0, 100]}
+                      stroke="#71717a"
+                      fontSize={10}
+                      tickLine={false}
+                      tickFormatter={(val) => `${val}%`}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: '#18181b',
+                        borderColor: '#27272a',
+                        borderRadius: '8px',
+                        fontSize: '12px',
+                        fontFamily: 'monospace',
+                      }}
+                      formatter={(value: any, name: any) =>
+                        name === 'Running agreement'
+                          ? [`${value}%`, name]
+                          : [value, name]
+                      }
+                    />
+                    <Bar
+                      yAxisId="calls"
+                      dataKey="agreed"
+                      stackId="calls"
+                      fill="#10b981"
+                      name="Same side"
+                    />
+                    <Bar
+                      yAxisId="calls"
+                      dataKey="opposed"
+                      stackId="calls"
+                      fill="#f43f5e"
+                      name="Opposed"
+                    />
+                    <Line
+                      yAxisId="rate"
+                      type="monotone"
+                      dataKey="runningAgreementRate"
+                      stroke="#fbbf24"
+                      strokeWidth={2}
+                      dot={false}
+                      name="Running agreement"
+                    />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <p className="text-[11px] text-zinc-500 leading-relaxed">
+                One day of calls so far — the trend needs a few more sessions before it means
+                anything.
+              </p>
+            )}
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-[11px] font-mono">
+                <thead>
+                  <tr className="border-b border-zinc-800 text-zinc-400 text-left">
+                    <th className="pb-1.5 font-medium">Day</th>
+                    <th className="pb-1.5 font-medium">Calls</th>
+                    <th className="pb-1.5 font-medium">Same</th>
+                    <th className="pb-1.5 font-medium">Opposed</th>
+                    <th className="pb-1.5 font-medium">Flat</th>
+                    <th className="pb-1.5 font-medium">Rate</th>
+                    <th className="pb-1.5 font-medium text-right">Avg edge</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-800/40">
+                  {[...coachDaily].reverse().slice(0, 10).map((row) => (
+                    <tr key={row.date} className="text-zinc-300">
+                      <td className="py-1.5">{row.date}</td>
+                      <td className="py-1.5 text-zinc-400">{row.compared}</td>
+                      <td className="py-1.5 text-emerald-400">{row.agreed}</td>
+                      <td className="py-1.5 text-rose-400">{row.opposed}</td>
+                      <td className="py-1.5 text-amber-300">{row.coachFlat}</td>
+                      <td className="py-1.5">
+                        {row.agreementRate === null ? '—' : `${row.agreementRate}%`}
+                      </td>
+                      <td className="py-1.5 text-right text-zinc-300">
+                        {row.avgTraderEdgePoints === null
+                          ? '—'
+                          : `${row.avgTraderEdgePoints > 0 ? '+' : ''}${row.avgTraderEdgePoints}`}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              <ComparisonBreakdown
+                id="coach-breakdown-side"
+                title="By side"
+                groupLabel="Side"
+                rows={coachBySide}
+                emptyLabel="No long or short entries have a coach call yet."
+              />
+              <ComparisonBreakdown
+                id="coach-breakdown-setup"
+                title="By setup"
+                rows={coachBySetup}
+                emptyLabel="No entries with a coach call were logged against a setup yet."
+              />
+              <ComparisonBreakdown
+                id="coach-breakdown-session"
+                title="By session"
+                rows={coachBySession}
+                emptyLabel="No entries with a coach call were logged in a session yet."
+              />
+              <ComparisonBreakdown
+                id="coach-breakdown-instrument"
+                title="By instrument"
+                groupLabel="Instrument"
+                rows={coachByInstrument}
+                emptyLabel="No entries with a coach call were logged on an instrument yet."
+              />
+            </div>
+
+            <p className="text-[10px] text-zinc-500 leading-relaxed">
+              Agreement is not correctness: taking the same side as the coach is not the same as
+              being right, and a fill advantage is about price, not about the idea. In the side
+              table a group is the direction you traded, so a gap between long and short is worth
+              more than either rate on its own. Read the two numbers together, and judge neither
+              on a single day. The edge is in points, so compare it within a row: an instrument
+              with a bigger point value turns the same number into more money. Groups marked{' '}
+              <span className="text-amber-300">thin</span> hold too few calls for the rate to
+              mean anything yet.
+            </p>
+          </>
+        )}
+      </div>
+
+      {/*
+        Risk capacity.
+
+        The P&L curve below shows what the account has done; this shows what it can still
+        absorb. They answer different questions, and the second is the one that decides
+        whether today's risk is affordable — a rising curve with a trailing limit can still
+        be one bad day from the floor.
+      */}
+      <div
+        id="risk-capacity"
+        className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4 sm:p-5 space-y-4"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-300 font-mono flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-sky-400" />
+              Risk capacity — drawdown room
+            </h3>
+            <p className="mt-1 text-[10px] text-zinc-500 leading-relaxed max-w-xl">
+              Measured from the highest equity point, the way a funding firm measures a
+              trailing drawdown: a new high restores the room, and the floor never moves down.
+              Read from the whole journal, not from the filters above — the limit belongs to
+              the account.
+            </p>
+          </div>
+
+          {onUpdateMaxDrawdown && (
+            <label className="flex items-end gap-2">
+              <span className="text-[10px] uppercase font-mono tracking-wider text-zinc-400 pb-2">
+                Max drawdown ($)
+              </span>
+              <input
+                id="max-drawdown-input"
+                type="number"
+                min="0"
+                step="100"
+                inputMode="numeric"
+                value={drawdownDraft}
+                placeholder="not set"
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  setDrawdownDraft(raw);
+                  const next = Number(raw);
+                  // Committed as it is typed, but only for a usable number: clearing the
+                  // field mid-edit must not silently rewrite the limit to zero.
+                  if (raw.trim() !== '' && Number.isFinite(next) && next > 0) {
+                    onUpdateMaxDrawdown(next);
+                  }
+                }}
+                className="w-32 rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 focus:outline-none focus:border-zinc-600"
+              />
+            </label>
+          )}
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 space-y-0.5">
+            <span className="text-[10px] uppercase font-mono tracking-wider text-zinc-400 block">
+              Current P&amp;L
+            </span>
+            <span className={`text-lg font-bold font-mono ${pnlTone(capacity.current)}`}>
+              {signedMoney(capacity.current)}
+            </span>
+          </div>
+
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 space-y-0.5">
+            <span className="text-[10px] uppercase font-mono tracking-wider text-zinc-400 block">
+              High-water mark
+            </span>
+            <span className="text-lg font-bold font-mono text-zinc-100">
+              {signedMoney(capacity.peak)}
+            </span>
+          </div>
+
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 space-y-0.5">
+            <span className="text-[10px] uppercase font-mono tracking-wider text-zinc-400 block">
+              Drawdown used
+            </span>
+            <span
+              className={`text-lg font-bold font-mono ${
+                capacity.drawdownUsed > 0 ? 'text-rose-300' : 'text-zinc-100'
+              }`}
+            >
+              -${capacity.drawdownUsed.toFixed(2)}
+            </span>
+            <span className="text-[10px] text-zinc-500 font-mono block">
+              {capacity.usedPct === null ? 'no limit set' : `${capacity.usedPct}% of the limit`}
+            </span>
+          </div>
+
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 space-y-0.5">
+            <span className="text-[10px] uppercase font-mono tracking-wider text-zinc-400 block">
+              Room left
+            </span>
+            <span className="text-lg font-bold font-mono text-sky-300">
+              {capacity.headroom === null ? '—' : `$${capacity.headroom.toFixed(2)}`}
+            </span>
+            <span className="text-[10px] text-zinc-500 font-mono block">
+              {capacity.headroomPct === null ? 'set a max drawdown' : `${capacity.headroomPct}% left`}
+            </span>
+          </div>
+
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 space-y-0.5">
+            <span className="text-[10px] uppercase font-mono tracking-wider text-zinc-400 block">
+              Worst drop so far
+            </span>
+            <span className="text-lg font-bold font-mono text-zinc-300">
+              -${capacity.largestHistorical.toFixed(2)}
+            </span>
+            <span className="text-[10px] text-zinc-500 font-mono block">peak to trough</span>
+          </div>
+
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 space-y-0.5">
+            <span className="text-[10px] uppercase font-mono tracking-wider text-zinc-400 block">
+              Room in losing days
+            </span>
+            <span className="text-lg font-bold font-mono text-zinc-100">
+              {capacity.daysOfHeadroom === null ? '—' : capacity.daysOfHeadroom}
+            </span>
+            <span className="text-[10px] text-zinc-500 font-mono block">
+              {capacity.dailyLossLimit === null
+                ? 'no daily limit set'
+                : `at $${capacity.dailyLossLimit}/day`}
+            </span>
+          </div>
+        </div>
+
+        <div
+          className={`rounded-xl border p-3 text-[11px] leading-relaxed font-mono ${
+            STANCE_STYLES[capacity.stance].className
+          }`}
+          data-stance={capacity.stance}
+        >
+          <span className="font-bold uppercase tracking-wider text-[10px] mr-2">
+            {STANCE_STYLES[capacity.stance].label}
+          </span>
+          {capacity.note}
+        </div>
+
+        <p className="text-[10px] text-zinc-500 leading-relaxed">
+          This is capacity, not advice: it says what the account can absorb, not what to do
+          with it. Size that grows with the account only works if the room is measured before
+          the trade, not after a bad day.
+        </p>
+      </div>
+
       {/* Chart 1: Cumulative Equity Curve */}
       <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4 sm:p-5 space-y-3">
         <div className="flex items-center justify-between">
@@ -413,7 +1067,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
         ) : (
           <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={cumulativeData}>
+              <ComposedChart data={cumulativeData}>
                 <defs>
                   <linearGradient id="pnlGrad" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#10b981" stopOpacity={0.4} />
@@ -451,9 +1105,34 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
                   fillOpacity={1}
                   fill="url(#pnlGrad)"
                 />
-              </AreaChart>
+                {/*
+                  The trailing floor: peak minus the agreed drawdown at every point. It
+                  rises with a new high and never falls, so the distance between the curve
+                  and this line is exactly the room left.
+                */}
+                {maxDrawdown !== null && (
+                  <Line
+                    type="monotone"
+                    dataKey="floor"
+                    name="Drawdown floor"
+                    stroke="#f43f5e"
+                    strokeWidth={1.5}
+                    strokeDasharray="5 4"
+                    dot={false}
+                    isAnimationActive={false}
+                  />
+                )}
+              </ComposedChart>
             </ResponsiveContainer>
           </div>
+        )}
+
+        {maxDrawdown !== null && cumulativeData.length > 0 && (
+          <p className="text-[10px] text-zinc-500 leading-relaxed">
+            The dashed line is the drawdown floor: it trails the highest point reached so far
+            by ${maxDrawdown}, so the gap between the curve and that line is the room left
+            before the account hits it.
+          </p>
         )}
       </div>
 

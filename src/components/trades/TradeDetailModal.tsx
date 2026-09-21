@@ -18,6 +18,8 @@ import {
   HelpCircle,
   Clock,
   BookOpen,
+  Scale,
+  Minus,
 } from 'lucide-react';
 import {
   Trade,
@@ -34,6 +36,7 @@ import { formatTimestamp } from '../../lib/storage/date-utils';
 import { isVideoUrl } from '../../lib/media/media-utils';
 import type { TradePositionGroup } from '../../lib/trading/position-groups';
 import { hasAssumedRisk } from '../../lib/trading/risk-fixup';
+import { compareEntry, verdictLabel, type ComparisonVerdict } from '../../lib/ai/entry-comparison';
 
 /**
  * The execution review questions, in the order they are asked when closing a
@@ -80,6 +83,32 @@ const money = (value: number) =>
 
 const answerCopy = (answer: QuestionAnswer) =>
   answer === 'yes' ? 'Yes' : answer === 'no' ? 'No' : 'N/A';
+
+/** A price for the record, or a dash when the coach gave none. */
+const figure = (value: number | null | undefined) =>
+  value === null || value === undefined ? '—' : value.toFixed(2);
+
+const COACH_VERDICTS: Record<
+  ComparisonVerdict,
+  { className: string; icon: React.ReactNode }
+> = {
+  agreed: {
+    className: 'bg-emerald-950/70 text-emerald-300 border-emerald-800',
+    icon: <Check className="w-3.5 h-3.5" strokeWidth={3} />,
+  },
+  opposed: {
+    className: 'bg-rose-950/70 text-rose-300 border-rose-800',
+    icon: <X className="w-3.5 h-3.5" strokeWidth={3} />,
+  },
+  'coach-flat': {
+    className: 'bg-amber-950/70 text-amber-300 border-amber-800',
+    icon: <Minus className="w-3.5 h-3.5" strokeWidth={3} />,
+  },
+  'no-call': {
+    className: 'bg-zinc-800 text-zinc-400 border-zinc-700',
+    icon: <Minus className="w-3.5 h-3.5" />,
+  },
+};
 
 function formatDuration(startIso?: string, endIso?: string): string | null {
   if (!startIso || !endIso) return null;
@@ -204,6 +233,9 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
 
   const legs = positionGroup?.trades ?? [];
   const isMultiLeg = (positionGroup?.legCount ?? 1) > 1;
+
+  /** The coach's recorded call on this entry, or null when it never made one. */
+  const coachComparison = compareEntry(trade);
 
   return (
     <ModalOverlay onRequestClose={onClose} label="Trade detail">
@@ -368,6 +400,121 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
               />
             </div>
           </Section>
+
+          {/*
+            The coach's call at entry, laid out against the fill it was compared with.
+
+            Shown in full here rather than as the chip the log uses, because this is the
+            view you open to read the record: the reasoning, the levels it was built from
+            and the moment it was made all belong together, and the call is labelled as one
+            opinion rather than a verdict on the trade.
+          */}
+          {coachComparison ? (
+            <Section
+              title="Coach's call on this entry"
+              icon={<Scale className="w-3.5 h-3.5 text-amber-400" />}
+              tone={coachComparison.verdict === 'opposed' ? 'default' : 'amber'}
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <span
+                  className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] font-bold uppercase font-mono ${COACH_VERDICTS[coachComparison.verdict].className}`}
+                >
+                  {COACH_VERDICTS[coachComparison.verdict].icon}
+                  {verdictLabel(coachComparison.verdict)}
+                </span>
+                <span className="text-[11px] text-zinc-300">
+                  {coachComparison.coachDirection === 'flat'
+                    ? `You took the ${trade.direction} at ${figure(trade.entryPrice)}; the coach would have stood aside.`
+                    : `You took the ${trade.direction} at ${figure(
+                        trade.entryPrice
+                      )}; the coach was ${coachComparison.coachDirection?.toUpperCase()} at ${figure(
+                        coachComparison.coachEntry
+                      )}.`}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                <Metric label="Your fill" value={figure(trade.entryPrice)} />
+                <Metric
+                  label="Coach entry"
+                  value={
+                    coachComparison.coachDirection === 'flat'
+                      ? 'stood aside'
+                      : figure(coachComparison.coachEntry)
+                  }
+                />
+                <Metric
+                  label="Your edge"
+                  value={
+                    coachComparison.priceEdge === null ? (
+                      '—'
+                    ) : (
+                      <span
+                        className={
+                          coachComparison.priceEdge >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                        }
+                      >
+                        {coachComparison.priceEdge >= 0 ? '+' : ''}
+                        {coachComparison.priceEdge} pts
+                      </span>
+                    )
+                  }
+                  sub={
+                    coachComparison.priceEdge === null
+                      ? undefined
+                      : coachComparison.priceEdge >= 0
+                      ? 'your fill was better'
+                      : 'your fill was worse'
+                  }
+                />
+                <Metric label="Coach stop" value={figure(trade.coachCall?.stop)} />
+                <Metric label="Coach target" value={figure(trade.coachCall?.target)} />
+              </div>
+
+              {trade.coachCall?.rationale && (
+                <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 px-3 py-2.5">
+                  <span className="text-[10px] uppercase font-mono tracking-wider text-zinc-500 block">
+                    Its reasoning
+                  </span>
+                  <p className="text-xs text-zinc-200 leading-relaxed whitespace-pre-line">
+                    {trade.coachCall.rationale}
+                  </p>
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] font-mono text-zinc-500">
+                {trade.coachCall?.createdAt && (
+                  <span className="flex items-center gap-1">
+                    <Clock className="w-3 h-3" />
+                    Called at entry · {formatTimestamp(trade.coachCall.createdAt)}
+                  </span>
+                )}
+                {trade.coachCall?.marketPrice !== null &&
+                  trade.coachCall?.marketPrice !== undefined && (
+                    <span>
+                      Live {instrument.symbol} at the time: {figure(trade.coachCall.marketPrice)}
+                    </span>
+                  )}
+              </div>
+
+              <p className="text-[10px] text-zinc-500 leading-relaxed">
+                Recorded at the moment you saved the entry, so it was made without knowing how the
+                trade ended. It is one opinion drawn from the live numbers above — not advice, and
+                not a verdict on the trade. The P&amp;L is decided by what you did next.
+              </p>
+            </Section>
+          ) : trade.source === 'manual' ? (
+            <Section
+              title="Coach's call on this entry"
+              icon={<Scale className="w-3.5 h-3.5 text-zinc-400" />}
+            >
+              <p className="text-[11px] text-zinc-500 leading-relaxed">
+                No call was recorded for this entry. One is stored automatically when you save a
+                new entry with the coach service available, and compared with your fill here and in
+                Analytics.
+              </p>
+            </Section>
+          ) : null}
 
           {/* What the trader wrote */}
           <Section title="Your notes" icon={<NotebookPen className="w-3.5 h-3.5 text-amber-400" />}>

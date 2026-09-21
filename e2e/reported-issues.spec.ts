@@ -143,8 +143,27 @@ test.describe('Break-even calculator uses real numbers', () => {
   });
 
   test('no example preset buttons remain on the calculator', async ({ page }) => {
+    // The calculator is opt-in now, so it is opened before it can be inspected.
+    await page.locator('#toggle-scale-in').click();
     await expect(page.getByText(/Your Example \(1 @ 7730/i)).toHaveCount(0);
     await expect(page.getByText(/Down \$50 Example/i)).toHaveCount(0);
+  });
+
+  test('scaling in is optional: the calculator is folded away until it is asked for', async ({
+    page,
+  }) => {
+    // With no open position there is nothing to add to, so the step stays collapsed and
+    // nothing about it is required before locking.
+    await expect(page.locator('#toggle-scale-in')).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.locator('#breakeven-entry-price')).toHaveCount(0);
+
+    await page.locator('#toggle-scale-in').click();
+    await expect(page.locator('#toggle-scale-in')).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.locator('#breakeven-entry-price')).toBeVisible();
+
+    // And it folds away again, so the plan is never carrying a step it does not use.
+    await page.locator('#toggle-scale-in').click();
+    await expect(page.locator('#breakeven-entry-price')).toHaveCount(0);
   });
 });
 
@@ -223,6 +242,9 @@ test.describe('Logging a scale-in as its own trade', () => {
   });
 
   test('the log button is disabled until the numbers make sense', async ({ page }) => {
+    // No open trade, so the optional calculator is folded away until it is opened.
+    await page.locator('#toggle-scale-in').click();
+
     // No open trade and no manual entry yet.
     await expect(page.locator('#breakeven-log-scale-in')).toBeDisabled();
 

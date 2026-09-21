@@ -18,6 +18,174 @@ var SECTOR_ETFS = [
 ];
 var YAHOO_HOSTS = ["query1.finance.yahoo.com", "query2.finance.yahoo.com"];
 var FETCH_TIMEOUT_MS = 4e3;
+var FUTURES_QUOTE_SYMBOLS = {
+  // Equity index futures, micro and full size.
+  MES: "MES=F",
+  ES: "ES=F",
+  MNQ: "MNQ=F",
+  NQ: "NQ=F",
+  MYM: "MYM=F",
+  YM: "YM=F",
+  M2K: "M2K=F",
+  RTY: "RTY=F",
+  // Metals and energy.
+  MGC: "MGC=F",
+  GC: "GC=F",
+  SIL: "SIL=F",
+  SI: "SI=F",
+  MCL: "MCL=F",
+  CL: "CL=F",
+  // FX.
+  M6E: "M6E=F",
+  "6E": "6E=F"
+};
+function futuresQuoteSymbol(symbol) {
+  const key = (symbol || "").trim().toUpperCase();
+  return FUTURES_QUOTE_SYMBOLS[key] ?? null;
+}
+var INSTRUMENT_CACHE_TTL_MS = 2e4;
+var instrumentCache = /* @__PURE__ */ new Map();
+function readNumber(meta, key) {
+  const value = meta[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+async function fetchChartMeta(yahooSymbol) {
+  const path = `/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?range=1d&interval=5m`;
+  for (const host of YAHOO_HOSTS) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    try {
+      const res = await fetch(`https://${host}${path}`, {
+        headers: { "User-Agent": "Mozilla/5.0 (journal coach)" },
+        signal: controller.signal
+      });
+      if (!res.ok) continue;
+      const payload = await res.json();
+      const meta = payload.chart?.result?.[0]?.meta;
+      if (meta) return { ok: true, meta };
+    } catch {
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return { ok: false };
+}
+async function getInstrumentQuote(symbol) {
+  const journalSymbol = (symbol || "").trim().toUpperCase();
+  const yahooSymbol = futuresQuoteSymbol(journalSymbol);
+  const now = Date.now();
+  if (!journalSymbol) {
+    return {
+      ok: false,
+      symbol: "",
+      yahooSymbol: null,
+      price: null,
+      previousClose: null,
+      changePercent: null,
+      dayHigh: null,
+      dayLow: null,
+      volume: null,
+      fetchedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      note: "No instrument was named, so no live read could be made."
+    };
+  }
+  const cached = instrumentCache.get(journalSymbol);
+  if (cached && cached.expiresAt > now) return cached.quote;
+  const base = {
+    ok: false,
+    symbol: journalSymbol,
+    yahooSymbol,
+    price: null,
+    previousClose: null,
+    changePercent: null,
+    dayHigh: null,
+    dayLow: null,
+    volume: null,
+    fetchedAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  if (!yahooSymbol) {
+    const quote2 = {
+      ...base,
+      note: `No live quote source is mapped for ${journalSymbol}, so no live read is available for it.`
+    };
+    instrumentCache.set(journalSymbol, { quote: quote2, expiresAt: now + INSTRUMENT_CACHE_TTL_MS });
+    return quote2;
+  }
+  const attempt = await fetchChartMeta(yahooSymbol);
+  if (!attempt.ok) {
+    const quote2 = {
+      ...base,
+      note: `Live data for ${journalSymbol} could not be loaded right now.`
+    };
+    instrumentCache.set(journalSymbol, { quote: quote2, expiresAt: now + INSTRUMENT_CACHE_TTL_MS });
+    return quote2;
+  }
+  const meta = attempt.meta;
+  const price = readNumber(meta, "regularMarketPrice");
+  const previousClose = readNumber(meta, "chartPreviousClose") ?? readNumber(meta, "previousClose");
+  const directPercent = readNumber(meta, "regularMarketChangePercent");
+  const changePercent = directPercent ?? (price !== null && previousClose ? (price - previousClose) / previousClose * 100 : null);
+  const quote = {
+    ok: price !== null,
+    symbol: journalSymbol,
+    yahooSymbol,
+    price,
+    previousClose,
+    changePercent: changePercent === null ? null : Math.round(changePercent * 100) / 100,
+    dayHigh: readNumber(meta, "regularMarketDayHigh"),
+    dayLow: readNumber(meta, "regularMarketDayLow"),
+    volume: readNumber(meta, "regularMarketVolume"),
+    fetchedAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  if (!quote.ok) {
+    return {
+      ...quote,
+      note: `Live data for ${journalSymbol} came back without a price.`
+    };
+  }
+  instrumentCache.set(journalSymbol, { quote, expiresAt: now + INSTRUMENT_CACHE_TTL_MS });
+  return quote;
+}
+var priceText = (n) => n === null ? "unknown" : n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+function formatInstrumentQuoteForPrompt(quote) {
+  const lines = [];
+  lines.push(`=== LIVE READ: ${quote.symbol} ===`);
+  if (!quote.ok) {
+    lines.push(`DATA STATUS: unavailable. ${quote.note ?? ""}`.trim());
+    lines.push(
+      "There is no live price for this instrument. Say so plainly and do not state, estimate or recall any price, level or direction for it; base your answer on the trader's own journal data alone."
+    );
+    return lines.join("\n");
+  }
+  lines.push(`Contract: ${quote.yahooSymbol ?? quote.symbol} (front month, live).`);
+  lines.push(`Last price: ${priceText(quote.price)}.`);
+  if (quote.previousClose !== null) {
+    lines.push(`Previous settlement/close: ${priceText(quote.previousClose)}.`);
+  }
+  if (quote.changePercent !== null) {
+    lines.push(`Change on the day: ${formatSignedPercent(quote.changePercent)}.`);
+  }
+  if (quote.dayLow !== null && quote.dayHigh !== null) {
+    lines.push(`Day range so far: ${priceText(quote.dayLow)} to ${priceText(quote.dayHigh)}.`);
+  } else if (quote.dayHigh !== null) {
+    lines.push(`Day high so far: ${priceText(quote.dayHigh)} (day low not available).`);
+  } else if (quote.dayLow !== null) {
+    lines.push(`Day low so far: ${priceText(quote.dayLow)} (day high not available).`);
+  } else {
+    lines.push("Day range: not available in this read.");
+  }
+  if (quote.volume !== null) lines.push(`Volume so far: ${quote.volume}.`);
+  const age = Date.now() - Date.parse(quote.fetchedAt);
+  if (Number.isFinite(age) && age > STALE_AFTER_MS) {
+    lines.push(
+      `NOTE: this read is about ${Math.round(age / 6e4)} minute(s) old. Say so, and treat the price as approximate.`
+    );
+  }
+  lines.push(
+    "These are the only prices you have. Every level you mention must be one of the numbers above."
+  );
+  return lines.join("\n");
+}
 function extractChangePercent(meta) {
   const direct = meta["regularMarketChangePercent"];
   if (typeof direct === "number" && Number.isFinite(direct)) return direct;
@@ -154,13 +322,29 @@ var COACH_MODES = [
   "trade",
   "prep",
   "postclose",
-  "planreview"
+  "planreview",
+  "planfield",
+  "planbuild",
+  "scalein",
+  "entrycall"
+];
+var COACH_OPINION_MODES = [
+  "planfield",
+  "planbuild",
+  "scalein",
+  "entrycall"
 ];
 function isCoachMode(value) {
   return typeof value === "string" && COACH_MODES.includes(value);
 }
-function coachGuardrails(withMarketData) {
-  return withMarketData ? COACH_GUARDRAILS + MARKET_GUARDRAILS_SUFFIX : COACH_GUARDRAILS;
+function allowsMarketOpinion(mode) {
+  return COACH_OPINION_MODES.includes(mode);
+}
+function coachGuardrails(withMarketData, withOpinion = false) {
+  let text = COACH_GUARDRAILS;
+  if (withMarketData) text += MARKET_GUARDRAILS_SUFFIX;
+  if (withOpinion) text += OPINION_GUARDRAILS_SUFFIX;
+  return text;
 }
 var COACH_GUARDRAILS = `You are the performance coach built into one futures trader's private journal.
 
@@ -219,6 +403,39 @@ M4. If the plan has no bias recorded, say the plan does not state a bias rather 
     inferring one from the market data.
 M5. Honesty over comfort: if the plan is thin or the bias clashes badly with the data,
     say so plainly. Never flatter a plan into ready.`;
+var OPINION_GUARDRAILS_SUFFIX = `
+
+YOUR OPINION WAS ASKED FOR \u2014 SPECIAL RULES FOR THIS REQUEST ONLY.
+In this request only, the trader has explicitly asked for your own read: which side you
+would take and where you would enter, stop and target. Rule 2 is narrowed, not lifted.
+
+O1. You may state a DIRECTION and specific ENTRY, STOP and TARGET levels ONLY when they
+    are numbers you were handed in the LIVE READ, or levels the trader recorded in their
+    own journal. Never invent, recall, round or "roughly" a level. If you cannot build a
+    level from the numbers you were given, say so and stand aside.
+O2. This is an OPINION, not a prediction. Never claim certainty, an expected win rate,
+    or that a level "will" hold. Say plainly that you can be wrong and that the numbers
+    you have are one moment, not the session.
+O3. SIZE MUST RESPECT THEIR RISK. The contracts you suggest, times the distance from the
+    entry you suggest to the stop you suggest, may not exceed the planned loss limit in
+    the journal data at the instrument's point value. If a sane stop does not fit the
+    limit, say so and return a smaller size, or stand aside.
+O4. STANDING ASIDE IS A REAL ANSWER. If the read does not support a clean entry, return
+    the stand-aside value ("skip" or "flat"), keep the level fields null, and say why in
+    the rationale. Never manufacture a trade to be helpful.
+O5. The decision and the money are the trader's. Never phrase it as an instruction ("you
+    should enter at..."). Write it as the call you would make and the reasoning behind
+    it, then hand it back.
+O6. If the LIVE READ says the data is unavailable, do NOT give a direction or any level
+    at all. Return the stand-aside value and say the live read failed. Never fill in for
+    missing data from memory.
+O7. CHECK THE ACCOUNT'S DRAWDOWN ROOM, NOT JUST THE DAY'S. RISK CAPACITY reports how much
+    of the agreed account drawdown is spent and what is left. When it says the limit is
+    reached, or that one more day at the planned loss limit would breach it, say so
+    plainly and make your suggestion smaller \u2014 never larger. When room is ample, you may
+    note the room as a fact, but you never suggest raising size: growing risk is the
+    trader's decision on their own equity, and it is never a reason you give for a trade.
+O7. Keep the opinion short and checkable. Quote the actual numbers you used.`;
 function formatDigestForPrompt(digest) {
   const lines = [];
   const money = (n) => `${n < 0 ? "-" : ""}$${Math.abs(n).toLocaleString("en-US")}`;
@@ -248,6 +465,25 @@ function formatDigestForPrompt(digest) {
     );
     lines.push(`Largest win ${money(o.largestWin)}, largest loss ${money(o.largestLoss)}.`);
   }
+  lines.push("");
+  lines.push("=== RISK CAPACITY (the account drawdown the trader agreed to) ===");
+  const rc = digest.riskCapacity;
+  if (rc.maxDrawdown === null) {
+    lines.push(
+      "NO ACCOUNT DRAWDOWN LIMIT IS RECORDED. Do not assume one and do not invent a figure. Say the limit is not set when the size of today's risk depends on it."
+    );
+  } else {
+    lines.push(
+      `Agreed drawdown ${money(rc.maxDrawdown)}, measured from the equity high-water mark (currently ${money(rc.peak)}). Used so far ${money(rc.drawdownUsed)} (${rc.usedPct ?? 0}% of the limit, ${money(rc.headroom ?? 0)} left).`
+    );
+    lines.push(`Largest drawdown in the whole record so far ${money(rc.largestHistorical)}.`);
+  }
+  if (rc.dailyLossLimit !== null) {
+    lines.push(
+      `Today's planned loss limit ${money(rc.dailyLossLimit)}.` + (rc.daysOfHeadroom === null ? "" : ` The remaining room equals ${rc.daysOfHeadroom} full losing day(s) at that limit.`) + (rc.dailyLimitFits === false ? " ONE MORE DAY AT THIS LIMIT WOULD BREACH THE ACCOUNT DRAWDOWN." : "")
+    );
+  }
+  lines.push(`Read: ${rc.note}`);
   const renderStats = (title, stats) => {
     if (!stats.length) return;
     lines.push("");
@@ -490,6 +726,65 @@ Trade notes: "${trade.notes}"`);
   }
   return lines.join("\n");
 }
+var PLAN_FIELD_LABELS = {
+  waitingFor: "What am I waiting for?",
+  stayOutIf: "What will keep me out of a trade?"
+};
+function formatPlanFieldRequest(field, currentValue) {
+  const lines = [];
+  lines.push("=== THE FIELD TO DRAFT ===");
+  lines.push(`TODAY'S PLAN FIELD: ${PLAN_FIELD_LABELS[field]} ("${field}")`);
+  lines.push(
+    field === "waitingFor" ? "This field answers: what must the market do before I am allowed to enter? Write it as a condition that can be watched in real time." : "This field answers: what would make me stand aside today? Write it as a condition the trader can recognise while the session is running."
+  );
+  lines.push(
+    currentValue && currentValue.trim() ? `What the trader has written there so far: "${currentValue.trim()}" \u2014 build on it; do not simply restate it.` : "The trader has not written anything in this field yet."
+  );
+  return lines.join("\n");
+}
+function formatPositionForPrompt(position) {
+  const lines = [];
+  const priceText2 = (n) => n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  lines.push("=== THE POSITION ===");
+  lines.push(
+    `${position.contracts} ${position.symbol}, ${position.direction.toUpperCase()}, entry ${priceText2(position.entryPrice)}, initial stop ${priceText2(position.initialStop)}.`
+  );
+  if (position.currentPrice !== void 0) {
+    lines.push(`Where the trader says the market is now: ${priceText2(position.currentPrice)}.`);
+  }
+  if (position.openPoints !== void 0) {
+    lines.push(`Open on the position at that price: ${position.openPoints.toFixed(2)} points.`);
+  }
+  if (position.plannedLossLimit !== void 0) {
+    lines.push(`Today's planned loss limit: $${position.plannedLossLimit}.`);
+  }
+  if (position.addContracts !== void 0 || position.addPrice !== void 0) {
+    lines.push(
+      "The add the trader is considering: " + (position.addContracts !== void 0 ? `${position.addContracts} contract(s)` : "size not typed yet") + " at " + (position.addPrice !== void 0 ? priceText2(position.addPrice) : "price not typed yet") + "."
+    );
+    if (position.addContracts !== void 0 && position.addPrice !== void 0) {
+      const total = position.contracts + position.addContracts;
+      const blended = (position.contracts * position.entryPrice + position.addContracts * position.addPrice) / total;
+      lines.push(
+        `If that add were filled, the position would be ${total} contract(s) at a blended entry of ${priceText2(blended)}. Use these exact figures (${total} and ${priceText2(blended)}) if you discuss the blended entry \u2014 do not recompute them differently.`
+      );
+    }
+  }
+  return lines.join("\n");
+}
+function formatEntryForPrompt(entry) {
+  const lines = [];
+  lines.push("=== THE ENTRY THE TRADER JUST RECORDED ===");
+  lines.push(
+    `${entry.direction.toUpperCase()} ${entry.contracts} ${entry.symbol} in the ${entry.session}, entry ${entry.entryPrice}, initial stop ${entry.initialStop}.`
+  );
+  if (entry.setupName) lines.push(`Setup they logged it as: ${entry.setupName}.`);
+  if (entry.entryReason) lines.push(`Their reason in their own words: "${entry.entryReason}".`);
+  lines.push(
+    "Make YOUR OWN call on the live numbers, and do not simply agree with them \u2014 this is recorded beside their entry to compare the two, so agreeing out of politeness makes the comparison worthless."
+  );
+  return lines.join("\n");
+}
 var COACH_RESPONSE_SHAPES = {
   brief: `Return exactly this JSON:
 {
@@ -537,7 +832,7 @@ This is a pre-session preparation brief, so keep it practical and brief-oriented
   "headline": "one sentence, under 16 words, on what today's plan reads like",
   "marketRead": "2-3 sentences on what TODAY'S MARKET READ shows \u2014 breadth, leaders, laggards, quoting the percentages \u2014 and how the plan's bias sits against it. If the market read says data is unavailable, say exactly that here and nothing more about the market",
   "alignment": "one or two sentences: does the plan's recorded bias agree or clash with today's breadth? If no bias is recorded, say the plan does not state one",
-  "riskCheck": "one or two sentences judging the planned loss limit and contracts against the trader's own recent results, quoting the figures",
+  "riskCheck": "one or two sentences judging the planned loss limit and contracts against the trader's own recent results and against the room left in RISK CAPACITY, quoting the figures",
   "planGaps": ["short, specific weaknesses in this plan \u2014 missing levels, vague waiting-for, a stay-out rule that cannot be checked, and so on. Empty only if the plan is genuinely complete"],
   "watchFor": ["1-3 things worth the trader's attention at the open, phrased as process checks, never as predictions or entry advice"],
   "verdict": "one of ready, workable, shaky \u2014 ready means specific and coherent with both the data and the trader's history",
@@ -554,11 +849,57 @@ Be honest, not encouraging. A thin plan gets shaky even when the trader is keen.
   "tomorrowAction": "one concrete, checkable thing to do differently in the next session",
   "motivation": "2 sentences. Specific to this trader and earned by their data. No slogans."
 }
-If today's end-of-day review has not been completed, say so plainly in whatHappened and tell them to complete it, because the discipline picture is incomplete without it.`
+If today's end-of-day review has not been completed, say so plainly in whatHappened and tell them to complete it, because the discipline picture is incomplete without it.`,
+  planfield: `Return exactly this JSON:
+{
+  "field": "the field you were asked to draft: waitingFor or stayOutIf",
+  "suggestion": "the text for that field: 1-2 sentences, first person, as the trader would write it. Specific and checkable, naming the condition that matters rather than a vague intention",
+  "rationale": "1-2 sentences on why this suits THIS trader, quoting their own plan, results or repeated mistakes",
+  "basedOn": ["the specific journal facts and live levels you used, one per item"]
+}
+This is a draft, not a decision: the trader edits it before saving. The text must be something that can be checked while the session is running \u2014 a condition of the market, not a feeling.`,
+  planbuild: `Return exactly this JSON:
+{
+  "headline": "one sentence, under 16 words, on what today looks like to you",
+  "bias": "one of bullish, bearish, neutral, unsure",
+  "direction": "the side you would trade today: long, short, or skip",
+  "entry": "the level you would enter at, as a number taken from the live read or the journal's own levels, or null when you would skip",
+  "stop": "the level your stop would sit at, as a number, or null when you would skip",
+  "target": "the level you would aim for, as a number, or null when you would skip",
+  "contracts": "whole number of contracts that keeps entry-to-stop risk inside the planned loss limit",
+  "waitingFor": "1-2 first-person sentences: the condition you would wait for before entering",
+  "stayOutIf": "1-2 first-person sentences: what would keep you out",
+  "setups": ["names of setups from the trader's own playbook that fit today; empty only if none do"],
+  "levels": [{ "price": 0, "label": "overnight high" }],
+  "rationale": "3-4 sentences: the read, why that side, why that size, and plainly that this is your opinion and can be wrong",
+  "confidence": "one of low, medium, high",
+  "basedOn": ["each live number and journal fact you used, one per item"]
+}
+Every price you return must be a number you were handed. If the live read failed, return skip with null levels, say the read failed in the rationale, and still draft the waitingFor and stayOutIf text from the journal alone.`,
+  scalein: `Return exactly this JSON:
+{
+  "stance": "one of add, hold, do-not-add",
+  "addPrice": "the level you would add at, a number from the read or the journal, or null when the stance is hold or do-not-add",
+  "addContracts": "whole number of contracts to add, or null when the stance is hold or do-not-add",
+  "stopAfterAdd": "where the stop belongs after the add so the extra risk is bounded, or null",
+  "breakevenPrice": "the blended entry after that add, computed from the numbers you were given, or null",
+  "rationale": "3-4 sentences: why that stance, what it does to the position's average and to the day's risk, and that this is your opinion",
+  "risks": ["1-3 specific things that would make this add a mistake"]
+}
+The position's real numbers are in THE POSITION. Do the arithmetic from those numbers and show it in the rationale. Never suggest an add whose total risk, from the blended entry to the stop, exceeds the planned loss limit.`,
+  entrycall: `Return exactly this JSON:
+{
+  "direction": "the side you would take at this moment: long, short, or flat when you would not be in a trade",
+  "entry": "the level you would enter at, a number taken from the live read, or null when flat",
+  "stop": "the level your stop would sit at, a number, or null when flat",
+  "target": "the level you would aim for, a number, or null when flat",
+  "rationale": "2-3 sentences: what you read in the live numbers and why that side, stated as your opinion"
+}
+This is recorded beside the trader's own entry and compared with it later, so be specific and be honest about what the numbers do and do not show.`
 };
-function buildCoachPrompt(mode, digest, trade, marketBrief) {
+function buildCoachPrompt(mode, digest, trade, marketBrief, extras) {
   const context = formatDigestForPrompt(digest);
-  const task = mode === "brief" ? `Write today's brief for this trader. Cover what happened most recently, what is working, and the one thing to focus on today. If they have not logged today's plan, say so and tell them to plan before trading.` : mode === "weekly" ? `Write this trader's review of their recent performance. Find what the numbers actually show, including anything uncomfortable. One change only.` : mode === "prep" ? `Prepare this trader for today's session. Their plan and their recent behaviour are both here. Tell them how to approach the session given both, what specifically to watch out for based on mistakes they have actually repeated, and what is still missing from today's plan.` : mode === "postclose" ? `Review the session that has just finished. Compare the plan they set with what they actually did. Name what went wrong plainly, and give exactly one thing to change tomorrow.` : mode === "planreview" ? `The trader is about to lock the plan shown under TODAY'S PLAN, and asked for your honest opinion of it before the session starts. Read it against their recent results AND today's live sector read. Say what holds up, what is thin, and whether the recorded bias sits comfortably or one-sided against today's breadth. Judge the written plan only \u2014 never tell them to take, size or skip trades, and never predict where anything goes next. If the market read or the plan is missing something you need, say exactly that instead of guessing.` : `Critique the single trade described below. Judge the decision and the execution separately. Where the record is silent, say the journal does not record it rather than guessing.`;
+  const task = mode === "brief" ? `Write today's brief for this trader. Cover what happened most recently, what is working, and the one thing to focus on today. If they have not logged today's plan, say so and tell them to plan before trading.` : mode === "weekly" ? `Write this trader's review of their recent performance. Find what the numbers actually show, including anything uncomfortable. One change only.` : mode === "prep" ? `Prepare this trader for today's session. Their plan and their recent behaviour are both here. Tell them how to approach the session given both, what specifically to watch out for based on mistakes they have actually repeated, and what is still missing from today's plan.` : mode === "postclose" ? `Review the session that has just finished. Compare the plan they set with what they actually did. Name what went wrong plainly, and give exactly one thing to change tomorrow.` : mode === "planreview" ? `The trader is about to lock the plan shown under TODAY'S PLAN, and asked for your honest opinion of it before the session starts. Read it against their recent results AND today's live sector read. Say what holds up, what is thin, and whether the recorded bias sits comfortably or one-sided against today's breadth. Judge the written plan only \u2014 never tell them to take, size or skip trades, and never predict where anything goes next. If the market read or the plan is missing something you need, say exactly that instead of guessing.` : mode === "planfield" ? `The trader is stuck on one field of today's plan and asked you to draft it. Write the text for that field only, in their voice, shaped by their own risk parameters, recent results and repeated mistakes, and by the live levels when you have them. It is a draft they will edit.` : mode === "planbuild" ? `The trader asked for a whole draft plan for today, in one go. Read their style from the journal \u2014 instruments, sessions, setups, typical size, their risk limit and the mistakes they actually repeat \u2014 then use the LIVE READ to make your own call: which side, where you would enter, where the stop and target sit, and how many contracts keep that risk inside the planned loss limit AND inside the room left in RISK CAPACITY. Fill the plan fields too. State plainly that this is your opinion and can be wrong.` : mode === "scalein" ? `The trader already has a position on and is considering adding to it. Give your own opinion on whether to add, where, how much, and where the stop belongs after the add. Work from the position's real numbers and the live read, keep the total risk inside the planned loss limit, and remember that adding to a loser is usually how a small loss becomes the day's loss.` : mode === "entrycall" ? `The trader has just recorded an entry and asked for your own call at that same moment. Say which side you would be on right now, at what level, with what stop and target, from the live read. Do not anchor to their direction: make your own read, and be willing to be on the other side of them.` : `Critique the single trade described below. Judge the decision and the execution separately. Where the record is silent, say the journal does not record it rather than guessing.`;
   const tradeBlock = mode === "trade" && trade ? `
 
 === THE TRADE TO CRITIQUE ===
@@ -566,13 +907,28 @@ ${formatTradeForPrompt(trade)}` : "";
   const marketBlock = mode === "planreview" && marketBrief ? `
 
 ${formatMarketBriefForPrompt(marketBrief)}` : "";
-  const userPrompt = `${context}${marketBlock}${tradeBlock}
+  const instrumentBlock = allowsMarketOpinion(mode) && extras?.instrumentQuote ? `
+
+${formatInstrumentQuoteForPrompt(extras.instrumentQuote)}` : "";
+  const positionBlock = mode === "scalein" && extras?.position ? `
+
+${formatPositionForPrompt(extras.position)}` : "";
+  const entryBlock = mode === "entrycall" && extras?.entry ? `
+
+${formatEntryForPrompt(extras.entry)}` : "";
+  const fieldBlock = mode === "planfield" && extras?.field ? `
+
+${formatPlanFieldRequest(extras.field, extras.currentFieldValue)}` : "";
+  const userPrompt = `${context}${marketBlock}${instrumentBlock}${tradeBlock}${positionBlock}${entryBlock}${fieldBlock}
 
 === YOUR TASK ===
 ${task}
 
 ${COACH_RESPONSE_SHAPES[mode]}`;
-  return { systemInstruction: coachGuardrails(mode === "planreview"), userPrompt };
+  return {
+    systemInstruction: coachGuardrails(mode === "planreview", allowsMarketOpinion(mode)),
+    userPrompt
+  };
 }
 function asText(value, field) {
   if (typeof value !== "string" || !value.trim()) {
@@ -585,7 +941,45 @@ function asTextList(value, field) {
   if (!Array.isArray(value)) throw new Error(`Coach response field "${field}" must be an array.`);
   return value.filter((item) => typeof item === "string").map((item) => item.trim()).filter(Boolean);
 }
-function parseCoachResponse(mode, raw) {
+function asNumberOrNull(value, field) {
+  if (value === void 0 || value === null || value === "") return null;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value.replace(/[$,%\s]/g, ""));
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  throw new Error(`Coach response field "${field}" must be a number or null.`);
+}
+function asPositiveInt(value, field, fallback) {
+  const parsed = asNumberOrNull(value, field);
+  if (parsed === null) return fallback;
+  return Math.max(1, Math.round(parsed));
+}
+function asEnum(value, allowed, fallback) {
+  const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return allowed.includes(raw) ? raw : fallback;
+}
+function asLevels(value) {
+  if (!Array.isArray(value)) return [];
+  const levels = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const record = item;
+    let price = null;
+    try {
+      price = asNumberOrNull(record.price, "levels.price");
+    } catch {
+      price = null;
+    }
+    if (price === null) continue;
+    levels.push({
+      price,
+      label: typeof record.label === "string" ? record.label.trim() : ""
+    });
+  }
+  return levels;
+}
+function parseCoachResponse(mode, raw, extras) {
   let parsed = raw;
   if (typeof raw === "string") {
     const cleaned = raw.trim().replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
@@ -661,6 +1055,58 @@ function parseCoachResponse(mode, raw) {
       motivation: asText(obj.motivation, "motivation")
     };
   }
+  if (mode === "planfield") {
+    const asked = extras?.field;
+    const returned = asEnum(obj.field, ["waitingFor", "stayOutIf"], "waitingFor");
+    return {
+      field: asked ?? returned,
+      suggestion: asText(obj.suggestion, "suggestion"),
+      rationale: asText(obj.rationale, "rationale"),
+      basedOn: asTextList(obj.basedOn, "basedOn")
+    };
+  }
+  if (mode === "planbuild") {
+    return {
+      headline: asText(obj.headline, "headline"),
+      bias: asEnum(obj.bias, ["bullish", "bearish", "neutral", "unsure"], "unsure"),
+      direction: asEnum(obj.direction, ["long", "short", "skip"], "skip"),
+      entry: asNumberOrNull(obj.entry, "entry"),
+      stop: asNumberOrNull(obj.stop, "stop"),
+      target: asNumberOrNull(obj.target, "target"),
+      contracts: asPositiveInt(obj.contracts, "contracts", 1),
+      waitingFor: asText(obj.waitingFor, "waitingFor"),
+      stayOutIf: asText(obj.stayOutIf, "stayOutIf"),
+      setups: asTextList(obj.setups, "setups"),
+      levels: asLevels(obj.levels),
+      rationale: asText(obj.rationale, "rationale"),
+      confidence: asEnum(obj.confidence, ["low", "medium", "high"], "low"),
+      basedOn: asTextList(obj.basedOn, "basedOn")
+    };
+  }
+  if (mode === "scalein") {
+    const stance = asEnum(obj.stance, ["add", "hold", "do-not-add"], "hold");
+    const adding = stance === "add";
+    return {
+      stance,
+      addPrice: adding ? asNumberOrNull(obj.addPrice, "addPrice") : null,
+      addContracts: adding ? asNumberOrNull(obj.addContracts, "addContracts") : null,
+      stopAfterAdd: adding ? asNumberOrNull(obj.stopAfterAdd, "stopAfterAdd") : null,
+      breakevenPrice: asNumberOrNull(obj.breakevenPrice, "breakevenPrice"),
+      rationale: asText(obj.rationale, "rationale"),
+      risks: asTextList(obj.risks, "risks")
+    };
+  }
+  if (mode === "entrycall") {
+    const direction = asEnum(obj.direction, ["long", "short", "flat"], "flat");
+    const inTrade = direction !== "flat";
+    return {
+      direction,
+      entry: inTrade ? asNumberOrNull(obj.entry, "entry") : null,
+      stop: inTrade ? asNumberOrNull(obj.stop, "stop") : null,
+      target: inTrade ? asNumberOrNull(obj.target, "target") : null,
+      rationale: asText(obj.rationale, "rationale")
+    };
+  }
   const grade = asText(obj.grade, "grade").toUpperCase().slice(0, 2);
   return {
     verdict: asText(obj.verdict, "verdict"),
@@ -673,7 +1119,7 @@ function parseCoachResponse(mode, raw) {
 }
 
 // src/api/coach.ts
-var ENDPOINT_VERSION = 6;
+var ENDPOINT_VERSION = 7;
 var REQUEST_BUDGET_MS = 45e3;
 var DEFAULT_MODEL_CHAIN = [
   "gemini-flash-lite-latest",
@@ -878,8 +1324,14 @@ async function authorize(req, env = process.env) {
   };
 }
 async function runCoachModels(params) {
-  const { apiKey, mode, digest, trade, marketBrief } = params;
-  const { systemInstruction, userPrompt } = buildCoachPrompt(mode, digest, trade, marketBrief);
+  const { apiKey, mode, digest, trade, marketBrief, extras } = params;
+  const { systemInstruction, userPrompt } = buildCoachPrompt(
+    mode,
+    digest,
+    trade,
+    marketBrief,
+    extras
+  );
   const startedAt = Date.now();
   const attempted = [];
   for (const model of modelChain()) {
@@ -902,7 +1354,10 @@ async function runCoachModels(params) {
           body: {
             mode,
             model: result.model,
-            data: parseCoachResponse(mode, parsed)
+            data: parseCoachResponse(mode, parsed, extras),
+            // The live read behind an opinion, handed back so the client can record the
+            // moment the call was made against. Never a secret: it is public market data.
+            instrument: extras?.instrumentQuote
           }
         };
       } catch (err) {
@@ -1006,6 +1461,55 @@ function readBody(body) {
   if (typeof body === "object" && !Array.isArray(body)) return body;
   return null;
 }
+function readNumber2(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : void 0;
+}
+function readPositionFacts(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const record = raw;
+  const symbol = typeof record.symbol === "string" ? record.symbol.trim() : "";
+  const direction = record.direction === "short" ? "short" : record.direction === "long" ? "long" : null;
+  const contracts = readNumber2(record.contracts);
+  const entryPrice = readNumber2(record.entryPrice);
+  const initialStop = readNumber2(record.initialStop);
+  if (!symbol || !direction || !contracts || entryPrice === void 0 || initialStop === void 0) {
+    return null;
+  }
+  return {
+    symbol,
+    direction,
+    contracts,
+    entryPrice,
+    initialStop,
+    currentPrice: readNumber2(record.currentPrice),
+    addContracts: readNumber2(record.addContracts),
+    addPrice: readNumber2(record.addPrice),
+    plannedLossLimit: readNumber2(record.plannedLossLimit),
+    openPoints: readNumber2(record.openPoints)
+  };
+}
+function readEntryFacts(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const record = raw;
+  const symbol = typeof record.symbol === "string" ? record.symbol.trim() : "";
+  const direction = record.direction === "short" ? "short" : record.direction === "long" ? "long" : null;
+  const contracts = readNumber2(record.contracts);
+  const entryPrice = readNumber2(record.entryPrice);
+  const initialStop = readNumber2(record.initialStop);
+  if (!symbol || !direction || !contracts || entryPrice === void 0 || initialStop === void 0) {
+    return null;
+  }
+  return {
+    symbol,
+    direction,
+    contracts,
+    entryPrice,
+    initialStop,
+    setupName: typeof record.setupName === "string" ? record.setupName.trim() : void 0,
+    entryReason: typeof record.entryReason === "string" ? record.entryReason.trim() : void 0,
+    session: typeof record.session === "string" ? record.session.trim() : "Regular Session"
+  };
+}
 function hasUsableDigest(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const digest = value;
@@ -1061,7 +1565,7 @@ async function handler(req, res) {
   const digest = body?.digest;
   if (!isCoachMode(mode)) {
     res.status(400).json({
-      error: "Unknown coach mode. Expected brief, weekly, trade, prep, postclose or planreview."
+      error: "Unknown coach mode. Expected brief, weekly, trade, prep, postclose, planreview, planfield, planbuild, scalein or entrycall."
     });
     return;
   }
@@ -1075,6 +1579,45 @@ async function handler(req, res) {
     return;
   }
   const marketBrief = mode === "planreview" ? await getMarketBrief() : void 0;
+  const extrasRaw = readBody(body?.extras) ?? {};
+  const extras = {};
+  if (mode === "planfield") {
+    const field = extrasRaw.field === "stayOutIf" ? "stayOutIf" : extrasRaw.field === "waitingFor" ? "waitingFor" : null;
+    if (!field) {
+      res.status(400).json({ error: "Plan-field mode needs the field to draft: waitingFor or stayOutIf." });
+      return;
+    }
+    extras.field = field;
+    if (typeof extrasRaw.currentFieldValue === "string") {
+      extras.currentFieldValue = extrasRaw.currentFieldValue.slice(0, 2e3);
+    }
+  }
+  if (mode === "scalein") {
+    const position = readPositionFacts(extrasRaw.position);
+    if (!position) {
+      res.status(400).json({
+        error: "Scale-in mode needs the open position: symbol, direction, contracts, entry and stop."
+      });
+      return;
+    }
+    extras.position = position;
+  }
+  if (mode === "entrycall") {
+    const entry = readEntryFacts(extrasRaw.entry);
+    if (!entry) {
+      res.status(400).json({
+        error: "Entry-call mode needs the entry: symbol, direction, contracts, entry and stop."
+      });
+      return;
+    }
+    extras.entry = entry;
+  }
+  if (allowsMarketOpinion(mode)) {
+    const fromExtras = typeof extrasRaw.instrument === "string" ? extrasRaw.instrument.trim() : "";
+    const instrument = extras.position?.symbol || extras.entry?.symbol || fromExtras;
+    extras.instrument = instrument;
+    extras.instrumentQuote = await getInstrumentQuote(instrument);
+  }
   const admission = coachRateLimiter.acquire(auth.limitKey, auth.rule, rules.maxInFlight);
   if (!admission.ok) {
     const busy = admission.reason === "too_many_in_flight";
@@ -1089,7 +1632,7 @@ async function handler(req, res) {
     return;
   }
   try {
-    const outcome = await runCoachModels({ apiKey, mode, digest, trade, marketBrief });
+    const outcome = await runCoachModels({ apiKey, mode, digest, trade, marketBrief, extras });
     res.status(outcome.status).json(outcome.body);
   } finally {
     admission.release();
@@ -1105,6 +1648,8 @@ export {
   isRetryable,
   modelChain,
   rateLimitRules,
+  readEntryFacts,
+  readPositionFacts,
   runCoachModels,
   supabaseAuthConfig,
   verifySession

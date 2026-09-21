@@ -4,9 +4,17 @@
 // not being deployed — hence keeping this dependency-free.
 import type { DigestStatLine, JournalDigest } from './journal-digest';
 import type { BehaviorBucket as DigestBehaviorBucket } from '../analytics/behavior';
-import type { CoachMode, CoachResponse, CoachTradeFacts, WeeklyPattern } from './coach-types';
-import type { MarketBrief } from './market-data';
-import { formatMarketBriefForPrompt } from './market-data';
+import type {
+  CoachExtras,
+  CoachMode,
+  CoachResponse,
+  CoachTradeFacts,
+  PlannedLevel,
+  PlanFieldName,
+  WeeklyPattern,
+} from './coach-types';
+import type { InstrumentQuote, MarketBrief } from './market-data';
+import { formatInstrumentQuoteForPrompt, formatMarketBriefForPrompt } from './market-data';
 import type { PlanReviewResponse } from './coach-types';
 
 /**
@@ -25,21 +33,50 @@ export const COACH_MODES: readonly CoachMode[] = [
   'prep',
   'postclose',
   'planreview',
+  'planfield',
+  'planbuild',
+  'scalein',
+  'entrycall',
+];
+
+/**
+ * The modes where the coach is allowed a market opinion.
+ *
+ * Kept as an explicit list rather than a flag a caller passes, because this is the one
+ * place the app departs from "the coach reviews process, never the market". A mode that
+ * is not here gets the untouched, no-market guardrails no matter what data is attached.
+ */
+export const COACH_OPINION_MODES: readonly CoachMode[] = [
+  'planfield',
+  'planbuild',
+  'scalein',
+  'entrycall',
 ];
 
 export function isCoachMode(value: unknown): value is CoachMode {
   return typeof value === 'string' && (COACH_MODES as readonly string[]).includes(value);
 }
 
+/** True when this mode may state a direction or an entry, from live data only. */
+export function allowsMarketOpinion(mode: CoachMode): boolean {
+  return (COACH_OPINION_MODES as readonly string[]).includes(mode);
+}
+
 /**
  * The system instruction for a coach call.
  *
- * The base guardrails ban market claims outright; planreview calls carry live sector
- * data, so they get the ban plus the narrow exception that governs it. Keeping the
- * exception as an addition means a planreview prompt can never drop the core rules.
+ * The base guardrails ban market claims outright. Two narrow exceptions are appended,
+ * never substituted, so a prompt can never lose the core rules:
+ *
+ * - `withMarketData`: the live sector read the plan-lock opinion quotes from.
+ * - `withOpinion`: the trader has explicitly asked the coach for a directional call on
+ *   their own instrument, which a strict reading of rule 2 would otherwise forbid.
  */
-export function coachGuardrails(withMarketData: boolean): string {
-  return withMarketData ? COACH_GUARDRAILS + MARKET_GUARDRAILS_SUFFIX : COACH_GUARDRAILS;
+export function coachGuardrails(withMarketData: boolean, withOpinion = false): string {
+  let text = COACH_GUARDRAILS;
+  if (withMarketData) text += MARKET_GUARDRAILS_SUFFIX;
+  if (withOpinion) text += OPINION_GUARDRAILS_SUFFIX;
+  return text;
 }
 
 export const COACH_GUARDRAILS = `You are the performance coach built into one futures trader's private journal.
@@ -106,6 +143,47 @@ M5. Honesty over comfort: if the plan is thin or the bias clashes badly with the
     say so plainly. Never flatter a plan into ready.`;
 
 /**
+ * The rules for the modes where the trader has asked for the coach's own market call.
+ *
+ * This is a deliberate, narrow exception to rule 2 above, and it is written to keep the
+ * exception honest: the opinion must come only from numbers the coach was handed, it
+ * must be labelled as an opinion, it must respect the trader's real risk limit, and
+ * standing aside is a first-class answer rather than a failure. Nothing here removes
+ * the ban on inventing a number.
+ */
+const OPINION_GUARDRAILS_SUFFIX = `\n\nYOUR OPINION WAS ASKED FOR — SPECIAL RULES FOR THIS REQUEST ONLY.
+In this request only, the trader has explicitly asked for your own read: which side you
+would take and where you would enter, stop and target. Rule 2 is narrowed, not lifted.
+
+O1. You may state a DIRECTION and specific ENTRY, STOP and TARGET levels ONLY when they
+    are numbers you were handed in the LIVE READ, or levels the trader recorded in their
+    own journal. Never invent, recall, round or "roughly" a level. If you cannot build a
+    level from the numbers you were given, say so and stand aside.
+O2. This is an OPINION, not a prediction. Never claim certainty, an expected win rate,
+    or that a level "will" hold. Say plainly that you can be wrong and that the numbers
+    you have are one moment, not the session.
+O3. SIZE MUST RESPECT THEIR RISK. The contracts you suggest, times the distance from the
+    entry you suggest to the stop you suggest, may not exceed the planned loss limit in
+    the journal data at the instrument's point value. If a sane stop does not fit the
+    limit, say so and return a smaller size, or stand aside.
+O4. STANDING ASIDE IS A REAL ANSWER. If the read does not support a clean entry, return
+    the stand-aside value ("skip" or "flat"), keep the level fields null, and say why in
+    the rationale. Never manufacture a trade to be helpful.
+O5. The decision and the money are the trader's. Never phrase it as an instruction ("you
+    should enter at..."). Write it as the call you would make and the reasoning behind
+    it, then hand it back.
+O6. If the LIVE READ says the data is unavailable, do NOT give a direction or any level
+    at all. Return the stand-aside value and say the live read failed. Never fill in for
+    missing data from memory.
+O7. CHECK THE ACCOUNT'S DRAWDOWN ROOM, NOT JUST THE DAY'S. RISK CAPACITY reports how much
+    of the agreed account drawdown is spent and what is left. When it says the limit is
+    reached, or that one more day at the planned loss limit would breach it, say so
+    plainly and make your suggestion smaller — never larger. When room is ample, you may
+    note the room as a fact, but you never suggest raising size: growing risk is the
+    trader's decision on their own equity, and it is never a reason you give for a trade.
+O7. Keep the opinion short and checkable. Quote the actual numbers you used.`;
+
+/**
  * Renders the digest as compact text for the prompt. Deliberately explicit about
  * thin data so the model cannot mistake a small sample for a finding.
  */
@@ -146,6 +224,39 @@ export function formatDigestForPrompt(digest: JournalDigest): string {
     );
     lines.push(`Largest win ${money(o.largestWin)}, largest loss ${money(o.largestLoss)}.`);
   }
+
+  // ---- Risk capacity ------------------------------------------------------
+  // The size question is answered here rather than inferred from how the last few trades
+  // went, because a trailing limit moves with the peak: a curve at a new high can still be
+  // one ordinary losing day from the floor.
+  lines.push('');
+  lines.push('=== RISK CAPACITY (the account drawdown the trader agreed to) ===');
+  const rc = digest.riskCapacity;
+  if (rc.maxDrawdown === null) {
+    lines.push(
+      'NO ACCOUNT DRAWDOWN LIMIT IS RECORDED. Do not assume one and do not invent a figure. ' +
+        'Say the limit is not set when the size of today\'s risk depends on it.'
+    );
+  } else {
+    lines.push(
+      `Agreed drawdown ${money(rc.maxDrawdown)}, measured from the equity high-water mark ` +
+        `(currently ${money(rc.peak)}). Used so far ${money(rc.drawdownUsed)} ` +
+        `(${rc.usedPct ?? 0}% of the limit, ${money(rc.headroom ?? 0)} left).`
+    );
+    lines.push(`Largest drawdown in the whole record so far ${money(rc.largestHistorical)}.`);
+  }
+  if (rc.dailyLossLimit !== null) {
+    lines.push(
+      `Today's planned loss limit ${money(rc.dailyLossLimit)}.` +
+        (rc.daysOfHeadroom === null
+          ? ''
+          : ` The remaining room equals ${rc.daysOfHeadroom} full losing day(s) at that limit.`) +
+        (rc.dailyLimitFits === false
+          ? ' ONE MORE DAY AT THIS LIMIT WOULD BREACH THE ACCOUNT DRAWDOWN.'
+          : '')
+    );
+  }
+  lines.push(`Read: ${rc.note}`);
 
   const renderStats = (title: string, stats: DigestStatLine[]) => {
     if (!stats.length) return;
@@ -448,6 +559,119 @@ export function formatTradeForPrompt(trade: CoachTradeFacts): string {
   return lines.join('\n');
 }
 
+/** One plan field the coach is being asked to draft text for. */
+export const PLAN_FIELD_LABELS: Record<PlanFieldName, string> = {
+  waitingFor: 'What am I waiting for?',
+  stayOutIf: 'What will keep me out of a trade?',
+};
+
+/**
+ * Describes exactly which field is being drafted, and what is already in it, so the
+ * model writes for that field rather than producing a general opinion.
+ */
+export function formatPlanFieldRequest(field: PlanFieldName, currentValue?: string): string {
+  const lines: string[] = [];
+  lines.push('=== THE FIELD TO DRAFT ===');
+  lines.push(`TODAY'S PLAN FIELD: ${PLAN_FIELD_LABELS[field]} ("${field}")`);
+  lines.push(
+    field === 'waitingFor'
+      ? 'This field answers: what must the market do before I am allowed to enter? Write it as a condition that can be watched in real time.'
+      : 'This field answers: what would make me stand aside today? Write it as a condition the trader can recognise while the session is running.'
+  );
+  lines.push(
+    currentValue && currentValue.trim()
+      ? `What the trader has written there so far: "${currentValue.trim()}" — build on it; do not simply restate it.`
+      : 'The trader has not written anything in this field yet.'
+  );
+  return lines.join('\n');
+}
+
+/**
+ * The position already on, as the scale-in opinion needs it.
+ *
+ * The blended entry is computed here rather than left to the model: it is arithmetic
+ * from numbers the trader recorded, and getting it wrong would put a bad break-even
+ * level in front of them.
+ */
+export function formatPositionForPrompt(position: {
+  symbol: string;
+  direction: string;
+  contracts: number;
+  entryPrice: number;
+  initialStop: number;
+  currentPrice?: number;
+  addContracts?: number;
+  addPrice?: number;
+  plannedLossLimit?: number;
+  openPoints?: number;
+}): string {
+  const lines: string[] = [];
+  const priceText = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  lines.push('=== THE POSITION ===');
+  lines.push(
+    `${position.contracts} ${position.symbol}, ${position.direction.toUpperCase()}, ` +
+      `entry ${priceText(position.entryPrice)}, initial stop ${priceText(position.initialStop)}.`
+  );
+  if (position.currentPrice !== undefined) {
+    lines.push(`Where the trader says the market is now: ${priceText(position.currentPrice)}.`);
+  }
+  if (position.openPoints !== undefined) {
+    lines.push(`Open on the position at that price: ${position.openPoints.toFixed(2)} points.`);
+  }
+  if (position.plannedLossLimit !== undefined) {
+    lines.push(`Today's planned loss limit: $${position.plannedLossLimit}.`);
+  }
+  if (position.addContracts !== undefined || position.addPrice !== undefined) {
+    lines.push(
+      'The add the trader is considering: ' +
+        (position.addContracts !== undefined ? `${position.addContracts} contract(s)` : 'size not typed yet') +
+        ' at ' +
+        (position.addPrice !== undefined ? priceText(position.addPrice) : 'price not typed yet') +
+        '.'
+    );
+    if (position.addContracts !== undefined && position.addPrice !== undefined) {
+      const total = position.contracts + position.addContracts;
+      const blended =
+        (position.contracts * position.entryPrice + position.addContracts * position.addPrice) /
+        total;
+      lines.push(
+        `If that add were filled, the position would be ${total} contract(s) at a blended entry of ` +
+          `${priceText(blended)}. Use these exact figures (${total} and ${priceText(blended)}) if you ` +
+          'discuss the blended entry — do not recompute them differently.'
+      );
+    }
+  }
+  return lines.join('\n');
+}
+
+/** The entry the trader has just recorded, for the coach's own call. */
+export function formatEntryForPrompt(entry: {
+  symbol: string;
+  direction: string;
+  contracts: number;
+  entryPrice: number;
+  initialStop: number;
+  setupName?: string;
+  entryReason?: string;
+  session: string;
+}): string {
+  const lines: string[] = [];
+  lines.push('=== THE ENTRY THE TRADER JUST RECORDED ===');
+  lines.push(
+    `${entry.direction.toUpperCase()} ${entry.contracts} ${entry.symbol} in the ${entry.session}, ` +
+      `entry ${entry.entryPrice}, initial stop ${entry.initialStop}.`
+  );
+  if (entry.setupName) lines.push(`Setup they logged it as: ${entry.setupName}.`);
+  if (entry.entryReason) lines.push(`Their reason in their own words: "${entry.entryReason}".`);
+  lines.push(
+    'Make YOUR OWN call on the live numbers, and do not simply agree with them — this is ' +
+      'recorded beside their entry to compare the two, so agreeing out of politeness makes the ' +
+      'comparison worthless.'
+  );
+  return lines.join('\n');
+}
+
 /** The JSON each mode must return, described for the model. */
 export const COACH_RESPONSE_SHAPES: Record<CoachMode, string> = {
   brief: `Return exactly this JSON:
@@ -496,7 +720,7 @@ This is a pre-session preparation brief, so keep it practical and brief-oriented
   "headline": "one sentence, under 16 words, on what today's plan reads like",
   "marketRead": "2-3 sentences on what TODAY'S MARKET READ shows — breadth, leaders, laggards, quoting the percentages — and how the plan's bias sits against it. If the market read says data is unavailable, say exactly that here and nothing more about the market",
   "alignment": "one or two sentences: does the plan's recorded bias agree or clash with today's breadth? If no bias is recorded, say the plan does not state one",
-  "riskCheck": "one or two sentences judging the planned loss limit and contracts against the trader's own recent results, quoting the figures",
+  "riskCheck": "one or two sentences judging the planned loss limit and contracts against the trader's own recent results and against the room left in RISK CAPACITY, quoting the figures",
   "planGaps": ["short, specific weaknesses in this plan — missing levels, vague waiting-for, a stay-out rule that cannot be checked, and so on. Empty only if the plan is genuinely complete"],
   "watchFor": ["1-3 things worth the trader's attention at the open, phrased as process checks, never as predictions or entry advice"],
   "verdict": "one of ready, workable, shaky — ready means specific and coherent with both the data and the trader's history",
@@ -514,13 +738,70 @@ Be honest, not encouraging. A thin plan gets shaky even when the trader is keen.
   "motivation": "2 sentences. Specific to this trader and earned by their data. No slogans."
 }
 If today's end-of-day review has not been completed, say so plainly in whatHappened and tell them to complete it, because the discipline picture is incomplete without it.`,
+  planfield: `Return exactly this JSON:
+{
+  "field": "the field you were asked to draft: waitingFor or stayOutIf",
+  "suggestion": "the text for that field: 1-2 sentences, first person, as the trader would write it. Specific and checkable, naming the condition that matters rather than a vague intention",
+  "rationale": "1-2 sentences on why this suits THIS trader, quoting their own plan, results or repeated mistakes",
+  "basedOn": ["the specific journal facts and live levels you used, one per item"]
+}
+This is a draft, not a decision: the trader edits it before saving. The text must be something that can be checked while the session is running — a condition of the market, not a feeling.`,
+  planbuild: `Return exactly this JSON:
+{
+  "headline": "one sentence, under 16 words, on what today looks like to you",
+  "bias": "one of bullish, bearish, neutral, unsure",
+  "direction": "the side you would trade today: long, short, or skip",
+  "entry": "the level you would enter at, as a number taken from the live read or the journal's own levels, or null when you would skip",
+  "stop": "the level your stop would sit at, as a number, or null when you would skip",
+  "target": "the level you would aim for, as a number, or null when you would skip",
+  "contracts": "whole number of contracts that keeps entry-to-stop risk inside the planned loss limit",
+  "waitingFor": "1-2 first-person sentences: the condition you would wait for before entering",
+  "stayOutIf": "1-2 first-person sentences: what would keep you out",
+  "setups": ["names of setups from the trader's own playbook that fit today; empty only if none do"],
+  "levels": [{ "price": 0, "label": "overnight high" }],
+  "rationale": "3-4 sentences: the read, why that side, why that size, and plainly that this is your opinion and can be wrong",
+  "confidence": "one of low, medium, high",
+  "basedOn": ["each live number and journal fact you used, one per item"]
+}
+Every price you return must be a number you were handed. If the live read failed, return skip with null levels, say the read failed in the rationale, and still draft the waitingFor and stayOutIf text from the journal alone.`,
+  scalein: `Return exactly this JSON:
+{
+  "stance": "one of add, hold, do-not-add",
+  "addPrice": "the level you would add at, a number from the read or the journal, or null when the stance is hold or do-not-add",
+  "addContracts": "whole number of contracts to add, or null when the stance is hold or do-not-add",
+  "stopAfterAdd": "where the stop belongs after the add so the extra risk is bounded, or null",
+  "breakevenPrice": "the blended entry after that add, computed from the numbers you were given, or null",
+  "rationale": "3-4 sentences: why that stance, what it does to the position's average and to the day's risk, and that this is your opinion",
+  "risks": ["1-3 specific things that would make this add a mistake"]
+}
+The position's real numbers are in THE POSITION. Do the arithmetic from those numbers and show it in the rationale. Never suggest an add whose total risk, from the blended entry to the stop, exceeds the planned loss limit.`,
+  entrycall: `Return exactly this JSON:
+{
+  "direction": "the side you would take at this moment: long, short, or flat when you would not be in a trade",
+  "entry": "the level you would enter at, a number taken from the live read, or null when flat",
+  "stop": "the level your stop would sit at, a number, or null when flat",
+  "target": "the level you would aim for, a number, or null when flat",
+  "rationale": "2-3 sentences: what you read in the live numbers and why that side, stated as your opinion"
+}
+This is recorded beside the trader's own entry and compared with it later, so be specific and be honest about what the numbers do and do not show.`,
+};
+
+/**
+ * The extras a prompt may carry: the wire-level `CoachExtras` plus the two things only
+ * the server can attach — the live read it fetched, and the field's current text.
+ */
+export type CoachPromptExtras = CoachExtras & {
+  instrumentQuote?: InstrumentQuote;
+  /** What the trader has already typed in the field being drafted. */
+  currentFieldValue?: string;
 };
 
 export function buildCoachPrompt(
   mode: CoachMode,
   digest: JournalDigest,
   trade?: CoachTradeFacts,
-  marketBrief?: MarketBrief
+  marketBrief?: MarketBrief,
+  extras?: CoachPromptExtras
 ): { systemInstruction: string; userPrompt: string } {
   const context = formatDigestForPrompt(digest);
 
@@ -546,6 +827,27 @@ export function buildCoachPrompt(
         `one-sided against today's breadth. Judge the written plan only — never tell them to take, ` +
         `size or skip trades, and never predict where anything goes next. If the market read or the ` +
         `plan is missing something you need, say exactly that instead of guessing.`
+      : mode === 'planfield'
+      ? `The trader is stuck on one field of today's plan and asked you to draft it. Write the text ` +
+        `for that field only, in their voice, shaped by their own risk parameters, recent results and ` +
+        `repeated mistakes, and by the live levels when you have them. It is a draft they will edit.`
+      : mode === 'planbuild'
+      ? `The trader asked for a whole draft plan for today, in one go. Read their style from the ` +
+        `journal — instruments, sessions, setups, typical size, their risk limit and the mistakes they ` +
+        `actually repeat — then use the LIVE READ to make your own call: which side, where you would ` +
+        `enter, where the stop and target sit, and how many contracts keep that risk inside the ` +
+        `planned loss limit AND inside the room left in RISK CAPACITY. ` +
+        `Fill the plan fields too. State plainly that this is your opinion and can be wrong.`
+      : mode === 'scalein'
+      ? `The trader already has a position on and is considering adding to it. Give your own opinion ` +
+        `on whether to add, where, how much, and where the stop belongs after the add. Work from the ` +
+        `position's real numbers and the live read, keep the total risk inside the planned loss limit, ` +
+        `and remember that adding to a loser is usually how a small loss becomes the day's loss.`
+      : mode === 'entrycall'
+      ? `The trader has just recorded an entry and asked for your own call at that same moment. Say ` +
+        `which side you would be on right now, at what level, with what stop and target, from the live ` +
+        `read. Do not anchor to their direction: make your own read, and be willing to be on the other ` +
+        `side of them.`
       : `Critique the single trade described below. Judge the decision and the execution separately. ` +
         `Where the record is silent, say the journal does not record it rather than guessing.`;
 
@@ -563,14 +865,37 @@ export function buildCoachPrompt(
       ? `\n\n${formatMarketBriefForPrompt(marketBrief)}`
       : '';
 
-  const userPrompt = `${context}${marketBlock}${tradeBlock}
+  // The live futures read goes to the opinion modes and nowhere else, for the same
+  // reason: it is the one dataset their narrowed guardrails allow them to quote.
+  const instrumentBlock =
+    allowsMarketOpinion(mode) && extras?.instrumentQuote
+      ? `\n\n${formatInstrumentQuoteForPrompt(extras.instrumentQuote)}`
+      : '';
 
-=== YOUR TASK ===
-${task}
+  // Same per-mode gating again: a position is only ever injected into the scale-in
+  // prompt, an entry only into the entry-call prompt, and the field request only into
+  // the field prompt.
+  const positionBlock =
+    mode === 'scalein' && extras?.position
+      ? `\n\n${formatPositionForPrompt(extras.position)}`
+      : '';
+  const entryBlock =
+    mode === 'entrycall' && extras?.entry
+      ? `\n\n${formatEntryForPrompt(extras.entry)}`
+      : '';
+  const fieldBlock =
+    mode === 'planfield' && extras?.field
+      ? `\n\n${formatPlanFieldRequest(extras.field, extras.currentFieldValue)}`
+      : '';
 
-${COACH_RESPONSE_SHAPES[mode]}`;
+  const userPrompt =
+    `${context}${marketBlock}${instrumentBlock}${tradeBlock}${positionBlock}${entryBlock}${fieldBlock}` +
+    `\n\n=== YOUR TASK ===\n${task}\n\n${COACH_RESPONSE_SHAPES[mode]}`;
 
-  return { systemInstruction: coachGuardrails(mode === 'planreview'), userPrompt };
+  return {
+    systemInstruction: coachGuardrails(mode === 'planreview', allowsMarketOpinion(mode)),
+    userPrompt,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -594,12 +919,67 @@ function asTextList(value: unknown, field: string): string[] {
 }
 
 /**
+ * A price the model returned, or null.
+ *
+ * Models wrap numbers in currency strings and quotes often enough that accepting
+ * `"7,740.25"` is worth the tolerance; anything that is not a number after that is an
+ * error rather than a silent zero, because a wrong level is worse than a missing one.
+ */
+function asNumberOrNull(value: unknown, field: string): number | null {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value.replace(/[$,%\s]/g, ''));
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  throw new Error(`Coach response field "${field}" must be a number or null.`);
+}
+
+/** A whole contract count, never below 1: zero contracts is not a plan. */
+function asPositiveInt(value: unknown, field: string, fallback: number): number {
+  const parsed = asNumberOrNull(value, field);
+  if (parsed === null) return fallback;
+  return Math.max(1, Math.round(parsed));
+}
+
+function asEnum<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
+  const raw = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return (allowed as readonly string[]).includes(raw) ? (raw as T) : fallback;
+}
+
+/** Levels the draft plan wants marked; anything without a usable price is dropped. */
+function asLevels(value: unknown): PlannedLevel[] {
+  if (!Array.isArray(value)) return [];
+  const levels: PlannedLevel[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== 'object') continue;
+    const record = item as Record<string, unknown>;
+    let price: number | null = null;
+    try {
+      price = asNumberOrNull(record.price, 'levels.price');
+    } catch {
+      price = null;
+    }
+    if (price === null) continue;
+    levels.push({
+      price,
+      label: typeof record.label === 'string' ? record.label.trim() : '',
+    });
+  }
+  return levels;
+}
+
+/**
  * Validates the model's JSON into a known shape.
  *
  * Throws with a readable message rather than returning partial data, so the UI can
  * tell the trader the coach produced something unusable instead of rendering holes.
  */
-export function parseCoachResponse(mode: CoachMode, raw: unknown): CoachResponse {
+export function parseCoachResponse(
+  mode: CoachMode,
+  raw: unknown,
+  extras?: CoachExtras
+): CoachResponse {
   let parsed: unknown = raw;
 
   // Models sometimes wrap JSON in a code fence despite instructions.
@@ -686,6 +1066,67 @@ export function parseCoachResponse(mode: CoachMode, raw: unknown): CoachResponse
       rulesBroken: asTextList(obj.rulesBroken, 'rulesBroken'),
       tomorrowAction: asText(obj.tomorrowAction, 'tomorrowAction'),
       motivation: asText(obj.motivation, 'motivation'),
+    };
+  }
+
+  if (mode === 'planfield') {
+    // The trader asked for one specific field. Whatever the model labelled its answer,
+    // the text is applied to the field that was actually requested, so a mislabelled
+    // response can never write into the wrong field.
+    const asked = extras?.field;
+    const returned = asEnum(obj.field, ['waitingFor', 'stayOutIf'] as const, 'waitingFor');
+    return {
+      field: asked ?? returned,
+      suggestion: asText(obj.suggestion, 'suggestion'),
+      rationale: asText(obj.rationale, 'rationale'),
+      basedOn: asTextList(obj.basedOn, 'basedOn'),
+    };
+  }
+
+  if (mode === 'planbuild') {
+    return {
+      headline: asText(obj.headline, 'headline'),
+      bias: asEnum(obj.bias, ['bullish', 'bearish', 'neutral', 'unsure'] as const, 'unsure'),
+      direction: asEnum(obj.direction, ['long', 'short', 'skip'] as const, 'skip'),
+      entry: asNumberOrNull(obj.entry, 'entry'),
+      stop: asNumberOrNull(obj.stop, 'stop'),
+      target: asNumberOrNull(obj.target, 'target'),
+      contracts: asPositiveInt(obj.contracts, 'contracts', 1),
+      waitingFor: asText(obj.waitingFor, 'waitingFor'),
+      stayOutIf: asText(obj.stayOutIf, 'stayOutIf'),
+      setups: asTextList(obj.setups, 'setups'),
+      levels: asLevels(obj.levels),
+      rationale: asText(obj.rationale, 'rationale'),
+      confidence: asEnum(obj.confidence, ['low', 'medium', 'high'] as const, 'low'),
+      basedOn: asTextList(obj.basedOn, 'basedOn'),
+    };
+  }
+
+  if (mode === 'scalein') {
+    const stance = asEnum(obj.stance, ['add', 'hold', 'do-not-add'] as const, 'hold');
+    // A 'hold' or 'do-not-add' with levels attached would render an add the coach did
+    // not actually ask for, so the levels are dropped rather than trusted.
+    const adding = stance === 'add';
+    return {
+      stance,
+      addPrice: adding ? asNumberOrNull(obj.addPrice, 'addPrice') : null,
+      addContracts: adding ? asNumberOrNull(obj.addContracts, 'addContracts') : null,
+      stopAfterAdd: adding ? asNumberOrNull(obj.stopAfterAdd, 'stopAfterAdd') : null,
+      breakevenPrice: asNumberOrNull(obj.breakevenPrice, 'breakevenPrice'),
+      rationale: asText(obj.rationale, 'rationale'),
+      risks: asTextList(obj.risks, 'risks'),
+    };
+  }
+
+  if (mode === 'entrycall') {
+    const direction = asEnum(obj.direction, ['long', 'short', 'flat'] as const, 'flat');
+    const inTrade = direction !== 'flat';
+    return {
+      direction,
+      entry: inTrade ? asNumberOrNull(obj.entry, 'entry') : null,
+      stop: inTrade ? asNumberOrNull(obj.stop, 'stop') : null,
+      target: inTrade ? asNumberOrNull(obj.target, 'target') : null,
+      rationale: asText(obj.rationale, 'rationale'),
     };
   }
 

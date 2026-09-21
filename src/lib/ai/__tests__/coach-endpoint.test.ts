@@ -55,11 +55,22 @@ describe('isRetryable', () => {
 });
 
 describe('mode coverage', () => {
-  it('keeps the runtime mode list in step with the six supported modes', () => {
+  it('keeps the runtime mode list in step with the supported modes', () => {
     // COACH_MODES is a plain array because the union lives in a types-only module, so
     // this is what stops the two drifting apart.
     expect([...COACH_MODES].sort()).toEqual(
-      ['brief', 'planreview', 'postclose', 'prep', 'trade', 'weekly'].sort()
+      [
+        'brief',
+        'planreview',
+        'postclose',
+        'prep',
+        'trade',
+        'weekly',
+        'planfield',
+        'planbuild',
+        'scalein',
+        'entrycall',
+      ].sort()
     );
   });
 });

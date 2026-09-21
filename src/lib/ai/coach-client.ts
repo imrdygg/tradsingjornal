@@ -6,7 +6,8 @@ import {
   findPositionGroup,
   TradePositionGroup,
 } from '../trading/position-groups';
-import type { CoachMode, CoachResponse, CoachTradeFacts } from './coach-types';
+import type { CoachExtras, CoachMode, CoachResponse, CoachTradeFacts } from './coach-types';
+import type { InstrumentQuote } from './market-data';
 import type { JournalDigest } from './journal-digest';
 
 /**
@@ -27,7 +28,16 @@ export type CoachErrorCode =
   | 'server';
 
 export type CoachResult =
-  | { ok: true; data: CoachResponse }
+  | {
+      ok: true;
+      data: CoachResponse;
+      /**
+       * The live read the server fetched for this answer, when the mode uses one. It is
+       * returned so the caller can record the market the call was made against instead
+       * of asking the provider for the same number twice.
+       */
+      instrument?: InstrumentQuote;
+    }
   | { ok: false; code: CoachErrorCode; message: string };
 
 /** How long to wait before giving up on the coach. */
@@ -196,15 +206,30 @@ async function authHeaders(): Promise<Record<string, string>> {
   }
 }
 
+/**
+ * Modes where the server fetches live data before calling the model, so the round trip
+ * is a market fetch plus a generation and needs more room before it is abandoned.
+ */
+const MODES_WITH_LIVE_FETCH: readonly CoachMode[] = [
+  'planreview',
+  'planfield',
+  'planbuild',
+  'scalein',
+  'entrycall',
+];
+
 export async function requestCoach(
   mode: CoachMode,
   digest: JournalDigest,
-  trade?: CoachTradeFacts
+  trade?: CoachTradeFacts,
+  extras?: CoachExtras & { currentFieldValue?: string }
 ): Promise<CoachResult> {
   const controller = new AbortController();
-  // The planreview opinion adds a market fetch to the coach round trip, so it gets a
+  // Opinion and review modes add a market fetch to the coach round trip, so they get a
   // little longer before the request is abandoned.
-  const timeoutMs = mode === 'planreview' ? REQUEST_TIMEOUT_MS + 15_000 : REQUEST_TIMEOUT_MS;
+  const timeoutMs = MODES_WITH_LIVE_FETCH.includes(mode)
+    ? REQUEST_TIMEOUT_MS + 15_000
+    : REQUEST_TIMEOUT_MS;
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   const auth = await authHeaders();
 
@@ -213,7 +238,7 @@ export async function requestCoach(
     res = await fetch('/api/coach', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...auth },
-      body: JSON.stringify({ mode, digest, trade }),
+      body: JSON.stringify({ mode, digest, trade, extras }),
       signal: controller.signal,
     });
   } catch (err) {
@@ -228,6 +253,8 @@ export async function requestCoach(
           : 'The coach took too long to answer and the request was stopped. Try again.'
         : mode === 'planreview'
         ? 'Could not reach the coach service to review the plan. Check your connection and try again.'
+        : mode === 'entrycall'
+        ? 'Could not reach the coach service to record its call on this entry.'
         : 'Could not reach the coach service. Check your connection and try again.',
     };
   }
@@ -287,5 +314,11 @@ export async function requestCoach(
     };
   }
 
-  return { ok: true, data: data as CoachResponse };
+  const instrument = payload?.instrument;
+  return {
+    ok: true,
+    data: data as CoachResponse,
+    instrument:
+      instrument && typeof instrument === 'object' ? (instrument as InstrumentQuote) : undefined,
+  };
 }

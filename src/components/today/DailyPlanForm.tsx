@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Lock,
   Unlock,
@@ -13,6 +13,9 @@ import {
   ImageIcon,
   Calendar,
   BookOpen,
+  Scale,
+  ChevronDown,
+  AlertTriangle,
 } from 'lucide-react';
 import {
   TradingDay,
@@ -22,6 +25,7 @@ import {
   Setup,
   Instrument,
   Trade,
+  ImportantLevel,
 } from '../../types';
 import { ImportantLevelsEditor } from './ImportantLevelsEditor';
 import { PlanChangeDialog } from './PlanChangeDialog';
@@ -29,6 +33,15 @@ import { formatTimestamp } from '../../lib/storage/date-utils';
 import { instrumentSymbol } from '../../lib/trading/instruments';
 import { ImageLightboxModal } from '../common/ImageLightboxModal';
 import { MesScaleInBreakevenCalculator } from './MesScaleInBreakevenCalculator';
+import { PlanFieldCoach } from './PlanFieldCoach';
+import { PlanBuilderPanel } from './PlanBuilderPanel';
+import type { PlanCoachContext } from '../../lib/ai/plan-coach';
+import type { PlanBuildResponse } from '../../lib/ai/coach-types';
+import {
+  drawdownShortfall,
+  type PlannedSizeRisk,
+  type RiskCapacity,
+} from '../../lib/analytics/risk-capacity';
 
 interface DailyPlanFormProps {
   day: TradingDay;
@@ -52,6 +65,26 @@ interface DailyPlanFormProps {
   onLogScaleInTrade?: (draft: Partial<Trade>) => void;
   /** Undoes today's plan lock, recording the reason in the audit trail. */
   onUnlockPlan?: (reason?: string) => void;
+  /**
+   * Everything the coach needs to draft plan text. Absent means no coach is offered, so
+   * the form renders exactly as it did before the coach existed.
+   */
+  coachContext?: PlanCoachContext;
+  /**
+   * The account's remaining drawdown room, when the caller can supply it.
+   *
+   * Used only to warn: setting a daily loss limit larger than the room left is a plan that
+   * cannot be absorbed, and the two numbers are otherwise never on screen together. Absent
+   * means no warning is shown, so the form still works without an account limit.
+   */
+  drawdownCapacity?: RiskCapacity | null;
+  /**
+   * The day's planned size measured against that room, when it does not fit.
+   *
+   * Computed by the caller from the same capacity, so the warning beside the size field and
+   * the warning above the form can never disagree about the same position.
+   */
+  plannedSizeRisk?: PlannedSizeRisk | null;
 }
 
 export const DailyPlanForm: React.FC<DailyPlanFormProps> = ({
@@ -66,9 +99,28 @@ export const DailyPlanForm: React.FC<DailyPlanFormProps> = ({
   onOpenPlaybook,
   onLogScaleInTrade,
   onUnlockPlan,
+  coachContext,
+  drawdownCapacity,
+  plannedSizeRisk,
 }) => {
   const isLocked = !!day.lockedAt;
   const [isUnlockDialogOpen, setIsUnlockDialogOpen] = useState(false);
+
+  // The day's limit measured against the account's floor, or null when the plan fits.
+  const planShortfall = drawdownShortfall(drawdownCapacity ?? null, day.plannedLossLimit);
+  // The scale-in calculator is opt-in. It folds itself away unless a position is actually
+  // on, because that is the only situation where an add is possible, so a
+  // one-or-two-trade day is not carrying a calculator it will never use.
+  const [scaleInOpen, setScaleInOpen] = useState(() => (openTrades?.length ?? 0) > 0);
+  /** Set once the trader folds or unfolds it themselves, after which it is left alone. */
+  const [scaleInTouched, setScaleInTouched] = useState(false);
+  const hasOpenPosition = (openTrades?.length ?? 0) > 0;
+
+  // Open it when the first position appears — the moment the tool becomes relevant —
+  // but never re-open it over a trader who has deliberately closed it.
+  useEffect(() => {
+    if (hasOpenPosition && !scaleInTouched) setScaleInOpen(true);
+  }, [hasOpenPosition, scaleInTouched]);
 
   // State for pending plan change dialog
   const [changeDialogState, setChangeDialogState] = useState<{
@@ -156,6 +208,39 @@ export const DailyPlanForm: React.FC<DailyPlanFormProps> = ({
       : [...current, name];
 
     onSaveDay({ ...day, watchedSetups: next });
+  };
+
+  /**
+   * Writes a coach draft into the plan.
+   *
+   * The setup names are matched back to the trader's own catalog so a suggested name is
+   * stored with the spelling the chips and the playbook use; a name the catalog does not
+   * know is dropped rather than injected as a set-up that cannot be opened. Levels get
+   * fresh ids, and everything the draft does not speak to is left exactly as it was.
+   */
+  const applyCoachDraft = (draft: PlanBuildResponse) => {
+    const canonicalSetups = setups
+      .filter((setup) =>
+        draft.setups.some((name) => name.trim().toLowerCase() === setup.name.toLowerCase())
+      )
+      .map((setup) => setup.name);
+
+    const levels: ImportantLevel[] = draft.levels.map((level, index) => ({
+      id: `level-coach-${Date.now()}-${index}`,
+      tradingDayId: day.id,
+      price: level.price,
+      label: level.label || undefined,
+    }));
+
+    onSaveDay({
+      ...day,
+      marketBias: draft.bias,
+      contractsPlanned: draft.contracts,
+      watchedSetups: canonicalSetups.length ? canonicalSetups : day.watchedSetups,
+      waitingFor: draft.waitingFor,
+      stayOutIf: draft.stayOutIf,
+      importantLevels: levels.length ? levels : day.importantLevels,
+    });
   };
 
   return (
@@ -318,6 +403,35 @@ export const DailyPlanForm: React.FC<DailyPlanFormProps> = ({
               }}
               className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none"
             />
+
+            {/*
+              The day's limit against the account's floor. Deliberately a warning and not a
+              block: the trader may be deliberately spending the last of the room on a setup
+              they have waited for, and a form that refuses that is a form they would work
+              around.
+
+              Kept to one line because the full account readout sits directly above this
+              form; this is the note at the moment the number is typed.
+            */}
+            {planShortfall && (
+              <p
+                className="flex items-start gap-1.5 text-[10px] leading-relaxed text-rose-300"
+                role="alert"
+                data-testid="plan-drawdown-warning"
+              >
+                <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-rose-400" />
+                <span>
+                  {planShortfall.limitReached
+                    ? `The agreed drawdown is already spent, so this limit has no room behind it.`
+                    : `$${planShortfall.over.toFixed(
+                        2
+                      )} more than the $${planShortfall.headroom.toFixed(
+                        2
+                      )} of drawdown room left — a full losing day at this plan would take the ` +
+                      `account through the agreed drawdown.`}
+                </span>
+              </p>
+            )}
           </div>
 
           {/* Planned Contracts */}
@@ -344,6 +458,31 @@ export const DailyPlanForm: React.FC<DailyPlanFormProps> = ({
               }}
               className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none"
             />
+
+            {/*
+              The size, priced at the trader's own stop distance. Sits beside the contracts
+              field because that is the number it is about: a size that fits the day's loss
+              limit can still be more than the account has room to absorb.
+            */}
+            {plannedSizeRisk && (
+              <p
+                className="flex items-start gap-1.5 text-[10px] leading-relaxed text-rose-300"
+                role="alert"
+                data-testid="plan-size-drawdown-warning"
+              >
+                <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-rose-400" />
+                <span>
+                  {plannedSizeRisk.contracts} {plannedSizeRisk.symbol} at your{' '}
+                  {plannedSizeRisk.stopPoints}-point stop risks{' '}
+                  ${plannedSizeRisk.dollarsAtRisk.toFixed(2)} if the stop is honoured —{' '}
+                  ${plannedSizeRisk.over.toFixed(2)} more than the ${' '}
+                  {plannedSizeRisk.headroom.toFixed(2)} of drawdown room left.{' '}
+                  {plannedSizeRisk.stopSource === 'open-position'
+                    ? `Distance taken from your open ${plannedSizeRisk.symbol} position.`
+                    : `Distance from your median across ${plannedSizeRisk.stopSample} recent ${plannedSizeRisk.symbol} trades.`}
+                </span>
+              </p>
+            )}
           </div>
 
           {/* Primary Instrument */}
@@ -434,6 +573,16 @@ export const DailyPlanForm: React.FC<DailyPlanFormProps> = ({
           <TrendingUp className="w-4 h-4 text-zinc-300" />
           2. Market Plan
         </h3>
+
+        {/* One-click draft plan. Only before the lock: a locked plan's fields each need a
+            recorded reason, which a whole-draft overwrite cannot honestly produce. */}
+        {coachContext && (
+          <PlanBuilderPanel
+            context={coachContext}
+            disabled={isLocked}
+            onApply={applyCoachDraft}
+          />
+        )}
 
         {/* Sessions & Bias */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -580,6 +729,14 @@ export const DailyPlanForm: React.FC<DailyPlanFormProps> = ({
               placeholder="E.g. Clean test and rejection of overnight low with volume delta confirmation..."
               className="w-full rounded-xl border border-zinc-800 bg-zinc-950 p-3 text-xs text-zinc-100 placeholder-zinc-500 focus:border-zinc-600 focus:outline-none"
             />
+            {coachContext && (
+              <PlanFieldCoach
+                field="waitingFor"
+                currentValue={day.waitingFor || ''}
+                context={coachContext}
+                onApply={(text) => onSaveDay({ ...day, waitingFor: text })}
+              />
+            )}
           </div>
 
           <div className="space-y-1.5">
@@ -593,6 +750,14 @@ export const DailyPlanForm: React.FC<DailyPlanFormProps> = ({
               placeholder="E.g. Price chopping inside the 20-point opening range; immediate high-impact CPI release..."
               className="w-full rounded-xl border border-zinc-800 bg-zinc-950 p-3 text-xs text-zinc-100 placeholder-zinc-500 focus:border-zinc-600 focus:outline-none"
             />
+            {coachContext && (
+              <PlanFieldCoach
+                field="stayOutIf"
+                currentValue={day.stayOutIf || ''}
+                context={coachContext}
+                onApply={(text) => onSaveDay({ ...day, stayOutIf: text })}
+              />
+            )}
           </div>
         </div>
 
@@ -612,14 +777,55 @@ export const DailyPlanForm: React.FC<DailyPlanFormProps> = ({
         </div>
       </div>
 
-      {/* 3. Position Scaling & Breakeven Calculator */}
-      <div className="pt-2 border-t border-zinc-800/80">
-        <MesScaleInBreakevenCalculator
-          openTrades={openTrades}
-          plannedLossLimit={day.plannedLossLimit || 100}
-          instruments={instruments}
-          onLogScaleIn={onLogScaleInTrade}
-        />
+      {/*
+        3. Position scaling — opt-in.
+
+        Most days never add to a position, so the calculator is folded away unless a
+        position is actually on. It stays a real, always-available tool rather than a
+        step in the plan: nothing here is required before locking.
+      */}
+      <div className="pt-2 border-t border-zinc-800/80 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="space-y-0.5 min-w-0">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 font-mono flex items-center gap-1.5">
+              <Scale className="w-4 h-4 text-zinc-300" />
+              3. Position scaling
+              <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] font-medium normal-case text-zinc-400 border border-zinc-700">
+                optional
+              </span>
+            </h3>
+            <p className="text-[11px] text-zinc-500 leading-relaxed">
+              {openTrades && openTrades.length > 0
+                ? `${openTrades.length} open position${openTrades.length === 1 ? '' : 's'} today — open this only if you are considering an add.`
+                : 'Only needed when you plan to add to a position. A one-or-two-trade day can skip it entirely.'}
+            </p>
+          </div>
+          <button
+            type="button"
+            id="toggle-scale-in"
+            onClick={() => {
+              setScaleInTouched(true);
+              setScaleInOpen((open) => !open);
+            }}
+            aria-expanded={scaleInOpen}
+            className="shrink-0 inline-flex items-center gap-1.5 rounded-xl border border-zinc-700 bg-zinc-800/80 hover:bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-200 transition-colors"
+          >
+            <ChevronDown
+              className={`w-3.5 h-3.5 transition-transform ${scaleInOpen ? '' : '-rotate-90'}`}
+            />
+            {scaleInOpen ? 'Hide scale-in calculator' : 'Scale in / add to a position'}
+          </button>
+        </div>
+
+        {scaleInOpen && (
+          <MesScaleInBreakevenCalculator
+            openTrades={openTrades}
+            plannedLossLimit={day.plannedLossLimit || 100}
+            instruments={instruments}
+            onLogScaleIn={onLogScaleInTrade}
+            coachContext={coachContext}
+          />
+        )}
       </div>
 
       {/* Plan Changes Audit History (if any recorded changes exist) */}

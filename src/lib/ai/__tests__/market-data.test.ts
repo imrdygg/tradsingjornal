@@ -1,7 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   SECTOR_ETFS,
+  futuresQuoteSymbol,
+  getInstrumentQuote,
   getMarketBrief,
+  formatInstrumentQuoteForPrompt,
+  resetInstrumentQuoteCache,
   resetMarketCache,
   heatBand,
   formatSignedPercent,
@@ -53,6 +57,7 @@ const okJson = yahooPayload(0.82, 189.6, 188.06);
 
 beforeEach(() => {
   resetMarketCache();
+  resetInstrumentQuoteCache();
   vi.restoreAllMocks();
 });
 
@@ -193,5 +198,128 @@ describe('formatMarketBriefForPrompt', () => {
     const text = formatMarketBriefForPrompt(failed);
     expect(text).toContain('DATA STATUS: unavailable');
     expect(text).toContain('could not be loaded');
+  });
+});
+
+describe('futuresQuoteSymbol', () => {
+  it('maps the journal’s instrument names to the provider’s front-month contract', () => {
+    expect(futuresQuoteSymbol('MES')).toBe('MES=F');
+    expect(futuresQuoteSymbol('mnq')).toBe('MNQ=F');
+    expect(futuresQuoteSymbol('  es  ')).toBe('ES=F');
+  });
+
+  it('refuses to guess a ticker it does not know', () => {
+    // A wrong guess would put another market's price in front of the coach, so an
+    // unmapped symbol has to fail rather than fall back to anything.
+    expect(futuresQuoteSymbol('TSLA')).toBeNull();
+    expect(futuresQuoteSymbol('')).toBeNull();
+  });
+});
+
+describe('getInstrumentQuote', () => {
+  function instrumentPayload(price: number, prevClose: number) {
+    return JSON.stringify({
+      chart: {
+        result: [
+          {
+            meta: {
+              symbol: 'MES=F',
+              regularMarketPrice: price,
+              chartPreviousClose: prevClose,
+              regularMarketDayHigh: price + 4,
+              regularMarketDayLow: price - 10,
+              regularMarketVolume: 58591,
+            },
+          },
+        ],
+        error: null,
+      },
+    });
+  }
+
+  it('returns the price, day range and change from the live read', async () => {
+    installFetch(() => ({ status: 200, text: instrumentPayload(7740, 7712.5) }));
+
+    const quote = await getInstrumentQuote('MES');
+    expect(quote.ok).toBe(true);
+    expect(quote.symbol).toBe('MES');
+    expect(quote.yahooSymbol).toBe('MES=F');
+    expect(quote.price).toBe(7740);
+    expect(quote.dayHigh).toBe(7744);
+    expect(quote.dayLow).toBe(7730);
+    expect(quote.volume).toBe(58591);
+    // (7740 - 7712.5) / 7712.5 * 100
+    expect(quote.changePercent).toBeCloseTo(0.36, 1);
+  });
+
+  it('degrades to ok:false with a reason when the provider is down', async () => {
+    installFetch(() => ({ status: 503, text: 'unavailable' }));
+
+    const quote = await getInstrumentQuote('MES');
+    expect(quote.ok).toBe(false);
+    expect(quote.price).toBeNull();
+    expect(quote.note).toMatch(/could not be loaded/i);
+  });
+
+  it('says so plainly when the symbol has no live source at all', async () => {
+    const quote = await getInstrumentQuote('NOPE');
+    expect(quote.ok).toBe(false);
+    expect(quote.yahooSymbol).toBeNull();
+    expect(quote.note).toMatch(/no live quote source/i);
+  });
+
+  it('serves a repeated read from the cache instead of refetching', async () => {
+    let fetchCount = 0;
+    installFetch(() => {
+      fetchCount += 1;
+      return { status: 200, text: instrumentPayload(7740, 7712.5) };
+    });
+
+    await getInstrumentQuote('MES');
+    const first = fetchCount;
+    await getInstrumentQuote('MES');
+    expect(fetchCount).toBe(first);
+  });
+});
+
+describe('formatInstrumentQuoteForPrompt', () => {
+  it('hands the model only numbers it is allowed to quote', () => {
+    const text = formatInstrumentQuoteForPrompt({
+      ok: true,
+      symbol: 'MES',
+      yahooSymbol: 'MES=F',
+      price: 7740,
+      previousClose: 7712.5,
+      changePercent: 0.36,
+      dayHigh: 7744,
+      dayLow: 7730,
+      volume: 58591,
+      fetchedAt: new Date().toISOString(),
+    });
+
+    expect(text).toContain('LIVE READ: MES');
+    expect(text).toContain('7,740.00');
+    expect(text).toContain('7,730.00 to 7,744.00');
+    expect(text).toContain('+0.36%');
+    expect(text).toContain('These are the only prices you have');
+  });
+
+  it('forbids a direction or level when the read failed', () => {
+    const text = formatInstrumentQuoteForPrompt({
+      ok: false,
+      symbol: 'MES',
+      yahooSymbol: 'MES=F',
+      price: null,
+      previousClose: null,
+      changePercent: null,
+      dayHigh: null,
+      dayLow: null,
+      volume: null,
+      fetchedAt: new Date().toISOString(),
+      note: 'Live data for MES could not be loaded right now.',
+    });
+
+    expect(text).toContain('DATA STATUS: unavailable');
+    expect(text).toContain('do not state, estimate or recall any price');
   });
 });

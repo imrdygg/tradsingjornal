@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
+  allowsMarketOpinion,
   buildCoachPrompt,
   COACH_GUARDRAILS,
   COACH_MODES,
+  COACH_OPINION_MODES,
   COACH_RESPONSE_SHAPES,
   formatDigestForPrompt,
   formatTradeForPrompt,
@@ -134,8 +136,8 @@ describe('coach guardrails', () => {
 });
 
 describe('isCoachMode', () => {
-  it('accepts the six real modes and nothing else', () => {
-    for (const mode of ['brief', 'weekly', 'trade', 'prep', 'postclose', 'planreview']) {
+  it('accepts every real mode and nothing else', () => {
+    for (const mode of COACH_MODES) {
       expect(isCoachMode(mode)).toBe(true);
     }
     expect(isCoachMode('market')).toBe(false);
@@ -604,5 +606,280 @@ describe('behaviour section in the prompt', () => {
         'BEHAVIOUR, READ FROM THEIR OWN TIMESTAMPS AND SIZES'
       );
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The opinion modes: the one deliberate departure from "never comment on the market",
+// scoped to the four modes where the trader explicitly asks for a call on their own
+// instrument. Everything that keeps that departure honest is asserted here.
+// ---------------------------------------------------------------------------
+
+const liveRead = {
+  ok: true,
+  symbol: 'MES',
+  yahooSymbol: 'MES=F',
+  price: 7740,
+  previousClose: 7712.5,
+  changePercent: 0.36,
+  dayHigh: 7744,
+  dayLow: 7730,
+  volume: 58591,
+  fetchedAt: new Date().toISOString(),
+};
+
+const position = {
+  symbol: 'MES',
+  direction: 'long' as const,
+  contracts: 1,
+  entryPrice: 7730,
+  initialStop: 7710,
+  currentPrice: 7700,
+  addContracts: 2,
+  addPrice: 7700,
+  plannedLossLimit: 100,
+};
+
+const entry = {
+  symbol: 'MES',
+  direction: 'long' as const,
+  contracts: 1,
+  entryPrice: 7740,
+  initialStop: 7730,
+  setupName: 'Breakout',
+  session: 'Regular Session',
+};
+
+describe('opinion modes', () => {
+  it('is an explicit list, so a stray mode can never inherit the market allowance', () => {
+    expect(allowsMarketOpinion('planbuild')).toBe(true);
+    expect(allowsMarketOpinion('entrycall')).toBe(true);
+    expect(allowsMarketOpinion('scalein')).toBe(true);
+    expect(allowsMarketOpinion('planfield')).toBe(true);
+    expect(allowsMarketOpinion('planreview')).toBe(false);
+    expect(allowsMarketOpinion('brief')).toBe(false);
+  });
+
+  it('narrows the ban on market claims instead of replacing it', () => {
+    const { systemInstruction } = buildCoachPrompt('planbuild', digestFor(), undefined, undefined, {
+      instrumentQuote: liveRead,
+    });
+    expect(systemInstruction).toContain('NO MARKET DATA');
+    expect(systemInstruction).toContain('YOUR OPINION WAS ASKED FOR');
+    expect(systemInstruction).toContain('STANDING ASIDE IS A REAL ANSWER');
+    expect(systemInstruction).toContain('SIZE MUST RESPECT THEIR RISK');
+    // And the modes that did not ask keep the strict rules untouched.
+    expect(buildCoachPrompt('brief', digestFor()).systemInstruction).toBe(COACH_GUARDRAILS);
+  });
+
+  it('attaches the live read to the opinion modes and to nothing else', () => {
+    const withRead = buildCoachPrompt('planbuild', digestFor(), undefined, undefined, {
+      instrumentQuote: liveRead,
+    });
+    expect(withRead.userPrompt).toContain('LIVE READ: MES');
+    expect(withRead.userPrompt).toContain('7,740.00');
+
+    for (const mode of ['brief', 'weekly', 'prep', 'postclose', 'trade', 'planreview'] as const) {
+      const other = buildCoachPrompt(mode, digestFor(), undefined, undefined, {
+        instrumentQuote: liveRead,
+      });
+      expect(other.userPrompt).not.toContain('LIVE READ: MES');
+    }
+  });
+
+  it('injects the position only into the scale-in prompt', () => {
+    const { userPrompt } = buildCoachPrompt('scalein', digestFor(), undefined, undefined, {
+      position,
+    });
+    expect(userPrompt).toContain('=== THE POSITION ===');
+    expect(userPrompt).toContain('1 MES, LONG, entry 7,730.00, initial stop 7,710.00');
+    // The arithmetic is done here, so the model cannot mis-state the blended entry:
+    // 1 @ 7730 plus 2 @ 7700 blends to 3 contracts at 7710.
+    expect(userPrompt).toContain('blended entry of 7,710.00');
+
+    for (const mode of ['brief', 'planbuild', 'entrycall'] as const) {
+      expect(
+        buildCoachPrompt(mode, digestFor(), undefined, undefined, { position }).userPrompt
+      ).not.toContain('=== THE POSITION ===');
+    }
+  });
+
+  it('injects the entry only into the entry-call prompt, and asks for an independent call', () => {
+    const { userPrompt } = buildCoachPrompt('entrycall', digestFor(), undefined, undefined, {
+      entry,
+    });
+    expect(userPrompt).toContain('=== THE ENTRY THE TRADER JUST RECORDED ===');
+    expect(userPrompt).toContain('do not simply agree with them');
+
+    for (const mode of ['brief', 'scalein', 'planbuild'] as const) {
+      expect(
+        buildCoachPrompt(mode, digestFor(), undefined, undefined, { entry }).userPrompt
+      ).not.toContain('THE ENTRY THE TRADER JUST RECORDED');
+    }
+  });
+
+  it('injects the field request only into the plan-field prompt', () => {
+    const { userPrompt } = buildCoachPrompt('planfield', digestFor(), undefined, undefined, {
+      field: 'stayOutIf',
+      currentFieldValue: 'no chop',
+    });
+    expect(userPrompt).toContain('=== THE FIELD TO DRAFT ===');
+    expect(userPrompt).toContain('What will keep me out of a trade?');
+    expect(userPrompt).toContain('no chop');
+
+    expect(
+      buildCoachPrompt('brief', digestFor(), undefined, undefined, { field: 'stayOutIf' })
+        .userPrompt
+    ).not.toContain('=== THE FIELD TO DRAFT ===');
+  });
+
+  it('tells the model to stand aside when the live read failed', () => {
+    expect(COACH_RESPONSE_SHAPES.planbuild).toContain('return skip with null levels');
+    expect(COACH_RESPONSE_SHAPES.entrycall).toContain('flat when you would not be in a trade');
+  });
+
+  it('parses a planbuild draft and normalises a nonsense enum', () => {
+    const parsed = parseCoachResponse('planbuild', {
+      headline: 'Two-sided, lean long above the prior close',
+      bias: 'BULLISH',
+      direction: 'long',
+      entry: '7740.00',
+      stop: 7730,
+      target: null,
+      contracts: 2.4,
+      waitingFor: 'Hold above the prior close on the first pullback.',
+      stayOutIf: 'Any break back below the overnight low.',
+      setups: ['Breakout', 42],
+      levels: [
+        { price: 7744, label: 'day high' },
+        { price: 'not a number', label: 'junk' },
+        'garbage',
+      ],
+      rationale: 'The read shows strength; this can still be wrong.',
+      confidence: 'excellent',
+      basedOn: ['live MES 7740.00'],
+    }) as {
+      bias: string;
+      entry: number | null;
+      contracts: number;
+      confidence: string;
+      setups: string[];
+      levels: Array<{ price: number; label: string }>;
+    };
+
+    expect(parsed.bias).toBe('bullish');
+    // A currency-formatted entry is accepted; anything unreadable would have thrown.
+    expect(parsed.entry).toBe(7740);
+    // Contracts are whole numbers, and never zero.
+    expect(parsed.contracts).toBe(2);
+    // An unknown confidence is reported as low rather than passed through.
+    expect(parsed.confidence).toBe('low');
+    expect(parsed.setups).toEqual(['Breakout']);
+    expect(parsed.levels).toEqual([{ price: 7744, label: 'day high' }]);
+  });
+
+  it('rejects a planbuild level that is not a number rather than guessing one', () => {
+    expect(() =>
+      parseCoachResponse('planbuild', {
+        headline: 'h',
+        bias: 'bullish',
+        direction: 'long',
+        entry: 'somewhere near the highs',
+        stop: 7730,
+        target: null,
+        contracts: 1,
+        waitingFor: 'w',
+        stayOutIf: 's',
+        setups: [],
+        levels: [],
+        rationale: 'r',
+        confidence: 'low',
+        basedOn: [],
+      })
+    ).toThrow(/entry/);
+  });
+
+  it('drops the add levels when the coach said not to add', () => {
+    const parsed = parseCoachResponse('scalein', {
+      stance: 'do-not-add',
+      addPrice: 7700,
+      addContracts: 5,
+      stopAfterAdd: 7690,
+      breakevenPrice: null,
+      rationale: 'Adding here doubles the risk for no structural reason.',
+      risks: ['The stop is already the session low.'],
+    }) as { stance: string; addPrice: number | null; addContracts: number | null };
+
+    expect(parsed.stance).toBe('do-not-add');
+    // A level attached to a refusal would render an add the coach never asked for.
+    expect(parsed.addPrice).toBeNull();
+    expect(parsed.addContracts).toBeNull();
+  });
+
+  it('parses a scale-in opinion that would add', () => {
+    const parsed = parseCoachResponse('scalein', {
+      stance: 'ADD',
+      addPrice: 7700,
+      addContracts: 2,
+      stopAfterAdd: 7690,
+      breakevenPrice: 7715,
+      rationale: 'A retest of the prior close inside the planned risk.',
+      risks: ['Fails if the low breaks first.'],
+    }) as { stance: string; addPrice: number | null; addContracts: number };
+
+    expect(parsed.stance).toBe('add');
+    expect(parsed.addPrice).toBe(7700);
+    expect(parsed.addContracts).toBe(2);
+  });
+
+  it('blanks the entry-call levels when the coach would be flat', () => {
+    const parsed = parseCoachResponse('entrycall', {
+      direction: 'flat',
+      entry: 7740,
+      stop: 7730,
+      target: 7760,
+      rationale: 'Nothing here supports a side yet.',
+    }) as { direction: string; entry: number | null; stop: number | null };
+
+    expect(parsed.direction).toBe('flat');
+    expect(parsed.entry).toBeNull();
+    expect(parsed.stop).toBeNull();
+  });
+
+  it('parses an entry call with a side and levels', () => {
+    const parsed = parseCoachResponse('entrycall', {
+      direction: 'short',
+      entry: 7750,
+      stop: 7762,
+      target: 7720,
+      rationale: 'Failed at the day high.',
+    }) as { direction: string; entry: number | null; stop: number | null; target: number | null };
+
+    expect(parsed.direction).toBe('short');
+    expect(parsed.entry).toBe(7750);
+    expect(parsed.stop).toBe(7762);
+    expect(parsed.target).toBe(7720);
+  });
+
+  it('uses the field that was actually asked for, whatever the model labelled it', () => {
+    const parsed = parseCoachResponse(
+      'planfield',
+      {
+        field: 'waitingFor',
+        suggestion: 'Wait for a hold above the prior close.',
+        rationale: 'Your last three losing days came from entering early.',
+        basedOn: ['3 entries before the open'],
+      },
+      { field: 'stayOutIf' }
+    ) as { field: string; suggestion: string };
+
+    expect(parsed.field).toBe('stayOutIf');
+    expect(parsed.suggestion).toContain('Wait for a hold');
+  });
+
+  it('rejects an opinion that arrives without a rationale', () => {
+    expect(() =>
+      parseCoachResponse('entrycall', { direction: 'long', entry: 7740, stop: 7730, target: 7760 })
+    ).toThrow(/rationale/);
   });
 });

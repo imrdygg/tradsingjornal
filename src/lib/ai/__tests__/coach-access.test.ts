@@ -489,7 +489,7 @@ describe('the handler', () => {
     const anonymous = fakeRes();
     await handler({ method: 'GET' } as never, anonymous as never);
     expect(anonymous.statusCode).toBe(200);
-    expect(anonymous.body?.version).toBe(6);
+    expect(anonymous.body?.version).toBe(7);
     const access = anonymous.body?.access as Record<string, unknown>;
     expect(access.authRequired).toBe(false);
     expect(access.countersArePerInstance).toBe(true);

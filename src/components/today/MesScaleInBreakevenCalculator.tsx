@@ -14,6 +14,10 @@ import {
   Wand2,
   MoveDown,
   Plus,
+  RefreshCw,
+  Check,
+  X,
+  AlertTriangle,
 } from 'lucide-react';
 import { Trade, Instrument } from '../../types';
 import { findInstrument, DEFAULT_INSTRUMENTS } from '../../lib/trading/instruments';
@@ -21,6 +25,9 @@ import {
   calculateScaleInPlan,
   calculateScaleInScenarios,
 } from '../../lib/trading/scale-in';
+import type { CoachResult } from '../../lib/ai/coach-client';
+import type { ScaleInResponse } from '../../lib/ai/coach-types';
+import { askScaleIn, type PlanCoachContext } from '../../lib/ai/plan-coach';
 
 interface MesScaleInBreakevenCalculatorProps {
   /** Open trades for today. The calculator fills itself from the newest one. */
@@ -34,6 +41,11 @@ interface MesScaleInBreakevenCalculatorProps {
    * can be confirmed before saving.
    */
   onLogScaleIn?: (draft: Partial<Trade>) => void;
+  /**
+   * The journal context the coach needs. Absent means the coach button is not rendered,
+   * so the calculator works exactly as before in any context that has no journal.
+   */
+  coachContext?: PlanCoachContext;
 }
 
 const money = (n: number) =>
@@ -52,6 +64,7 @@ export const MesScaleInBreakevenCalculator: React.FC<MesScaleInBreakevenCalculat
   plannedLossLimit = 100,
   instruments = DEFAULT_INSTRUMENTS,
   onLogScaleIn,
+  coachContext,
 }) => {
   // Newest open trade first — that is the position the trader is managing.
   const sortedOpenTrades = useMemo(
@@ -69,6 +82,7 @@ export const MesScaleInBreakevenCalculator: React.FC<MesScaleInBreakevenCalculat
   const [direction, setDirection] = useState<'long' | 'short'>('long');
   const [initialContracts, setInitialContracts] = useState<number>(1);
   const [initialEntryPrice, setInitialEntryPrice] = useState<string>('');
+  const [initialStop, setInitialStop] = useState<string>('');
   const [currentMarketPrice, setCurrentMarketPrice] = useState<string>('');
   const [contractsToAdd, setContractsToAdd] = useState<number>(2);
   const [addPrice, setAddPrice] = useState<string>('');
@@ -91,6 +105,9 @@ export const MesScaleInBreakevenCalculator: React.FC<MesScaleInBreakevenCalculat
     setInitialContracts(Math.max(1, trade.contracts || 1));
     const entry = trade.entryPrice > 0 ? trade.entryPrice.toFixed(2) : '';
     setInitialEntryPrice(entry);
+    // The stop matters to the coach's risk judgement, so it is carried in from the
+    // trade that was recorded rather than asked for again.
+    setInitialStop(trade.initialStop > 0 ? trade.initialStop.toFixed(2) : '');
     // You know the live price and you know where you plan to add — we do not.
     // Start both at the entry price so the numbers are valid, then the trader
     // updates "current market price" to whatever the market is doing now.
@@ -131,6 +148,7 @@ export const MesScaleInBreakevenCalculator: React.FC<MesScaleInBreakevenCalculat
     setSelectedTradeId('');
     setInitialContracts(1);
     setInitialEntryPrice('');
+    setInitialStop('');
     setCurrentMarketPrice('');
     setContractsToAdd(2);
     setAddPrice('');
@@ -197,6 +215,42 @@ export const MesScaleInBreakevenCalculator: React.FC<MesScaleInBreakevenCalculat
   );
 
   const canCalculate = calculations.hasPosition && calculations.p2 > 0;
+
+  // ---------------------------------------------------------------------------
+  // The coach's opinion on this add. On a button press only, and it never fills the
+  // form in by itself: the trader reads it, then chooses whether to copy the numbers.
+  // ---------------------------------------------------------------------------
+  const [advice, setAdvice] = useState<{ loading: boolean; result: CoachResult | null }>({
+    loading: false,
+    result: null,
+  });
+
+  const adviceData: ScaleInResponse | null =
+    advice.result?.ok && 'stance' in advice.result.data
+      ? (advice.result.data as ScaleInResponse)
+      : null;
+
+  const stopPrice = parseFloat(initialStop) || 0;
+  /** The coach needs a real stop to judge the risk, so it is asked only once there is one. */
+  const canAskCoach = !!coachContext && calculations.hasPosition && stopPrice > 0;
+
+  const handleAskCoach = async () => {
+    if (!coachContext || !canAskCoach) return;
+    setAdvice({ loading: true, result: null });
+    const result = await askScaleIn(coachContext, {
+      symbol,
+      direction,
+      contracts: initialContracts,
+      entryPrice: p1Raw,
+      initialStop: stopPrice,
+      currentPrice: hasMarket ? pCurrentRaw : undefined,
+      addContracts: contractsToAdd,
+      addPrice: parseFloat(addPrice) || undefined,
+      plannedLossLimit,
+      openPoints: hasMarket ? calculations.currentPointsDiff : undefined,
+    });
+    setAdvice({ loading: false, result });
+  };
 
   const sourceTrade = sortedOpenTrades.find((t) => t.id === selectedTradeId);
 
@@ -323,6 +377,183 @@ export const MesScaleInBreakevenCalculator: React.FC<MesScaleInBreakevenCalculat
         </div>
       </div>
 
+      {/*
+        The coach's opinion on this add. On demand only, and it never writes into the
+        form itself: the trader reads the argument, then decides whether to copy the
+        numbers. Adding to a losing position is how a small loss becomes the day's loss,
+        so the button that applies it is deliberately a second, separate click.
+      */}
+      {coachContext && (
+        <div className="rounded-xl border border-zinc-800 bg-zinc-950/70 p-3.5 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-xs font-semibold text-zinc-200 font-mono uppercase tracking-wider flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+              Coach's opinion on adding here
+            </span>
+            <span className="text-[10px] font-mono uppercase text-zinc-500">
+              optional · one opinion, not advice
+            </span>
+          </div>
+
+          <p className="text-[11px] text-zinc-400 leading-relaxed">
+            Reads your position, your stop, today's loss limit and a live read of{' '}
+            <span className="font-mono text-zinc-300">{symbol}</span>, then says whether it would
+            add, where, how much, and where the stop belongs afterwards. If it says no, the honest
+            move is usually to not add.
+          </p>
+
+          <button
+            type="button"
+            id="scale-in-coach-btn"
+            onClick={handleAskCoach}
+            disabled={!canAskCoach || advice.loading}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-amber-800/70 bg-amber-950/30 px-3 py-1.5 text-xs font-semibold text-amber-200 transition-colors hover:bg-amber-900/40 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {advice.loading ? (
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Sparkles className="w-3.5 h-3.5" />
+            )}
+            {advice.loading ? 'Reading your position and the live price…' : 'Ask the coach about this add'}
+          </button>
+
+          {!canAskCoach && (
+            <p className="text-[11px] text-zinc-500 leading-relaxed">
+              Enter your entry price and the stop on the position first — the coach needs a real
+              stop to judge what the add does to your risk.
+            </p>
+          )}
+
+          {!advice.loading && adviceData && (
+            <div
+              id="scale-in-coach-advice"
+              className="rounded-xl border border-amber-900/50 bg-amber-950/20 p-3 space-y-2.5"
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <span
+                  className={`rounded-lg border px-2 py-0.5 text-[10px] font-bold uppercase font-mono ${
+                    adviceData.stance === 'add'
+                      ? 'bg-emerald-950/80 text-emerald-300 border-emerald-800'
+                      : adviceData.stance === 'hold'
+                      ? 'bg-amber-950/80 text-amber-300 border-amber-800'
+                      : 'bg-rose-950/80 text-rose-300 border-rose-800'
+                  }`}
+                >
+                  {adviceData.stance === 'do-not-add' ? 'do not add' : adviceData.stance}
+                </span>
+                <span className="text-[11px] font-mono text-zinc-400">
+                  {adviceData.breakevenPrice !== null &&
+                    `blended entry after the add ${price(adviceData.breakevenPrice)}`}
+                </span>
+              </div>
+
+              {adviceData.stance === 'add' && (
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  {[
+                    {
+                      label: 'Add at',
+                      value: adviceData.addPrice === null ? '—' : price(adviceData.addPrice),
+                    },
+                    {
+                      label: 'Contracts',
+                      value: adviceData.addContracts === null ? '—' : String(adviceData.addContracts),
+                    },
+                    {
+                      label: 'Stop after',
+                      value: adviceData.stopAfterAdd === null ? '—' : price(adviceData.stopAfterAdd),
+                    },
+                  ].map((stat) => (
+                    <div
+                      key={stat.label}
+                      className="rounded-lg border border-zinc-800 bg-zinc-950/80 px-2 py-1.5"
+                    >
+                      <span className="text-[10px] text-zinc-500 block uppercase font-mono">
+                        {stat.label}
+                      </span>
+                      <span className="text-zinc-100 font-mono font-bold">{stat.value}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <p className="text-[11px] text-zinc-200 leading-relaxed">{adviceData.rationale}</p>
+
+              {adviceData.risks.length > 0 && (
+                <div>
+                  <span className="text-[10px] font-mono uppercase font-bold text-rose-300 block mb-1">
+                    What would make this add a mistake
+                  </span>
+                  <ul className="space-y-1">
+                    {adviceData.risks.map((risk, index) => (
+                      <li key={index} className="text-[11px] text-zinc-300 flex items-start gap-2">
+                        <ShieldAlert className="w-3.5 h-3.5 mt-0.5 shrink-0 text-rose-400" />
+                        {risk}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                {adviceData.stance === 'add' && adviceData.addPrice !== null && (
+                  <button
+                    type="button"
+                    id="scale-in-coach-apply"
+                    onClick={() => {
+                      setContractsToAdd(
+                        Math.max(1, Math.round(adviceData.addContracts ?? contractsToAdd))
+                      );
+                      setAddPrice(String(adviceData.addPrice));
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-amber-400 hover:bg-amber-300 px-2.5 py-1 text-[11px] font-bold text-zinc-950 transition-colors"
+                  >
+                    <Check className="w-3 h-3 stroke-[3]" />
+                    Copy these numbers in
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleAskCoach}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-2.5 py-1 text-[11px] font-semibold text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  Ask again
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAdvice({ loading: false, result: null })}
+                  className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[11px] font-medium text-zinc-500 transition-colors hover:text-zinc-300"
+                >
+                  <X className="w-3 h-3" />
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          )}
+
+          {!advice.loading && advice.result && !advice.result.ok && (
+            <div className="rounded-xl border border-zinc-700 bg-zinc-800/40 p-3 space-y-2">
+              <p className="text-[11px] text-zinc-300 leading-relaxed flex items-start gap-2">
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-400" />
+                <span>
+                  {advice.result.code === 'unconfigured'
+                    ? 'The coach is not available in this environment, so no opinion could be written.'
+                    : `The coach could not answer (${advice.result.code}). ${advice.result.message}`}
+                </span>
+              </p>
+              <button
+                type="button"
+                onClick={handleAskCoach}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 px-2.5 py-1 text-[11px] font-semibold text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+              >
+                <RefreshCw className="w-3 h-3" />
+                Try again
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         {/* Left: the calculator */}
         <div className="lg:col-span-7 space-y-4">
@@ -359,7 +590,7 @@ export const MesScaleInBreakevenCalculator: React.FC<MesScaleInBreakevenCalculat
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
               <div>
                 <label
                   htmlFor="breakeven-contracts-held"
@@ -392,6 +623,24 @@ export const MesScaleInBreakevenCalculator: React.FC<MesScaleInBreakevenCalculat
                   value={initialEntryPrice}
                   onChange={(e) => setInitialEntryPrice(e.target.value)}
                   placeholder="your fill"
+                  className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="breakeven-stop-price"
+                  className="text-[11px] font-medium text-zinc-400 block mb-1"
+                >
+                  Stop on the position
+                </label>
+                <input
+                  id="breakeven-stop-price"
+                  type="number"
+                  step="0.25"
+                  value={initialStop}
+                  onChange={(e) => setInitialStop(e.target.value)}
+                  placeholder="your stop"
                   className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
                 />
               </div>

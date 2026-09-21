@@ -4,6 +4,7 @@ import {
   TradingDay,
   Trade,
   DailyReview,
+  LessonAcknowledgement,
   UserProfile,
   PlanChange,
   PlanSnapshot,
@@ -23,7 +24,17 @@ import { getCurrentTradingDate } from './date-utils';
  * examples (SetupDiagram.tsx) keyed to exactly this spelling. Renaming one here means
  * renaming it in both of those files, or the card falls back to the generic 'Other'
  * content.
+ *
+ * `since` marks the catalog version a setup arrived in, and it is what lets the catalog
+ * grow for a journal that already exists: see `ensureSetupCatalog`. Entries without it
+ * predate the versioning and are never re-added once a trader has removed them.
  */
+
+/**
+ * The current built-in catalog version. Bump it, and tag the new setups with the new
+ * number, when adding setups that existing journals should receive.
+ */
+export const SETUP_CATALOG_VERSION = 2;
 export const DEFAULT_SETUPS: Setup[] = [
   { id: 'engulfing', name: 'Engulfing', active: true, createdAt: '2026-01-01T00:00:00Z' },
   { id: 'support', name: 'Support', active: true, createdAt: '2026-01-01T00:00:00Z' },
@@ -41,11 +52,15 @@ export const DEFAULT_SETUPS: Setup[] = [
   { id: 'trendline-break', name: 'Trendline Break', active: true, createdAt: '2026-01-01T00:00:00Z' },
   { id: 'liquidity-sweep', name: 'Liquidity Sweep', active: true, createdAt: '2026-01-01T00:00:00Z' },
   { id: 'opening-gap-fill', name: 'Opening Gap Fill', active: true, createdAt: '2026-01-01T00:00:00Z' },
+  { id: 'gap-and-go', name: 'Gap and Go', active: true, createdAt: '2026-09-20T00:00:00Z', since: 2 },
   { id: 'range-fade', name: 'Range Fade', active: true, createdAt: '2026-01-01T00:00:00Z' },
+  { id: 'prior-day-high-break', name: 'Prior Day High Break', active: true, createdAt: '2026-09-20T00:00:00Z', since: 2 },
+  { id: 'fib-retracement', name: 'Fib Retracement', active: true, createdAt: '2026-09-20T00:00:00Z', since: 2 },
 
   // Imbalance and order-flow plays.
   { id: 'fair-value-gap', name: 'Fair Value Gap', active: true, createdAt: '2026-01-01T00:00:00Z' },
   { id: 'order-block', name: 'Order Block', active: true, createdAt: '2026-01-01T00:00:00Z' },
+  { id: 'breaker-block', name: 'Breaker Block', active: true, createdAt: '2026-09-20T00:00:00Z', since: 2 },
   { id: 'pullback-to-ema', name: 'Pullback to EMA', active: true, createdAt: '2026-01-01T00:00:00Z' },
 
   // Classic chart patterns.
@@ -56,6 +71,8 @@ export const DEFAULT_SETUPS: Setup[] = [
   { id: 'bear-flag', name: 'Bear Flag', active: true, createdAt: '2026-01-01T00:00:00Z' },
   { id: 'inside-bar-break', name: 'Inside Bar Break', active: true, createdAt: '2026-01-01T00:00:00Z' },
   { id: 'three-bar-reversal', name: 'Three-Bar Reversal', active: true, createdAt: '2026-01-01T00:00:00Z' },
+  { id: 'pin-bar', name: 'Pin Bar', active: true, createdAt: '2026-09-20T00:00:00Z', since: 2 },
+  { id: 'triangle-breakout', name: 'Triangle Breakout', active: true, createdAt: '2026-09-20T00:00:00Z', since: 2 },
 
   { id: 'other', name: 'Other', active: true, createdAt: '2026-01-01T00:00:00Z' },
 ];
@@ -66,6 +83,9 @@ export const DEFAULT_PROFILE: UserProfile = {
   timezone: 'America/New_York',
   defaultInstrument: 'MES',
   defaultDailyLossLimit: 100,
+  // A starting figure the trader is expected to change to their own funding-firm rule.
+  // It is a limit, not a target: the panel reports room against it either way.
+  maxDrawdown: 1000,
   createdAt: '2026-01-01T00:00:00Z',
   updatedAt: '2026-01-01T00:00:00Z',
 };
@@ -78,6 +98,8 @@ const STORAGE_KEYS = {
   TRADES: 'ptj_trades_v1',
   REVIEWS: 'ptj_reviews_v1',
   PATTERN_STUDIES: 'ptj_pattern_studies_v1',
+  SETUP_CATALOG: 'ptj_setup_catalog_v1',
+  LESSON_ACK: 'ptj_lesson_ack_v1',
   SEEDED: 'ptj_seeded_v1',
   AUTH: 'ptj_auth_status_v1',
   SUPABASE_CONFIG: 'ptj_supabase_config_v1',
@@ -98,6 +120,13 @@ export interface StorageState {
    * reading it treats a missing list as empty rather than as an error.
    */
   patternStudies?: PatternStudy[];
+  /**
+   * The carried-forward lesson the trader has acknowledged, if any.
+   *
+   * Synced with the journal so acknowledging on the phone holds on the desktop: the
+   * acknowledgement is about the lesson, not about the device it was read on.
+   */
+  lessonAck?: LessonAcknowledgement | null;
 }
 
 /**
@@ -281,6 +310,43 @@ export const storage = {
 
   getSetups(): Setup[] {
     return getItem<Setup[]>(STORAGE_KEYS.SETUPS, DEFAULT_SETUPS);
+  },
+
+  /**
+   * Merges built-in setups that arrived after this journal last looked.
+   *
+   * Without this, a catalog addition is invisible to anyone who already has a journal: the
+   * stored setup list wins over the defaults, so new built-ins would only ever appear on a
+   * fresh install. It adds strictly by version, and only what is missing by name, so:
+   *
+   * - a trader's own setups are untouched, and
+   * - a built-in they deleted on purpose stays deleted, because the version it arrived in
+   *   has already been recorded and it is never offered again.
+   *
+   * Returns the full catalog. On a journal that has never stored one, the defaults are
+   * returned and only the version marker is written — the catalog itself lands in storage
+   * the first time the trader actually changes it.
+   */
+  ensureSetupCatalog(): Setup[] {
+    const stored = getItem<Setup[] | null>(STORAGE_KEYS.SETUPS, null);
+    const current = getItem<number>(STORAGE_KEYS.SETUP_CATALOG, 1);
+    const version = Number.isFinite(current) && current > 0 ? current : 1;
+
+    if (!stored) {
+      setItem(STORAGE_KEYS.SETUP_CATALOG, SETUP_CATALOG_VERSION);
+      return DEFAULT_SETUPS;
+    }
+    if (version >= SETUP_CATALOG_VERSION) return stored;
+
+    const known = new Set(stored.map((setup) => setup.name.trim().toLowerCase()));
+    const arrivals = DEFAULT_SETUPS.filter(
+      (setup) => (setup.since ?? 1) > version && !known.has(setup.name.trim().toLowerCase())
+    );
+
+    const merged = arrivals.length ? [...stored, ...arrivals] : stored;
+    if (arrivals.length) setItem(STORAGE_KEYS.SETUPS, merged);
+    setItem(STORAGE_KEYS.SETUP_CATALOG, SETUP_CATALOG_VERSION);
+    return merged;
   },
 
   saveSetup(setupOrName: Setup | string): Setup[] {
@@ -537,6 +603,27 @@ export const storage = {
     return updatedReview;
   },
 
+  /**
+   * The lesson the trader acknowledged, or null. Shape-validated on read: a stored ack
+   * missing its date or text is treated as no acknowledgement rather than as a match for
+   * whatever lesson happens to be showing.
+   */
+  getLessonAck(): LessonAcknowledgement | null {
+    const ack = getItem<LessonAcknowledgement | null>(STORAGE_KEYS.LESSON_ACK, null);
+    if (!ack || typeof ack.date !== 'string' || typeof ack.focus !== 'string') return null;
+    return {
+      date: ack.date,
+      focus: ack.focus,
+      acknowledgedAt:
+        typeof ack.acknowledgedAt === 'string' ? ack.acknowledgedAt : new Date().toISOString(),
+    };
+  },
+
+  saveLessonAck(ack: LessonAcknowledgement): LessonAcknowledgement {
+    setItem(STORAGE_KEYS.LESSON_ACK, ack);
+    return ack;
+  },
+
   getYesterdayFocus(): { date: string; focus: string } | null {
     const days = this.getTradingDays()
       .filter((d) => d.status === 'completed')
@@ -564,6 +651,7 @@ export const storage = {
       trades: this.getTrades(),
       reviews: this.getReviews(),
       patternStudies: this.getPatternStudies(),
+      lessonAck: this.getLessonAck(),
     };
     return JSON.stringify(state, null, 2);
   },
@@ -580,6 +668,10 @@ export const storage = {
       // Only touched when the file actually carries it, so importing an older backup
       // cannot wipe study notes that are already here.
       if (parsed.patternStudies) setItem(STORAGE_KEYS.PATTERN_STUDIES, parsed.patternStudies);
+      // Written even when null (an explicit "nothing acknowledged"), so adopting a snapshot
+      // carries that state across too. A backup taken before this existed has no key at
+      // all and leaves what is here untouched.
+      if (parsed.lessonAck !== undefined) setItem(STORAGE_KEYS.LESSON_ACK, parsed.lessonAck);
       return true;
     } catch (err) {
       console.error('Import failed:', err);
@@ -622,7 +714,14 @@ export const storage = {
    */
   resetJournal(): void {
     if (typeof window === 'undefined') return;
-    for (const key of [STORAGE_KEYS.DAYS, STORAGE_KEYS.TRADES, STORAGE_KEYS.REVIEWS]) {
+    // The acknowledgement goes with the reviews it came from: leaving it behind would have
+    // the app report a lesson as accepted that no longer exists anywhere in the journal.
+    for (const key of [
+      STORAGE_KEYS.DAYS,
+      STORAGE_KEYS.TRADES,
+      STORAGE_KEYS.REVIEWS,
+      STORAGE_KEYS.LESSON_ACK,
+    ]) {
       try {
         localStorage.removeItem(key);
       } catch (err) {
@@ -645,6 +744,8 @@ export const storage = {
       STORAGE_KEYS.TRADES,
       STORAGE_KEYS.REVIEWS,
       STORAGE_KEYS.PATTERN_STUDIES,
+      STORAGE_KEYS.SETUP_CATALOG,
+      STORAGE_KEYS.LESSON_ACK,
       STORAGE_KEYS.SEEDED,
     ]) {
       try {

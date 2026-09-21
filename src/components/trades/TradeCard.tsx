@@ -18,6 +18,7 @@ import {
 import { Trade, Instrument } from '../../types';
 import { calculateTradeRuleFollowing } from '../../lib/analytics/discipline';
 import { instrumentSymbol } from '../../lib/trading/instruments';
+import { CoachEntryCallBadge } from './CoachEntryCallBadge';
 import { formatTimestamp } from '../../lib/storage/date-utils';
 import { ImageLightboxModal } from '../common/ImageLightboxModal';
 import { isVideoUrl } from '../../lib/media/media-utils';
@@ -198,6 +199,8 @@ export const TradeCard: React.FC<TradeCardProps> = ({
           <span className="text-zinc-400 text-[11px] block">
             Stop: {trade.initialStop.toFixed(2)}
           </span>
+          {/* The coach's call at entry, directly under the fill it is compared with. */}
+          <CoachEntryCallBadge trade={trade} className="mt-1" />
         </div>
 
         <div>

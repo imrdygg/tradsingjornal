@@ -1,11 +1,18 @@
 import {
+  allowsMarketOpinion,
   buildCoachPrompt,
   isCoachMode,
   parseCoachResponse,
+  type CoachPromptExtras,
 } from '../lib/ai/coach-prompt';
-import type { CoachMode, CoachTradeFacts } from '../lib/ai/coach-types';
+import type {
+  CoachEntryFacts,
+  CoachMode,
+  CoachPositionFacts,
+  CoachTradeFacts,
+} from '../lib/ai/coach-types';
 import type { JournalDigest } from '../lib/ai/journal-digest';
-import { getMarketBrief } from '../lib/ai/market-data';
+import { getInstrumentQuote, getMarketBrief } from '../lib/ai/market-data';
 import type { MarketBrief } from '../lib/ai/market-data';
 
 /**
@@ -58,7 +65,7 @@ interface ApiResponse {
 }
 
 
-const ENDPOINT_VERSION = 6;
+const ENDPOINT_VERSION = 7;
 
 /** Total time to spend trying models before returning what we have. */
 const REQUEST_BUDGET_MS = 45_000;
@@ -474,11 +481,18 @@ export async function runCoachModels(params: {
   digest: JournalDigest;
   trade?: CoachTradeFacts;
   marketBrief?: MarketBrief;
+  extras?: CoachPromptExtras;
 }): Promise<CoachModelOutcome> {
-  const { apiKey, mode, digest, trade, marketBrief } = params;
+  const { apiKey, mode, digest, trade, marketBrief, extras } = params;
 
   // The prompt is assembled here, on the server, from the digest the client sent.
-  const { systemInstruction, userPrompt } = buildCoachPrompt(mode, digest, trade, marketBrief);
+  const { systemInstruction, userPrompt } = buildCoachPrompt(
+    mode,
+    digest,
+    trade,
+    marketBrief,
+    extras,
+  );
 
   // Stop starting new attempts once the budget is spent. Better to return the errors we
   // have than to be killed mid-request by the platform's own limit, which surfaces to
@@ -508,7 +522,10 @@ export async function runCoachModels(params: {
           body: {
             mode,
             model: result.model,
-            data: parseCoachResponse(mode, parsed),
+            data: parseCoachResponse(mode, parsed, extras),
+            // The live read behind an opinion, handed back so the client can record the
+            // moment the call was made against. Never a secret: it is public market data.
+            instrument: extras?.instrumentQuote,
           },
         };
       } catch (err) {
@@ -641,6 +658,75 @@ function readBody(body: unknown): Record<string, unknown> | null {
   return null;
 }
 
+/** A finite number from the client, or undefined. Strings are not trusted here. */
+function readNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+/**
+ * The open position, re-validated on the server.
+ *
+ * These numbers go straight into the prompt and then into a size suggestion, so a
+ * malformed or missing one has to be refused rather than coerced to zero: "0 contracts
+ * at 0" would produce an opinion about a position that does not exist.
+ */
+export function readPositionFacts(raw: unknown): CoachPositionFacts | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const record = raw as Record<string, unknown>;
+
+  const symbol = typeof record.symbol === 'string' ? record.symbol.trim() : '';
+  const direction =
+    record.direction === 'short' ? 'short' : record.direction === 'long' ? 'long' : null;
+  const contracts = readNumber(record.contracts);
+  const entryPrice = readNumber(record.entryPrice);
+  const initialStop = readNumber(record.initialStop);
+
+  if (!symbol || !direction || !contracts || entryPrice === undefined || initialStop === undefined) {
+    return null;
+  }
+
+  return {
+    symbol,
+    direction,
+    contracts,
+    entryPrice,
+    initialStop,
+    currentPrice: readNumber(record.currentPrice),
+    addContracts: readNumber(record.addContracts),
+    addPrice: readNumber(record.addPrice),
+    plannedLossLimit: readNumber(record.plannedLossLimit),
+    openPoints: readNumber(record.openPoints),
+  };
+}
+
+/** The entry just recorded, re-validated on the server. */
+export function readEntryFacts(raw: unknown): CoachEntryFacts | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const record = raw as Record<string, unknown>;
+
+  const symbol = typeof record.symbol === 'string' ? record.symbol.trim() : '';
+  const direction =
+    record.direction === 'short' ? 'short' : record.direction === 'long' ? 'long' : null;
+  const contracts = readNumber(record.contracts);
+  const entryPrice = readNumber(record.entryPrice);
+  const initialStop = readNumber(record.initialStop);
+
+  if (!symbol || !direction || !contracts || entryPrice === undefined || initialStop === undefined) {
+    return null;
+  }
+
+  return {
+    symbol,
+    direction,
+    contracts,
+    entryPrice,
+    initialStop,
+    setupName: typeof record.setupName === 'string' ? record.setupName.trim() : undefined,
+    entryReason: typeof record.entryReason === 'string' ? record.entryReason.trim() : undefined,
+    session: typeof record.session === 'string' ? record.session.trim() : 'Regular Session',
+  };
+}
+
 /**
  * Minimal shape check on the digest. We do not re-validate every field — the client
  * built it from its own types — but we must reject anything that would leave the prompt
@@ -730,7 +816,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
   if (!isCoachMode(mode)) {
     res.status(400).json({
-      error: 'Unknown coach mode. Expected brief, weekly, trade, prep, postclose or planreview.',
+      error:
+        'Unknown coach mode. Expected brief, weekly, trade, prep, postclose, planreview, ' +
+        'planfield, planbuild, scalein or entrycall.',
     });
     return;
   }
@@ -751,6 +839,58 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   // is told the data is unavailable and writes its opinion anyway.
   const marketBrief = mode === 'planreview' ? await getMarketBrief() : undefined;
 
+  // ---- The extras the opinion modes need, each re-validated here ----
+  const extrasRaw = readBody(body?.extras) ?? {};
+  const extras: CoachPromptExtras = {};
+
+  if (mode === 'planfield') {
+    const field = extrasRaw.field === 'stayOutIf' ? 'stayOutIf' : extrasRaw.field === 'waitingFor' ? 'waitingFor' : null;
+    if (!field) {
+      res.status(400).json({ error: 'Plan-field mode needs the field to draft: waitingFor or stayOutIf.' });
+      return;
+    }
+    extras.field = field;
+    if (typeof extrasRaw.currentFieldValue === 'string') {
+      // Bounded, because this text is pasted straight into the prompt.
+      extras.currentFieldValue = extrasRaw.currentFieldValue.slice(0, 2000);
+    }
+  }
+
+  if (mode === 'scalein') {
+    const position = readPositionFacts(extrasRaw.position);
+    if (!position) {
+      res.status(400).json({
+        error: 'Scale-in mode needs the open position: symbol, direction, contracts, entry and stop.',
+      });
+      return;
+    }
+    extras.position = position;
+  }
+
+  if (mode === 'entrycall') {
+    const entry = readEntryFacts(extrasRaw.entry);
+    if (!entry) {
+      res.status(400).json({
+        error: 'Entry-call mode needs the entry: symbol, direction, contracts, entry and stop.',
+      });
+      return;
+    }
+    extras.entry = entry;
+  }
+
+  // The live futures read, for the modes whose guardrails allow it to be quoted. The
+  // symbol is taken from the position or entry when the request did not name one, so a
+  // caller cannot ask about one instrument while describing another.
+  if (allowsMarketOpinion(mode)) {
+    const fromExtras = typeof extrasRaw.instrument === 'string' ? extrasRaw.instrument.trim() : '';
+    const instrument =
+      extras.position?.symbol || extras.entry?.symbol || fromExtras;
+    extras.instrument = instrument;
+    // A failure here degrades inside getInstrumentQuote to ok:false with a reason, and
+    // the guardrails require the model to stand aside rather than fill the gap.
+    extras.instrumentQuote = await getInstrumentQuote(instrument);
+  }
+
   // Only requests that would actually reach Gemini are counted, so a malformed request
   // cannot lock a trader out of their own coach.
   const admission = coachRateLimiter.acquire(auth.limitKey, auth.rule, rules.maxInFlight);
@@ -770,7 +910,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   }
 
   try {
-    const outcome = await runCoachModels({ apiKey, mode, digest, trade, marketBrief });
+    const outcome = await runCoachModels({ apiKey, mode, digest, trade, marketBrief, extras });
     res.status(outcome.status).json(outcome.body);
   } finally {
     // On every path, including a throw, or this caller's in-flight slot leaks.

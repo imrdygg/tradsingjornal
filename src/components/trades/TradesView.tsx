@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { Trade, TradingDay, Setup, Instrument } from '../../types';
 import { TradeCard } from './TradeCard';
+import { CoachEntryCallBadge } from './CoachEntryCallBadge';
 import { calculateTradeRuleFollowing } from '../../lib/analytics/discipline';
 import { formatTimestamp } from '../../lib/storage/date-utils';
 import { ImageLightboxModal } from '../common/ImageLightboxModal';
@@ -827,7 +828,10 @@ export const TradesView: React.FC<TradesViewProps> = ({
                         </button>
                       </td>
                       <td className="py-2.5 px-3 text-right text-zinc-200">
-                        {t.entryPrice.toFixed(2)}
+                        <div>{t.entryPrice.toFixed(2)}</div>
+                        {/* The coach's own call at entry, right beside the fill it is
+                            compared with. Renders nothing when there was no call. */}
+                        <CoachEntryCallBadge trade={t} align="right" className="mt-1" />
                       </td>
                       <td className="py-2.5 px-3 text-right text-zinc-400">
                         {t.initialStop.toFixed(2)}

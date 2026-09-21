@@ -43,6 +43,8 @@ interface CoachViewProps {
   instruments: Instrument[];
   todayTradeDate: string;
   timezone: string;
+  /** The account drawdown the trader has agreed to, so the read can weigh risk capacity. */
+  maxDrawdown?: number | null;
 }
 
 interface RequestState {
@@ -101,6 +103,7 @@ export const CoachView: React.FC<CoachViewProps> = ({
   instruments,
   todayTradeDate,
   timezone,
+  maxDrawdown,
 }) => {
   const digest = useMemo(
     () =>
@@ -111,9 +114,10 @@ export const CoachView: React.FC<CoachViewProps> = ({
         setups,
         instruments,
         todayTradeDate,
+        maxDrawdown,
         timezone,
       }),
-    [trades, tradingDays, reviews, setups, instruments, todayTradeDate, timezone]
+    [trades, tradingDays, reviews, setups, instruments, todayTradeDate, timezone, maxDrawdown]
   );
 
   const [briefState, setBriefState] = useState<RequestState>(IDLE);

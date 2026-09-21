@@ -3,6 +3,8 @@ import { calculateTradeRuleFollowing, DAILY_DISCIPLINE_RULES } from '../analytic
 import { analyzeBehavior, BehaviorFacts } from '../analytics/behavior';
 import { instrumentSymbol } from '../trading/instruments';
 import { hasAssumedRisk } from '../trading/risk-fixup';
+import { HIGH_DISCIPLINE_SCORE } from '../analytics/review-trend';
+import { assessRiskCapacity, type RiskCapacity } from '../analytics/risk-capacity';
 
 /**
  * The journal digest is the *only* factual basis the AI coach is allowed to use.
@@ -100,6 +102,15 @@ export interface JournalDigest {
     consecutiveRuleBreakDays: number;
     losingStreakPnL: number;
   };
+  /**
+   * How much of the account's agreed drawdown is spent, and what is left.
+   *
+   * Present so the coach can answer "can this account afford today's risk" from numbers
+   * rather than from the size of the last few P&L figures. It is the balance-sheet half of
+   * the risk question, and it is the one thing a trader looking at a rising equity curve
+   * systematically misreads, because a trailing limit moves up with the peak.
+   */
+  riskCapacity: RiskCapacity;
   recentDays: DigestDay[];
   /**
    * Behaviour visible only in the trader's own timestamps and sizes: when they trade,
@@ -264,6 +275,11 @@ export function buildJournalDigest(input: {
   todayTradeDate: string;
   /** The trader's timezone, used to read clock hours out of their own timestamps. */
   timezone: string;
+  /**
+   * The account drawdown the trader has agreed to, when the caller knows it. Omitted means
+   * the coach is told there is no limit set rather than being left to assume one.
+   */
+  maxDrawdown?: number | null;
 }): JournalDigest {
   const { trades, tradingDays, reviews, setups, instruments, todayTradeDate, timezone } = input;
 
@@ -306,7 +322,7 @@ export function buildJournalDigest(input: {
   for (const review of scoredReviews) {
     const dayPnL = dayPnLById.get(review.tradingDayId);
     if (dayPnL === undefined) continue;
-    if (review.disciplineScore >= 80) highScores.push(dayPnL);
+    if (review.disciplineScore >= HIGH_DISCIPLINE_SCORE) highScores.push(dayPnL);
     else lowScores.push(dayPnL);
   }
   const mean = (list: number[]): number | null =>
@@ -530,6 +546,15 @@ export function buildJournalDigest(input: {
       consecutiveRuleBreakDays,
       losingStreakPnL: round(losingStreakPnL),
     },
+    // Measured on the same net-of-fees reading as every other figure in this digest, and
+    // against today's own planned loss limit, so "can I afford this day" is answered with
+    // the number the trader actually set rather than a default.
+    riskCapacity: assessRiskCapacity({
+      trades,
+      maxDrawdown: input.maxDrawdown ?? null,
+      dailyLossLimit: today?.plannedLossLimit ?? null,
+      pnlOf: realized,
+    }),
     recentDays,
     behavior,
     traderOwnWords: {

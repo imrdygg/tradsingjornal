@@ -38,6 +38,8 @@ interface CoachCheckpointCardProps {
   instruments: Instrument[];
   todayTradeDate: string;
   timezone: string;
+  /** The account drawdown the trader has agreed to, so the note can weigh today's risk. */
+  maxDrawdown?: number | null;
 }
 
 /** Runtime guards so a cached note from an older build cannot break rendering. */
@@ -55,6 +57,7 @@ export const CoachCheckpointCard: React.FC<CoachCheckpointCardProps> = ({
   instruments,
   todayTradeDate,
   timezone,
+  maxDrawdown,
 }) => {
   // Which checkpoint applies now, refreshed as the clock crosses a boundary. The
   // trader can always switch manually, so a timezone quirk never blocks them.
@@ -84,8 +87,9 @@ export const CoachCheckpointCard: React.FC<CoachCheckpointCardProps> = ({
         instruments,
         todayTradeDate,
         timezone,
+        maxDrawdown,
       }),
-    [trades, tradingDays, reviews, setups, instruments, todayTradeDate, timezone]
+    [trades, tradingDays, reviews, setups, instruments, todayTradeDate, timezone, maxDrawdown]
   );
 
   const fingerprint = useMemo(

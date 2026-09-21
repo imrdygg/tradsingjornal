@@ -15,13 +15,19 @@ import {
 } from 'lucide-react';
 import { TradingDay, Instrument, Trade, DailyReview, Setup } from '../../types';
 import { ModalOverlay } from '../common/ModalOverlay';
-import { instrumentSymbol } from '../../lib/trading/instruments';
+import { findInstrument, instrumentSymbol } from '../../lib/trading/instruments';
 import { money } from '../coach/coach-ui';
 import { requestCoach, CoachErrorCode, CoachResult } from '../../lib/ai/coach-client';
 import { buildJournalDigest } from '../../lib/ai/journal-digest';
 import type { PlanReviewResponse } from '../../lib/ai/coach-types';
 import type { MarketBrief, SectorQuote } from '../../lib/ai/market-data';
 import { heatBand, heatBandStyle, formatSignedPercent } from '../../lib/ai/market-data';
+import {
+  assessPlannedSize,
+  assessRiskCapacity,
+  drawdownShortfall,
+  estimateStopDistance,
+} from '../../lib/analytics/risk-capacity';
 
 /**
  * The plan lock preview.
@@ -43,6 +49,8 @@ interface PlanLockPreviewModalProps {
   reviews: DailyReview[];
   setups: Setup[];
   timezone: string;
+  /** The account drawdown the trader has agreed to, so the review can weigh the plan's risk. */
+  maxDrawdown?: number | null;
   onConfirm: () => void;
   onBack: () => void;
 }
@@ -90,6 +98,7 @@ export const PlanLockPreviewModal: React.FC<PlanLockPreviewModalProps> = ({
   reviews,
   setups,
   timezone,
+  maxDrawdown,
   onConfirm,
   onBack,
 }) => {
@@ -106,9 +115,40 @@ export const PlanLockPreviewModal: React.FC<PlanLockPreviewModalProps> = ({
         instruments,
         todayTradeDate: day.tradeDate,
         timezone,
+        maxDrawdown,
       }),
-    [trades, day, reviews, setups, instruments, timezone]
+    [trades, day, reviews, setups, instruments, timezone, maxDrawdown]
   );
+
+  /**
+   * The account's floor against the loss this lock would commit to.
+   *
+   * Computed from the whole closed record, like the Today strip and the Analytics panel, so
+   * the three can never disagree about the same account.
+   */
+  const capacity = assessRiskCapacity({
+    trades: trades.filter((t) => t.status === 'closed'),
+    maxDrawdown: maxDrawdown ?? null,
+    dailyLossLimit: day.plannedLossLimit,
+  });
+  const planShortfall = drawdownShortfall(capacity, day.plannedLossLimit);
+
+  /**
+   * The size this lock commits to, priced at the trader's own stop distance — the same
+   * check the form and the Today strip run, from the same functions.
+   */
+  const instrument = findInstrument(instruments, day.primaryInstrument);
+  const plannedSize = assessPlannedSize({
+    capacity,
+    contracts: day.contractsPlanned,
+    pointValue: instrument.pointValue,
+    symbol: instrumentSymbol(instruments, instrument.id),
+    stopDistance: estimateStopDistance({
+      openTrades: trades.filter((t) => t.status === 'open'),
+      closedTrades: trades.filter((t) => t.status === 'closed'),
+      instrumentId: instrument.id,
+    }),
+  });
 
   // The market grid and the coach opinion load in parallel; either can finish alone.
   useEffect(() => {
@@ -233,6 +273,52 @@ export const PlanLockPreviewModal: React.FC<PlanLockPreviewModalProps> = ({
               </span>
             </div>
           </div>
+
+          {/*
+            The account's floor against the loss this lock commits to. Shown here because
+            this is the last moment before the day's risk becomes a decision rather than a
+            draft, and it is the one comparison the form's own limit cannot make.
+          */}
+          {planShortfall && (
+            <div
+              className="flex items-start gap-2 rounded-lg border border-rose-800/70 bg-rose-950/40 px-2.5 py-2 text-[10px] leading-relaxed text-rose-200"
+              role="alert"
+              data-testid="lock-drawdown-warning"
+            >
+              <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-rose-400" />
+              <span>
+                <span className="font-bold uppercase tracking-wider text-[10px] block">
+                  This plan exceeds the drawdown room
+                </span>
+                {planShortfall.limitReached
+                  ? `The agreed ${money(maxDrawdown ?? 0)} drawdown is already spent, so this ${money(planShortfall.plannedLoss)} loss has no room behind it.`
+                  : `Locking a ${money(planShortfall.plannedLoss)} loss against ${money(
+                      planShortfall.headroom
+                    )} of remaining drawdown room leaves the account ${money(
+                      planShortfall.over
+                    )} short if the day goes to the limit.`}
+              </span>
+            </div>
+          )}
+
+          {plannedSize && (
+            <div
+              className="flex items-start gap-2 rounded-lg border border-rose-800/70 bg-rose-950/40 px-2.5 py-2 text-[10px] leading-relaxed text-rose-200"
+              role="alert"
+              data-testid="lock-size-drawdown-warning"
+            >
+              <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-rose-400" />
+              <span>
+                <span className="font-bold uppercase tracking-wider text-[10px] block">
+                  This size is larger than the drawdown room
+                </span>
+                Locking {plannedSize.contracts} {plannedSize.symbol} at your{' '}
+                {plannedSize.stopPoints}-point stop risks {money(plannedSize.dollarsAtRisk)} if
+                the stop is honoured, against {money(plannedSize.headroom)} of remaining room.
+              </span>
+            </div>
+          )}
+
           {/* Sessions and the watch list, spelled out rather than counted. */}
           <div className="grid sm:grid-cols-2 gap-3 pt-2 border-t border-zinc-800/70">
             <div>

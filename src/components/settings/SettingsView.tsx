@@ -276,7 +276,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           Default Daily Risk Guardrails
         </h2>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <div>
             <label className="text-xs font-medium text-zinc-400 block mb-1">
               Default Daily Max Loss ($)
@@ -293,6 +293,34 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               }
               className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 focus:outline-none"
             />
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-zinc-400 block mb-1">
+              Max Account Drawdown ($)
+            </label>
+            <input
+              id="settings-max-drawdown"
+              type="number"
+              min="0"
+              step="100"
+              value={profile.maxDrawdown ?? ''}
+              placeholder="not set"
+              onChange={(e) => {
+                const next = parseFloat(e.target.value);
+                // Live-editable and deliberately not defensive about the size: the number
+                // is the trader's own funding rule and it changes as they grow the account.
+                onUpdateProfile({
+                  ...profile,
+                  maxDrawdown: Number.isFinite(next) && next > 0 ? next : 0,
+                });
+              }}
+              className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 focus:outline-none"
+            />
+            <p className="mt-1 text-[10px] text-zinc-500 leading-relaxed">
+              The account-level floor, measured from your equity high-water mark. Analytics
+              reads today's risk against it and the coach is told what is left.
+            </p>
           </div>
 
           <div>

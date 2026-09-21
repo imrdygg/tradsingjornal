@@ -155,6 +155,20 @@ export const PlanLockPreviewModal: React.FC<PlanLockPreviewModalProps> = ({
       ? (review.result.data as PlanReviewResponse)
       : null;
 
+  const breadth = useMemo(() => {
+    const quotes = market.brief?.quotes ?? [];
+    return {
+      up: quotes.filter((quote) => {
+        const band = heatBand(quote.changePercent);
+        return band === 'up' || band === 'up-strong';
+      }).length,
+      down: quotes.filter((quote) => {
+        const band = heatBand(quote.changePercent);
+        return band === 'down' || band === 'down-strong';
+      }).length,
+    };
+  }, [market.brief]);
+
   // Nothing renders while closed — an always-mounted overlay would block the whole
   // page behind an invisible backdrop, which is exactly how the e2e suite caught it.
   if (!isOpen) return null;
@@ -235,11 +249,13 @@ export const PlanLockPreviewModal: React.FC<PlanLockPreviewModalProps> = ({
               Sector heat map — live vs previous close
             </span>
             <div className="flex items-center gap-1.5 text-[10px] font-mono text-zinc-500">
-              <span className="inline-flex items-center gap-1">
-                <span className="w-2.5 h-2.5 rounded-sm bg-emerald-500/80 inline-block" /> up
+              <span className="inline-flex items-center gap-1" data-testid="heat-up-count">
+                <span className="w-2.5 h-2.5 rounded-sm bg-emerald-500/80 inline-block" />
+                up {market.brief ? breadth.up : '—'}
               </span>
-              <span className="inline-flex items-center gap-1">
-                <span className="w-2.5 h-2.5 rounded-sm bg-rose-600/80 inline-block" /> down
+              <span className="inline-flex items-center gap-1" data-testid="heat-down-count">
+                <span className="w-2.5 h-2.5 rounded-sm bg-rose-600/80 inline-block" />
+                down {market.brief ? breadth.down : '—'}
               </span>
             </div>
           </div>

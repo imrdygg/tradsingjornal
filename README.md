@@ -85,22 +85,33 @@ If you would rather clips were never reachable by URL, flip the bucket's `public
 
 ---
 
-## Cloud sync and conflicts
+## Cloud sync
 
-The journal is stored as **one snapshot per user**: simple to load and to save, but it means
-two devices writing at once could otherwise overwrite each other wholesale.
+The journal is stored as **one snapshot per user** and saves are automatic: edit anything,
+and it is written to the cloud a moment later. Sign in on another device and you get the
+same journal, with no prompt to choose between copies.
 
-So every save is conditional on the `revision` the client last read:
+Every save is conditional on the `revision` the client last read, but the app **resolves a
+refusal itself** rather than handing it to the trader:
 
-- Accepted only if the row is still on that revision, which then increments.
-- Refused otherwise. The app does **not** retry — a blind retry is exactly the overwrite the
-  guard exists to prevent. Instead a banner asks which copy to keep:
-  - **Use the cloud copy** discards this device's changes since its last successful save.
-  - **Keep this device's copy** overwrites the cloud with this device's journal.
+- Writes from this device are **serialised** — each queues behind the last and starts from
+the revision the previous one landed on. The debounce does not cancel a write already in
+flight, so without this a device could refuse its own save and report it as another
+device's change, which is what the old "use the cloud copy" box actually was.
+- A refusal that survives that is a real write from another device. It is resolved by
+  saving this device's copy, because that is the copy being typed into. The copy it replaces
+  is set aside first (below), so the choice is never final.
 
-The two copies are deliberately not merged: a deletion on one device is indistinguishable
-from a record the other device never had, so a merge would quietly resurrect deleted trades.
-The trader decides instead.
+**Nothing a sync replaces is deleted.** When a save overwrites another device's copy, or
+when adopting the cloud copy on sign-in would drop records this device holds, the displaced
+journal is kept as a recovery copy and offered for download in **Settings → Account & Cloud
+Sync**. Only the most recent copy is held, and none is kept for a journal too large to store
+twice (one carrying chart screenshots), where duplicating it would break later writes.
+
+The two copies are still not merged: a deletion on one device is indistinguishable from a
+record the other device never had, so a merge would quietly resurrect deleted trades. Cloud
+wins on sign-in — the same copy-everywhere behaviour the app has always had — with the
+losing side kept rather than discarded.
 
 Signing out flushes a final save and only clears local data if that save succeeded, so the
 next account on the same browser can never inherit a previous user's journal.
@@ -308,7 +319,7 @@ every cloud save.
 ## Testing
 
 - **Unit tests** (`npm test`) cover the calculation layer, the coach digest and prompt, the
-  storage layer, cloud-sync's conflict rules, and the chart-pattern content itself: all 20
+  storage layer, the cloud save/resolve rules, and the chart-pattern content itself: all 20
   entries, their required sections, the geometry's direction matching each bias, and the
   timeline maths. They run in the node environment; a fake `localStorage` / `window` is
   installed per test, and cloud tests mock the Supabase client.
@@ -340,5 +351,7 @@ Any host that serves a Vite build and Node serverless functions works; the check
   a shared store would be needed for a hard global quota.
 - A deployment with no server-side Supabase credentials falls back to per-IP limiting for
   the coach rather than refusing to serve it.
-- Cloud sync resolves conflicts by asking, not by merging (see above).
+- Cloud sync resolves a clash by keeping this device's copy and setting the other aside,
+rather than merging (see above). A copy replaced by a sync is downloadable from Settings,
+but only the most recent one is kept.
 - `npm run lint` is only `tsc --noEmit`; there is no ESLint config and no CI workflow.

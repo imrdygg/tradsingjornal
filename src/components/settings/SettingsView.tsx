@@ -25,7 +25,7 @@ import { riskTierAmounts } from '../../lib/trading/risk-tiers';
 import { SyncStatusBadge, SyncStatus } from '../layout/SyncStatusBadge';
 import { ModalOverlay } from '../common/ModalOverlay';
 import { StorageHealthRow } from '../common/StorageWarningBanner';
-import { measureJournalBytes } from '../../lib/storage';
+import { measureJournalBytes, storage } from '../../lib/storage';
 import type { CsvImportSummary } from '../../lib/trading/tradovate-import';
 
 /**
@@ -86,6 +86,72 @@ interface SettingsViewProps {
   signingOut?: boolean;
   syncStatus?: SyncStatus;
 }
+
+/**
+ * The copy a sync replaced, offered for download so that a sync choosing one side is never
+ * the last word on the other.
+ *
+ * Rendered only when there is something set aside — in ordinary use, where both devices
+ * agree, this never appears. It is not a second sync notice: it is the receipt for work a
+ * sync moved out of the way.
+ */
+const RecoveryCopyRow: React.FC = () => {
+  const [copy, setCopy] = useState(() => storage.getRecoveryCopy());
+  if (!copy) return null;
+
+  const download = () => {
+    const blob = new Blob([copy.json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `trading-journal-set-aside-${copy.savedAt.slice(0, 10) || 'copy'}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const savedAt = copy.savedAt ? new Date(copy.savedAt) : null;
+  const when =
+    savedAt && !Number.isNaN(savedAt.getTime())
+      ? savedAt.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
+      : 'a recent sync';
+
+  return (
+    <div
+      id="recovery-copy-row"
+      className="rounded-xl border border-amber-800/60 bg-amber-950/30 p-3 space-y-2"
+    >
+      <div className="flex items-start gap-2">
+        <Download className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" />
+        <p className="text-[11px] leading-relaxed text-amber-200/90">
+          A sync on {when} replaced this device&apos;s journal, so that copy was set aside
+          rather than deleted. Nothing was lost — download it if it holds work you want back.
+        </p>
+      </div>
+      <div className="flex flex-wrap gap-2 pl-5">
+        <button
+          type="button"
+          id="download-recovery-copy"
+          onClick={download}
+          className="flex items-center gap-1.5 rounded-lg bg-amber-500 px-2.5 py-1.5 text-[11px] font-bold text-zinc-950 transition-colors hover:bg-amber-400"
+        >
+          <Download className="h-3.5 w-3.5" />
+          Download it
+        </button>
+        <button
+          type="button"
+          id="dismiss-recovery-copy"
+          onClick={() => {
+            storage.clearRecoveryCopy();
+            setCopy(null);
+          }}
+          className="rounded-lg border border-amber-700/60 bg-amber-950/40 px-2.5 py-1.5 text-[11px] font-semibold text-amber-100 transition-colors hover:bg-amber-900/40"
+        >
+          Discard it
+        </button>
+      </div>
+    </div>
+  );
+};
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
   profile,
@@ -350,6 +416,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             )}
           </div>
         </div>
+
+        <RecoveryCopyRow />
       </div>
 
       {importNotice && (

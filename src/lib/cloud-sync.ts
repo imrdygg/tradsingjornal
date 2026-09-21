@@ -9,8 +9,10 @@ import { StorageState } from './storage';
  * same time would overwrite each other wholesale, with the loser's work gone
  * and no trace of it. So every write is conditional on the `revision` the
  * client last read: the row only accepts the write if nobody has moved it on
- * since. A refused write surfaces as `JournalConflictError` and the app asks
- * the trader which copy to keep, instead of silently picking one.
+ * since. A refused write surfaces as `JournalConflictError`, which the saver in
+ * `journal-sync.ts` resolves on the trader's behalf: this device's copy is written,
+ * and the copy it replaced is kept aside rather than lost. Nothing is ever put to the
+ * trader mid-edit.
  */
 
 /** A journal plus the revision it was read at. */

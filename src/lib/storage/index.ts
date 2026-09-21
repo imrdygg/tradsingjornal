@@ -129,10 +129,38 @@ const STORAGE_KEYS = {
   PATTERN_STUDIES: 'ptj_pattern_studies_v1',
   SETUP_CATALOG: 'ptj_setup_catalog_v1',
   LESSON_ACK: 'ptj_lesson_ack_v1',
+  RECOVERY: 'ptj_recovery_v1',
   SEEDED: 'ptj_seeded_v1',
   AUTH: 'ptj_auth_status_v1',
   SUPABASE_CONFIG: 'ptj_supabase_config_v1',
 };
+
+/**
+ * A copy of the journal kept aside when a cloud sync replaced this device's own.
+ *
+ * A sync decides which copy survives, and the copy it does not keep is the only thing in
+ * the app that can destroy a session's work. Keeping it here means that decision is never
+ * final: the trader can download what was set aside, however long ago the sync ran.
+ *
+ * Best-effort by design. Storage is finite and the journal already lives in it, so a
+ * snapshot that will not fit is skipped rather than allowed to break the save that is
+ * trying to happen.
+ */
+export interface RecoveryCopy {
+  /** The whole journal, exactly as it was held, ready to import again. */
+  json: string;
+  savedAt: string;
+  /** Why it was set aside, so the UI can say what happened. */
+  reason: string;
+}
+
+/**
+ * Above this, no recovery copy is kept.
+ *
+ * A journal at this size is one carrying chart screenshots, and duplicating it is more
+ * likely to fill the browser (and so break every later write) than to save anyone.
+ */
+const RECOVERY_COPY_LIMIT_BYTES = 2_000_000;
 
 export interface StorageState {
   profile: UserProfile;
@@ -763,6 +791,53 @@ export const storage = {
    * missing its date or text is treated as no acknowledgement rather than as a match for
    * whatever lesson happens to be showing.
    */
+  /**
+   * Sets aside a journal copy a sync is about to replace. Returns whether it was kept.
+   *
+   * Only the most recent copy is held: this is a safety net for the work that was just
+   * displaced, not a version history, and keeping several copies of a journal full of
+   * base64 charts would be what fills the browser up.
+   */
+  saveRecoveryCopy(json: string, reason: string): boolean {
+    if (typeof window === 'undefined') return false;
+    if (json.length > RECOVERY_COPY_LIMIT_BYTES) {
+      console.warn('Skipped the recovery copy: the journal is too large to hold twice.');
+      return false;
+    }
+    const copy: RecoveryCopy = { json, savedAt: new Date().toISOString(), reason };
+    try {
+      localStorage.setItem(STORAGE_KEYS.RECOVERY, JSON.stringify(copy));
+      return true;
+    } catch (err) {
+      // Deliberately not reported through the storage-failure banner: the trader did not
+      // lose anything here, they simply have no extra copy, and a failed write is already
+      // reported by whatever was writing.
+      console.warn('Could not set aside a recovery copy:', err);
+      return false;
+    }
+  },
+
+  /** The copy set aside by the last sync, or null when there is none. */
+  getRecoveryCopy(): RecoveryCopy | null {
+    const copy = getItem<RecoveryCopy | null>(STORAGE_KEYS.RECOVERY, null);
+    if (!copy || typeof copy.json !== 'string' || !copy.json) return null;
+    return {
+      json: copy.json,
+      savedAt: typeof copy.savedAt === 'string' ? copy.savedAt : '',
+      reason: typeof copy.reason === 'string' ? copy.reason : '',
+    };
+  },
+
+  /** Remembers that the trader has seen the recovery copy. */
+  clearRecoveryCopy(): void {
+    if (typeof window === 'undefined') return;
+    try {
+      localStorage.removeItem(STORAGE_KEYS.RECOVERY);
+    } catch (err) {
+      console.warn('Could not clear the recovery copy:', err);
+    }
+  },
+
   getLessonAck(): LessonAcknowledgement | null {
     const ack = getItem<LessonAcknowledgement | null>(STORAGE_KEYS.LESSON_ACK, null);
     if (!ack || typeof ack.date !== 'string' || typeof ack.focus !== 'string') return null;
@@ -876,6 +951,9 @@ export const storage = {
       STORAGE_KEYS.TRADES,
       STORAGE_KEYS.REVIEWS,
       STORAGE_KEYS.LESSON_ACK,
+      // "Nothing can be undone" is the promise this reset makes, so the copy set aside
+      // from before it goes too rather than becoming a way to undo it after all.
+      STORAGE_KEYS.RECOVERY,
     ]) {
       try {
         localStorage.removeItem(key);
@@ -901,6 +979,7 @@ export const storage = {
       STORAGE_KEYS.PATTERN_STUDIES,
       STORAGE_KEYS.SETUP_CATALOG,
       STORAGE_KEYS.LESSON_ACK,
+      STORAGE_KEYS.RECOVERY,
       STORAGE_KEYS.SEEDED,
     ]) {
       try {

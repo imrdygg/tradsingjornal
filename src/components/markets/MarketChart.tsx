@@ -89,6 +89,12 @@ export const MarketChart: React.FC<MarketChartProps> = ({ symbol, theme, height 
 
         new window.TradingView.widget({
           container_id: targetId,
+          // Routes the embed through the provider's CME-licensed path
+          // (/cmewidgetembed/). Without it every CME-group contract — MES, MNQ,
+          // ES, NQ, MYM, gold, WTI — first shows a "This symbol is only available
+          // on TradingView" dialog that must be dismissed before the chart draws.
+          // Verified across the whole symbol set in scripts/probe-tv-dialog.mjs.
+          cme: true,
           autosize: true,
           symbol: symbol.tvSymbol,
           interval: '60',

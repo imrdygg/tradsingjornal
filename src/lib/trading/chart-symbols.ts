@@ -8,8 +8,10 @@
  *
  * WTI and gold are included because the trader asked for them: energy and metals are the
  * other two complexes a futures desk watches beside the equity index futures the journal
- * already records. WTI has no micro contract on the provider under one symbol family, so
- * it charts the standard contract.
+ * already records. Micro gold (MG1!) has no data on the provider's free embed — the chart
+ * draws its empty state whatever the mount options — so the MGC chip charts the full-size
+ * GC1! contract, the same market at the same price; the live-quote mapping below already
+ * reads MGC through GC for the same reason.
  */
 
 export interface ChartSymbol {
@@ -31,7 +33,9 @@ export const CHART_SYMBOLS: readonly ChartSymbol[] = [
   { id: 'ES', name: 'E-mini S&P 500', tvSymbol: 'CME_MINI:ES1!', label: 'ES', group: 'index' },
   { id: 'NQ', name: 'E-mini Nasdaq-100', tvSymbol: 'CME_MINI:NQ1!', label: 'NQ', group: 'index' },
   { id: 'MYM', name: 'Micro E-mini Dow', tvSymbol: 'CBOT_MINI:MYM1!', label: 'MYM', group: 'index' },
-  { id: 'MGC', name: 'Micro Gold', tvSymbol: 'COMEX:MG1!', label: 'MGC', group: 'metals' },
+  // Micro gold has no chartable data on the free embed (MG1! renders the empty
+  // state), so it charts full-size gold — the same market the MGC quote already reads.
+  { id: 'MGC', name: 'Micro Gold', tvSymbol: 'COMEX:GC1!', label: 'MGC', group: 'metals' },
   { id: 'GC', name: 'Gold', tvSymbol: 'COMEX:GC1!', label: 'Gold', group: 'metals' },
   { id: 'CL', name: 'WTI Crude Oil', tvSymbol: 'NYMEX:CL1!', label: 'WTI', group: 'energy' },
 ];
@@ -47,13 +51,12 @@ export function findChartSymbol(id: string | undefined | null): ChartSymbol {
  *
  * The opinion flow reads the day's numbers from Yahoo through the existing
  * `/api/market?symbol=` endpoint, which maps journal roots to Yahoo tickers via
- * `FUTURES_QUOTE_SYMBOLS`. Gold maps to GC there, so the micro contract reuses the
- * full-size read: the market is the same market, and the chart is the visual while the
- * quote is the number. Symbols absent from that map fail loudly (null) rather than
- * inventing a ticker, exactly as the quote path does.
+ * `FUTURES_QUOTE_SYMBOLS` — which covers every chartable root here, micro contracts
+ * included. Symbols absent from that map fail loudly (null) rather than inventing a
+ * ticker, exactly as the quote path does.
  */
 export function chartQuoteSymbol(id: string): string | null {
-  const known = new Set(['MES', 'MNQ', 'ES', 'NQ', 'MYM', 'GC', 'CL']);
+  const known = new Set(['MES', 'MNQ', 'ES', 'NQ', 'MYM', 'MGC', 'GC', 'CL']);
   const key = (id ?? '').trim().toUpperCase();
   return known.has(key) ? key : null;
 }

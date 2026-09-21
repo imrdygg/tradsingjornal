@@ -94,6 +94,7 @@ import type { CsvImportSummary } from './lib/trading/tradovate-import';
 import { buildPositionGroups, findPositionGroup } from './lib/trading/position-groups';
 import { findAssumedRiskTrades, RiskFixItem } from './lib/trading/risk-fixup';
 import { instrumentSymbol } from './lib/trading/instruments';
+import { riskTierAmounts } from './lib/trading/risk-tiers';
 import { acknowledgementFor, isLessonAcknowledged } from './lib/storage/lesson-ack';
 import {
   assessPlannedSize,
@@ -474,6 +475,14 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     setLessonAck(storage.saveLessonAck(acknowledgementFor(yesterdayFocus)));
   }, [yesterdayFocus]);
 
+  /**
+   * The trader's numbered risk ladder, read once per profile change.
+   *
+   * The plan, the lock preview and the trade form all show the same four amounts, so it is
+   * resolved here rather than in each of them — one place decides what a slot is worth.
+   */
+  const riskTiers = useMemo(() => riskTierAmounts(profile), [profile]);
+
   // Today's Trades
   const todayTrades = useMemo(() => {
     return trades.filter((t) => t.tradingDayId === todayTradingDay.id);
@@ -715,6 +724,12 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       notes: tradeData.notes,
       tags: tradeData.tags,
       initialRisk: tradeData.initialRisk || 50,
+      // The risk slot the form recorded the trade against. `null` is the custom option and
+      // is a real value, so it is taken as given rather than merged like the fields above;
+      // undefined falls back to what was stored (a pre-ladder trade keeps having none).
+      riskTier: tradeData.riskTier !== undefined ? tradeData.riskTier : stored?.riskTier,
+      plannedRisk:
+        tradeData.plannedRisk !== undefined ? tradeData.plannedRisk : stored?.plannedRisk,
       // The form decides this: it reports 'assumed' while an imported stop is still the
       // placeholder the CSV never carried, so a note-only edit cannot launder invented
       // risk into real risk.
@@ -880,6 +895,61 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
 
   const handleSavePatternStudy = (study: PatternStudy) => {
     setPatternStudies(storage.savePatternStudy(study));
+  };
+
+  /**
+   * What the journal already records under each setup name.
+   *
+   * Read from the trades and days themselves rather than from a counter kept on the setup,
+   * so a rename can offer to bring the entries along and the offer is always the real
+   * number — including for trades imported with a name that has no setup row at all.
+   */
+  const setupUsage = useMemo(() => {
+    const byName: Record<string, { trades: number; days: number }> = {};
+    const bucket = (name: string) => {
+      const key = name.trim().toLowerCase();
+      if (!key) return null;
+      byName[key] = byName[key] ?? { trades: 0, days: 0 };
+      return byName[key];
+    };
+
+    for (const trade of trades) {
+      const entry = trade.setupName ? bucket(trade.setupName) : null;
+      if (entry) entry.trades += 1;
+    }
+
+    // Today's day is created lazily on the first render and written straight to storage,
+    // so it is not in `tradingDays` until something else refreshes that state. Adding it
+    // here keeps today's watch list counted — and today is the day whose entries are most
+    // likely to matter when a setup is renamed.
+    const daysById = new Map<string, TradingDay>();
+    for (const day of tradingDays) daysById.set(day.id, day);
+    daysById.set(todayTradingDay.id, todayTradingDay);
+
+    for (const day of daysById.values()) {
+      for (const name of day.watchedSetups ?? []) {
+        const entry = bucket(name);
+        if (entry) entry.days += 1;
+      }
+    }
+    return byName;
+  }, [trades, tradingDays, todayTradingDay]);
+
+  const handleRenameSetup = (id: string, name: string): Setup[] | null => {
+    const updated = storage.renameSetup(id, name);
+    if (!updated) return null;
+    setSetups(updated);
+    return updated;
+  };
+
+  const handleReorderSetups = (orderedIds: string[]) => {
+    setSetups(storage.reorderSetups(orderedIds));
+  };
+
+  const handleRelabelSetup = (oldName: string, newName: string) => {
+    storage.relabelSetupReferences(oldName, newName);
+    setTrades(storage.getTrades());
+    setTradingDays(storage.getTradingDays());
   };
 
   // Deep-link from the Morning Plan: switching to the Playbook tab focused on
@@ -1178,6 +1248,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               setups={setups}
               instruments={instruments}
               openTrades={todayTrades.filter((t) => t.status === 'open')}
+              todayTrades={todayTrades}
               onSaveDay={handleSaveDay}
               onLockPlan={handleLockPlan}
               lockPreviewOpen={isLockPreviewOpen}
@@ -1188,6 +1259,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               coachContext={coachContext}
               drawdownCapacity={riskCapacity}
               plannedSizeRisk={plannedSizeRisk}
+              riskTiers={riskTiers}
             />
 
             {/* Today's Recorded Trades Section */}
@@ -1283,6 +1355,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             instruments={instruments}
             maxDrawdown={profile.maxDrawdown ?? null}
             dailyLossLimit={todayTradingDay.plannedLossLimit || profile.defaultDailyLossLimit}
+            riskTiers={riskTiers}
             onUpdateMaxDrawdown={(value) =>
               handleUpdateProfile({ ...profile, maxDrawdown: value })
             }
@@ -1328,6 +1401,11 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
           <SettingsView
             profile={profile}
             instruments={instruments}
+            setups={setups}
+            setupUsage={setupUsage}
+            onRenameSetup={handleRenameSetup}
+            onReorderSetups={handleReorderSetups}
+            onRelabelSetup={handleRelabelSetup}
             onUpdateProfile={handleUpdateProfile}
             onExportData={handleExportData}
             onImportData={handleImportData}
@@ -1400,6 +1478,8 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
         setups={setups}
         editingTrade={editingTrade}
         prefill={tradePrefill}
+        riskTiers={riskTiers}
+        todayTrades={todayTrades}
       />
 
       {/* Trade Close Modal (Close + Execution Review) */}
@@ -1474,6 +1554,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
         setups={setups}
         timezone={profile.timezone}
         maxDrawdown={profile.maxDrawdown ?? null}
+        riskTiers={riskTiers}
         onConfirm={confirmLockPlan}
         onBack={() => setIsLockPreviewOpen(false)}
       />

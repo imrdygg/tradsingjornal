@@ -84,6 +84,19 @@ export const TradeCard: React.FC<TradeCardProps> = ({
 
   const pnlSign = trade.grossPnL > 0 ? '+' : '';
 
+  /**
+   * The risk slot this trade was recorded against, or null for a pre-ladder trade.
+   *
+   * `riskTier` is a number for slots #1–#4 and null for a custom amount, so undefined
+   * (a trade saved before the ladder existed) shows nothing rather than a false "custom".
+   */
+  const riskSlotLabel =
+    typeof trade.riskTier === 'number'
+      ? `Trade #${trade.riskTier}${trade.plannedRisk ? ` · $${trade.plannedRisk}` : ''}`
+      : trade.riskTier === null
+      ? `Custom risk${trade.plannedRisk ? ` · $${trade.plannedRisk}` : ''}`
+      : null;
+
   // Rule discipline score if execution review completed
   const ruleFollowing = calculateTradeRuleFollowing(trade.executionReview);
   // Imported trades carry a stop the app had to invent, so their risk and R are not
@@ -139,6 +152,15 @@ export const TradeCard: React.FC<TradeCardProps> = ({
           <span className="px-2 py-0.5 rounded bg-zinc-800 text-[11px] font-medium text-zinc-300">
             {trade.setupName || 'Setup'}
           </span>
+          {riskSlotLabel && (
+            <span
+              data-trade-risk-slot={typeof trade.riskTier === 'number' ? trade.riskTier : 'custom'}
+              title="The risk slot this trade was taken against"
+              className="px-2 py-0.5 rounded border border-zinc-700 bg-zinc-900 text-[11px] font-mono text-zinc-300"
+            >
+              {riskSlotLabel}
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-1.5">

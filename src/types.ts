@@ -30,6 +30,15 @@ export interface Setup {
    * so a built-in the trader deleted on purpose is never resurrected by a later release.
    */
   since?: number;
+  /**
+   * The built-in name this setup came from, once it has been renamed.
+   *
+   * The study guide and the example charts are keyed by name, so without this a trader who
+   * renames "Engulfing" to their own words would lose the guide and the chart that go with
+   * it. Keeping the original name lets the renamed setup still find its teaching material,
+   * and stops a later catalog release from adding the built-in back under its old name.
+   */
+  builtinName?: string;
   createdAt: string;
 }
 
@@ -59,6 +68,10 @@ export interface PlanSnapshot {
   primaryInstrument: string;
   allowedSessions: TradingSession[];
   marketBias: MarketBias;
+  /** The Trade # that was pre-selected when the plan was locked, when there was one. */
+  defaultRiskTier?: number;
+  /** The per-slot trade caps that were in force when the plan was locked. */
+  riskTierCaps?: number[];
   lockedAt: string;
 }
 
@@ -77,6 +90,21 @@ export interface TradingDay {
   allowedSessions: TradingSession[];
   marketBias: MarketBias;
   watchedSetups: string[]; // setup ids or names
+  /**
+   * The Trade # the trade form opens on for this day.
+   *
+   * Only a starting point: all four slots and the custom option stay available when
+   * recording a trade, so a plan that names #1 never blocks a #3 that the setup earns.
+   */
+  defaultRiskTier?: number;
+  /**
+   * How many trades the plan allows at each fixed slot, with 0 (or absent) meaning no cap.
+   *
+   * The cap is a warning rather than a wall: the trade form still records a trade that
+   * goes past it, because a form that refuses is one the trader works around, and the
+   * record of having broken the plan is exactly what this journal exists to keep.
+   */
+  riskTierCaps?: number[];
   importantLevels: ImportantLevel[];
   waitingFor: string;
   stayOutIf: string;
@@ -163,6 +191,17 @@ export interface Trade {
   tags?: string[];
   initialRisk: number; // $
   /**
+   * Which numbered slot of the risk plan this trade was taken against.
+   *
+   * 1–4 is one of the fixed slots, null is the custom amount, and undefined means the
+   * trade predates the ladder (an import, or an older record). The distinction matters:
+   * undefined must not be read as "custom", or an imported trade would look like a
+   * deliberate choice.
+   */
+  riskTier?: number | null;
+  /** The dollar risk the slot committed to, including a custom amount. */
+  plannedRisk?: number;
+  /**
    * Where the stop — and therefore the risk and the R-multiple — came from.
    *
    * A broker CSV carries no stop price, so an import has to invent one and is marked
@@ -223,6 +262,14 @@ export interface UserProfile {
   timezone: string; // e.g. 'America/New_York'
   defaultInstrument: string; // e.g. 'MES'
   defaultDailyLossLimit: number; // e.g. 100
+  /**
+   * The numbered risk ladder: what trade #1 through #4 are each allowed to risk.
+   *
+   * Four fixed slots plus a per-trade custom amount, so risk is chosen before a position
+   * exists rather than typed to fit one. Optional because a profile saved before this
+   * existed has no ladder, and the defaults ($25/$50/$75/$100) are used instead.
+   */
+  riskTierAmounts?: number[];
   /**
    * The account-level drawdown the trader has committed to, in dollars.
    *

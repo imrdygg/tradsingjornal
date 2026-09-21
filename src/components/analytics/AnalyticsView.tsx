@@ -20,6 +20,7 @@ import {
   BarChart,
   Bar,
   Line,
+  LineChart,
   ComposedChart,
   XAxis,
   YAxis,
@@ -43,11 +44,65 @@ import {
   type ComparisonGroupRow,
 } from '../../lib/ai/entry-comparison';
 import { instrumentSymbol } from '../../lib/trading/instruments';
+import { DEFAULT_RISK_TIER_AMOUNTS } from '../../lib/trading/risk-tiers';
 import {
   assessRiskCapacity,
   buildEquityCurve,
   type RiskStance,
 } from '../../lib/analytics/risk-capacity';
+import {
+  summariseRiskPlanAdherence,
+  summariseSlotTrends,
+  type SlotTrendPoint,
+} from '../../lib/analytics/risk-plan-adherence';
+
+/**
+ * One colour per slot, in ladder order (#1–#4, then custom).
+ *
+ * Fixed rather than themed so a slot keeps its colour between visits: a line whose colour
+ * changes week to week is a line nobody can follow.
+ */
+const SLOT_COLORS = ['#10b981', '#38bdf8', '#fbbf24', '#a78bfa', '#a1a1aa'];
+
+/**
+ * The weekly per-slot tooltip.
+ *
+ * It shows the sample size beside each rate on purpose: a 100% week built from one trade is
+ * exactly the reading this chart is most likely to be misused for.
+ */
+const SlotTrendTooltip: React.FC<{
+  active?: boolean;
+  payload?: Array<{ payload?: SlotTrendPoint }>;
+  slotKeys: string[];
+  slotLabels: string[];
+}> = ({ active, payload, slotKeys, slotLabels }) => {
+  const point = payload?.[0]?.payload;
+  if (!active || !point) return null;
+
+  return (
+    <div className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-[11px] font-mono space-y-1">
+      <div className="text-zinc-300">{point.bucket}</div>
+      {slotKeys.map((key, index) => {
+        const rate = point.rates[key];
+        if (rate === null || rate === undefined) return null;
+        const count = point.counts[key] ?? 0;
+        return (
+          <div key={key} className="flex items-center gap-2">
+            <span
+              className="inline-block h-2 w-2 rounded-sm"
+              style={{ backgroundColor: SLOT_COLORS[index] }}
+            />
+            <span className="text-zinc-400">{slotLabels[index]}</span>
+            <span className="font-bold text-zinc-100">{rate}%</span>
+            <span className="text-zinc-500">
+              {count} trade{count === 1 ? '' : 's'}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
 
 /**
  * One breakdown table of the coach scoreboard — by side, by setup, by session, or
@@ -175,6 +230,13 @@ interface AnalyticsViewProps {
   dailyLossLimit?: number | null;
   /** Writes a new limit. The panel is deliberately an editor as well as a readout. */
   onUpdateMaxDrawdown?: (value: number) => void;
+  /**
+   * The trader's risk ladder, so the adherence panel can name what each slot allows.
+   *
+   * Absent falls back to the built-in ladder, which keeps the panel readable before the
+   * profile has ever been edited.
+   */
+  riskTiers?: number[];
 }
 
 export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
@@ -186,6 +248,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
   maxDrawdown = null,
   dailyLossLimit = null,
   onUpdateMaxDrawdown,
+  riskTiers = DEFAULT_RISK_TIER_AMOUNTS,
 }) => {
   // Filters
   const [dateRange, setDateRange] = useState<'7d' | '30d' | 'all'>('all');
@@ -243,16 +306,75 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
   const coachScore = useMemo(() => summariseEntryComparisons(coachTrades), [coachTrades]);
 
   /**
-   * The comparison by trading day. The date comes from the parent day, not the entry
-   * timestamp, so a late-night entry lands on the day the trader was actually trading.
+   * Risk-plan adherence over the same slice as the coach scoreboard.
+   *
+   * Built from `coachTrades` — every filtered trade, open ones included — because the slot
+   * and the size are chosen at entry, so an open position can already have broken its plan
+   * and hiding it until the exit would report the discipline one trade too late.
    */
-  const coachDaily = useMemo(() => {
-    const dateByDayId = new Map(tradingDays.map((d) => [d.id, d.tradeDate]));
-    return summariseComparisonsByDay(
-      coachTrades,
-      (t) => dateByDayId.get(t.tradingDayId) ?? null
-    );
-  }, [coachTrades, tradingDays]);
+  const adherence = useMemo(
+    () => summariseRiskPlanAdherence(coachTrades, riskTiers),
+    [coachTrades, riskTiers]
+  );
+
+  /**
+   * The trading date for each day id.
+   *
+   * Read from the parent day rather than the entry timestamp, so a late-night entry lands on
+   * the day the trader was actually trading.
+   */
+  const dateByDayId = useMemo(
+    () => new Map(tradingDays.map((day) => [day.id, day.tradeDate])),
+    [tradingDays]
+  );
+
+  /**
+   * Adherence per slot, week by week.
+   *
+   * Falls back to the entry date only when a trade's own day is missing from the journal —
+   * an import whose day was since deleted — so the week a trade belongs to is the week it was
+   * traded, not the week its timestamp happens to fall in.
+   */
+  const slotTrend = useMemo(
+    () =>
+      summariseSlotTrends(
+        coachTrades,
+        (trade) =>
+          dateByDayId.get(trade.tradingDayId) ??
+          (trade.entryTime ? trade.entryTime.slice(0, 10) : null)
+      ),
+    [coachTrades, dateByDayId]
+  );
+
+  /** The most recent weeks, so a long journal does not draw an unreadable chart. */
+  const trendWeeks = useMemo(() => slotTrend.points.slice(-12), [slotTrend]);
+
+  /**
+   * The same weeks shaped for recharts: one top-level key per slot.
+   *
+   * The rates and counts stay on each row too, so the tooltip can report the sample behind
+   * every point rather than presenting a percentage with no idea how many trades it came
+   * from.
+   */
+  const trendChartData = useMemo(
+    () =>
+      trendWeeks.map((point) => {
+        const row: Record<string, unknown> = {
+          bucket: point.bucket,
+          rates: point.rates,
+          counts: point.counts,
+        };
+        for (const key of slotTrend.slotKeys) row[key] = point.rates[key];
+        return row;
+      }),
+    [trendWeeks, slotTrend.slotKeys]
+  );
+
+  /** The comparison by trading day. */
+  const coachDaily = useMemo(
+    () => summariseComparisonsByDay(coachTrades, (t) => dateByDayId.get(t.tradingDayId) ?? null),
+    [coachTrades, dateByDayId]
+  );
 
   /**
    * Where the coach's read holds up and where it does not: the same calls sliced by the
@@ -1046,6 +1168,281 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
           with it. Size that grows with the account only works if the room is measured before
           the trade, not after a bad day.
         </p>
+      </div>
+
+      {/*
+        Risk-plan adherence.
+
+        The ladder only does anything if the size that was actually taken is measured against
+        the slot it was logged under. This is that measurement.
+      */}
+      <div
+        id="risk-plan-adherence"
+        className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4 sm:p-5 space-y-4"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-300 font-mono flex items-center gap-2">
+              <Layers className="w-4 h-4 text-emerald-400" />
+              Risk plan adherence — did each trade stick to its slot
+            </h3>
+            <p className="mt-1 text-[10px] text-zinc-500 leading-relaxed max-w-xl">
+              Each trade is measured against the slot it was recorded under. On plan means it
+              risked no more than the slot allows — not that it matched to the cent, since
+              futures trade in whole contracts and the nearest size can sit under the slot
+              while being the only size available. Open positions count: the size is decided
+              at entry, not at the exit.
+            </p>
+          </div>
+          <span className="text-[11px] font-mono text-zinc-400">
+            {adherence.measured} measured · {adherence.unrecorded} without a slot
+          </span>
+        </div>
+
+        {adherence.measured === 0 ? (
+          <p className="text-xs text-zinc-400 leading-relaxed">
+            No trades with a recorded risk slot yet. Pick a Trade # when you record a trade and
+            this panel will read back whether the size stayed inside it.
+          </p>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3.5 space-y-1">
+                <span className="text-[10px] uppercase font-mono tracking-wider text-zinc-400 block">
+                  Kept within the slot
+                </span>
+                <span
+                  data-testid="adherence-rate"
+                  className={`text-xl font-bold font-mono ${
+                    adherence.withinPct === null
+                      ? 'text-zinc-200'
+                      : adherence.withinPct >= 90
+                      ? 'text-emerald-400'
+                      : adherence.withinPct >= 70
+                      ? 'text-amber-400'
+                      : 'text-rose-400'
+                  }`}
+                >
+                  {adherence.withinPct === null ? '—' : `${adherence.withinPct}%`}
+                </span>
+                <span className="text-[10px] text-zinc-400 font-mono block">
+                  {adherence.within} within / {adherence.over} over
+                </span>
+              </div>
+
+              {/*
+                The streak counts backwards from the newest measurable trade, so it is a
+                "where am I now" figure rather than a season average. The best run sits in
+                the sub-line as the record to beat.
+              */}
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3.5 space-y-1">
+                <span className="text-[10px] uppercase font-mono tracking-wider text-zinc-400 block">
+                  Current streak
+                </span>
+                <span
+                  data-testid="adherence-streak"
+                  className={`text-xl font-bold font-mono ${
+                    adherence.currentStreak > 0 ? 'text-emerald-400' : 'text-zinc-200'
+                  }`}
+                >
+                  {adherence.currentStreak}
+                </span>
+                <span className="text-[10px] text-zinc-400 font-mono block">
+                  {adherence.currentStreak === 1 ? 'trade' : 'trades'} within the slot
+                  {adherence.longestStreak > adherence.currentStreak
+                    ? ` · best ${adherence.longestStreak}`
+                    : ''}
+                </span>
+              </div>
+
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3.5 space-y-1">
+                <span className="text-[10px] uppercase font-mono tracking-wider text-zinc-400 block">
+                  Trades measured
+                </span>
+                <span className="text-xl font-bold font-mono text-zinc-100">
+                  {adherence.measured}
+                </span>
+                <span className="text-[10px] text-zinc-400 font-mono block">
+                  logged against a slot
+                </span>
+              </div>
+
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3.5 space-y-1">
+                <span className="text-[10px] uppercase font-mono tracking-wider text-zinc-400 block">
+                  Avg risk taken
+                </span>
+                <span className="text-xl font-bold font-mono text-zinc-100">
+                  ${adherence.avgActualRisk.toFixed(2)}
+                </span>
+                <span className="text-[10px] text-zinc-400 font-mono block">
+                  across every measured trade
+                </span>
+              </div>
+
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3.5 space-y-1">
+                <span className="text-[10px] uppercase font-mono tracking-wider text-zinc-400 block">
+                  Worst breach
+                </span>
+                <span
+                  data-testid="adherence-worst"
+                  className={`text-xl font-bold font-mono ${
+                    adherence.worstOver === null ? 'text-zinc-200' : 'text-rose-300'
+                  }`}
+                >
+                  {adherence.worstOver === null ? '—' : `+$${adherence.worstOver.toFixed(2)}`}
+                </span>
+                <span className="text-[10px] text-zinc-400 font-mono block">
+                  {adherence.avgOverRisk === null
+                    ? 'nothing went over'
+                    : `${adherence.avgOverRisk.toFixed(2)} avg over the plan`}
+                </span>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-[11px] font-mono">
+                <thead>
+                  <tr className="border-b border-zinc-800 text-zinc-400 text-left">
+                    <th className="pb-1.5 font-medium">Slot</th>
+                    <th className="pb-1.5 font-medium">Allows</th>
+                    <th className="pb-1.5 font-medium">Trades</th>
+                    <th className="pb-1.5 font-medium">Within</th>
+                    <th className="pb-1.5 font-medium">Over</th>
+                    <th className="pb-1.5 font-medium text-right">Avg risk</th>
+                    <th className="pb-1.5 font-medium text-right">Worst over</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-800/40">
+                  {adherence.slots.map((row) => (
+                    <tr key={row.key} className={row.trades === 0 ? 'text-zinc-600' : 'text-zinc-300'}>
+                      <td className="py-1.5">{row.label}</td>
+                      <td className="py-1.5 text-zinc-400">
+                        {row.target === null ? 'your amount' : `$${row.target}`}
+                      </td>
+                      <td className="py-1.5">{row.trades}</td>
+                      <td className="py-1.5 text-emerald-400">{row.within}</td>
+                      <td className={`py-1.5 ${row.over > 0 ? 'text-rose-400' : 'text-zinc-600'}`}>
+                        {row.over}
+                      </td>
+                      <td className="py-1.5 text-right">
+                        {row.trades === 0 ? '—' : `$${row.avgActualRisk.toFixed(2)}`}
+                      </td>
+                      <td className="py-1.5 text-right">
+                        {row.worstOver === null ? '—' : `+$${row.worstOver.toFixed(2)}`}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/*
+              The per-slot trend.
+
+              The table above says what each slot's record is; this says which one is sliding.
+              A slot is only plotted for the weeks it was used, because a gap means the slot was
+              untouched rather than that it scored zero.
+            */}
+            <div className="space-y-2 border-t border-zinc-800/70 pt-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-400">
+                  Weekly adherence by slot
+                </span>
+                <div className="flex flex-wrap items-center gap-2.5">
+                  {slotTrend.slotLabels.map((label, index) => (
+                    <span
+                      key={label}
+                      className="flex items-center gap-1 text-[10px] font-mono text-zinc-400"
+                    >
+                      <span
+                        className="inline-block h-2 w-2 rounded-sm"
+                        style={{ backgroundColor: SLOT_COLORS[index] }}
+                      />
+                      {label}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              {trendWeeks.length < 2 ? (
+                <p className="text-[10px] text-zinc-500 leading-relaxed">
+                  {trendWeeks.length === 0
+                    ? 'No week of measured trades yet, so there is no trend to draw.'
+                    : 'One week of measured trades so far — a trend needs a second week before it can show a direction.'}
+                </p>
+              ) : (
+                <>
+                  <div className="h-56 w-full" data-testid="slot-trend-chart">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={trendChartData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+                        <XAxis dataKey="bucket" stroke="#71717a" fontSize={10} tickLine={false} />
+                        <YAxis
+                          domain={[0, 100]}
+                          stroke="#71717a"
+                          fontSize={10}
+                          tickLine={false}
+                          tickFormatter={(val) => `${val}%`}
+                        />
+                        <Tooltip
+                          content={
+                            <SlotTrendTooltip
+                              slotKeys={slotTrend.slotKeys}
+                              slotLabels={slotTrend.slotLabels}
+                            />
+                          }
+                        />
+                        {slotTrend.slotKeys.map((key, index) => (
+                          <Line
+                            key={key}
+                            type="monotone"
+                            dataKey={key}
+                            name={slotTrend.slotLabels[index]}
+                            stroke={SLOT_COLORS[index]}
+                            strokeWidth={2}
+                            dot={{ r: 2 }}
+                            connectNulls
+                            isAnimationActive={false}
+                          />
+                        ))}
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  <p className="text-[10px] text-zinc-500 leading-relaxed">
+                    Each point is one week, and a slot is plotted only for the weeks it was used
+                    — a gap means it was untouched, not that it scored zero.{' '}
+                    {slotTrend.points.length > trendWeeks.length
+                      ? `Showing the most recent ${trendWeeks.length} weeks. `
+                      : ''}
+                    Read it for direction over a month rather than off a single week, and check
+                    the sample size in the tooltip: 100% from one trade is noise, not a finding.
+                  </p>
+                </>
+              )}
+            </div>
+
+            <p className="text-[10px] text-zinc-500 leading-relaxed">
+              A slot with no trades simply has not been used yet.
+              {adherence.assumed > 0 && (
+                <>
+                  {' '}
+                  {adherence.assumed} trade{adherence.assumed === 1 ? '' : 's'} came from a
+                  broker CSV, whose stop the app had to invent — those are counted separately
+                  and cannot be judged against a plan until the real stop is set.
+                </>
+              )}
+              {adherence.unrecorded > 0 && (
+                <>
+                  {' '}
+                  {adherence.unrecorded} trade{adherence.unrecorded === 1 ? '' : 's'} carr
+                  {adherence.unrecorded === 1 ? 'ies' : 'y'} no slot at all (recorded before the
+                  ladder, or imported), so there is nothing to measure them against.
+                </>
+              )}
+            </p>
+          </>
+        )}
       </div>
 
       {/* Chart 1: Cumulative Equity Curve */}

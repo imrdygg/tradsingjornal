@@ -12,10 +12,12 @@ import {
   ShieldAlert,
   FileText,
   Clock,
+  Layers,
 } from 'lucide-react';
 import { TradingDay, Instrument, Trade, DailyReview, Setup } from '../../types';
 import { ModalOverlay } from '../common/ModalOverlay';
 import { findInstrument, instrumentSymbol } from '../../lib/trading/instruments';
+import { DEFAULT_RISK_TIER_AMOUNTS, normalizeTierCaps } from '../../lib/trading/risk-tiers';
 import { money } from '../coach/coach-ui';
 import { requestCoach, CoachErrorCode, CoachResult } from '../../lib/ai/coach-client';
 import { buildJournalDigest } from '../../lib/ai/journal-digest';
@@ -51,6 +53,8 @@ interface PlanLockPreviewModalProps {
   timezone: string;
   /** The account drawdown the trader has agreed to, so the review can weigh the plan's risk. */
   maxDrawdown?: number | null;
+  /** The trader's risk ladder, so the lock shows what each Trade # risks. */
+  riskTiers?: number[];
   onConfirm: () => void;
   onBack: () => void;
 }
@@ -99,9 +103,13 @@ export const PlanLockPreviewModal: React.FC<PlanLockPreviewModalProps> = ({
   setups,
   timezone,
   maxDrawdown,
+  riskTiers = DEFAULT_RISK_TIER_AMOUNTS,
   onConfirm,
   onBack,
 }) => {
+  /** The per-slot caps in force, so the lock shows the whole risk plan it commits to. */
+  const tierCaps = normalizeTierCaps(day.riskTierCaps);
+
   const [market, setMarket] = useState<MarketState>({ loading: false, brief: null, error: null });
   const [review, setReview] = useState<ReviewState>({ loading: false, result: null });
 
@@ -272,6 +280,38 @@ export const PlanLockPreviewModal: React.FC<PlanLockPreviewModalProps> = ({
                 {(day.allowedSessions || []).length}
               </span>
             </div>
+          </div>
+
+          {/* What each numbered slot risks, with the one the trade form will open on. */}
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 pt-2 border-t border-zinc-800/70">
+            <span className="text-zinc-500 uppercase font-mono text-[10px] flex items-center gap-1.5">
+              <Layers className="w-3 h-3 text-zinc-400" />
+              Trade ladder
+            </span>
+            {riskTiers.map((amount, index) => {
+              const tier = index + 1;
+              const isDefault = (day.defaultRiskTier ?? 1) === tier;
+              const cap = tierCaps[index];
+              return (
+                <span
+                  key={tier}
+                  data-testid={`lock-trade-tier-${tier}`}
+                  className={`rounded-lg border px-2 py-0.5 font-mono text-[11px] ${
+                    isDefault
+                      ? 'border-emerald-700 bg-emerald-950/50 text-emerald-200 font-bold'
+                      : 'border-zinc-800 bg-zinc-900 text-zinc-300'
+                  }`}
+                  title={isDefault ? 'Default Trade # when recording a trade' : undefined}
+                >
+                  #{tier} ${amount}
+                  {isDefault ? ' · default' : ''}
+                  {cap > 0 ? ` · max ${cap}` : ''}
+                </span>
+              );
+            })}
+            <span className="rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-0.5 font-mono text-[11px] text-zinc-400">
+              custom
+            </span>
           </div>
 
           {/*

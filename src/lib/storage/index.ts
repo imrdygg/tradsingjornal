@@ -11,6 +11,7 @@ import {
   PatternStudy,
 } from '../../types';
 import { DEFAULT_INSTRUMENTS } from '../trading/instruments';
+import { DEFAULT_RISK_TIER_AMOUNTS } from '../trading/risk-tiers';
 import { clearCachedNotes } from '../ai/checkpoints';
 import { getCurrentTradingDate } from './date-utils';
 
@@ -35,6 +36,32 @@ import { getCurrentTradingDate } from './date-utils';
  * number, when adding setups that existing journals should receive.
  */
 export const SETUP_CATALOG_VERSION = 2;
+
+/**
+ * Keeps a saved setup pointed at the built-in it came from.
+ *
+ * The study guide and example charts are keyed by the built-in's name, so a rename would
+ * otherwise cost the trader the material that teaches the setup they renamed. The link is
+ * recorded once, from whatever the setup answered to before the save, and from then on it
+ * survives any number of further renames.
+ *
+ * It is also what stops `ensureSetupCatalog` from adding a built-in back under its original
+ * name after it has been renamed — the renamed copy still counts as that setup.
+ */
+function keepBuiltinLink(next: Setup, previous?: Setup): Setup {
+  if (next.builtinName) return next;
+
+  const source = (previous?.builtinName ?? previous?.name ?? next.name).trim().toLowerCase();
+  const match = DEFAULT_SETUPS.find((builtin) => builtin.name.toLowerCase() === source);
+  if (match) return { ...next, builtinName: match.name };
+
+  // A setup typed by hand under a built-in's name ("VWAP Reclaim") links to it as well, so
+  // it picks up the guide instead of falling back to the empty personal-notes card.
+  const direct = DEFAULT_SETUPS.find(
+    (builtin) => builtin.name.toLowerCase() === next.name.trim().toLowerCase()
+  );
+  return direct ? { ...next, builtinName: direct.name } : next;
+}
 export const DEFAULT_SETUPS: Setup[] = [
   { id: 'engulfing', name: 'Engulfing', active: true, createdAt: '2026-01-01T00:00:00Z' },
   { id: 'support', name: 'Support', active: true, createdAt: '2026-01-01T00:00:00Z' },
@@ -83,6 +110,8 @@ export const DEFAULT_PROFILE: UserProfile = {
   timezone: 'America/New_York',
   defaultInstrument: 'MES',
   defaultDailyLossLimit: 100,
+  // Four fixed risk slots plus a custom amount, editable in Settings.
+  riskTierAmounts: [...DEFAULT_RISK_TIER_AMOUNTS],
   // A starting figure the trader is expected to change to their own funding-firm rule.
   // It is a limit, not a target: the panel reports room against it either way.
   maxDrawdown: 1000,
@@ -338,7 +367,13 @@ export const storage = {
     }
     if (version >= SETUP_CATALOG_VERSION) return stored;
 
-    const known = new Set(stored.map((setup) => setup.name.trim().toLowerCase()));
+    // Both names count as "already here": a setup the trader renamed still occupies the
+    // built-in it came from, so a later release must not add that built-in back.
+    const known = new Set<string>();
+    for (const setup of stored) {
+      known.add(setup.name.trim().toLowerCase());
+      if (setup.builtinName) known.add(setup.builtinName.trim().toLowerCase());
+    }
     const arrivals = DEFAULT_SETUPS.filter(
       (setup) => (setup.since ?? 1) > version && !known.has(setup.name.trim().toLowerCase())
     );
@@ -368,16 +403,132 @@ export const storage = {
       return updated;
     } else {
       const idx = list.findIndex((s) => s.id === setupOrName.id);
+      const previous = idx >= 0 ? list[idx] : undefined;
+      // Every save goes through here, including the Playbook's edit sheet, so a rename
+      // cannot slip past the one place that keeps the built-in link alive.
+      const next = keepBuiltinLink(setupOrName, previous);
       let updated: Setup[];
       if (idx >= 0) {
         updated = [...list];
-        updated[idx] = setupOrName;
+        updated[idx] = next;
       } else {
-        updated = [...list, setupOrName];
+        updated = [...list, next];
       }
       setItem(STORAGE_KEYS.SETUPS, updated);
       return updated;
     }
+  },
+
+  /**
+   * Renames one setup, keeping its place in the order.
+   *
+   * Returns null when the name is empty, or when another setup already answers to it — the
+   * caller shows its own message for both, and this is the guard behind it. Names are
+   * compared case-insensitively because two setups that differ only by case are the same
+   * setup as far as the dropdown and the analytics are concerned.
+   */
+  renameSetup(id: string, name: string): Setup[] | null {
+    const list = this.getSetups();
+    const index = list.findIndex((setup) => setup.id === id);
+    if (index < 0) return null;
+
+    const trimmed = name.trim();
+    if (!trimmed) return null;
+    const taken = list.some(
+      (setup) => setup.id !== id && setup.name.trim().toLowerCase() === trimmed.toLowerCase()
+    );
+    if (taken) return null;
+    if (list[index].name === trimmed) return list;
+
+    return this.saveSetup({ ...list[index], name: trimmed });
+  },
+
+  /**
+   * Reorders the catalog to the given ids.
+   *
+   * Anything not named is appended in its current order rather than dropped, so a caller
+   * working from a stale list can never delete a setup by reordering.
+   */
+  reorderSetups(orderedIds: string[]): Setup[] {
+    const list = this.getSetups();
+    const byId = new Map(list.map((setup) => [setup.id, setup]));
+    const reordered: Setup[] = [];
+
+    for (const id of orderedIds) {
+      const setup = byId.get(id);
+      if (setup) {
+        reordered.push(setup);
+        byId.delete(id);
+      }
+    }
+    for (const setup of list) {
+      if (byId.has(setup.id)) reordered.push(setup);
+    }
+
+    setItem(STORAGE_KEYS.SETUPS, reordered);
+    return reordered;
+  },
+
+  /**
+   * How many logged trades and planned days still refer to a setup by name.
+   *
+   * Counted before a rename is applied, because a rename does not touch the journal: a
+   * trade records the name it was logged with, which is deliberate. It means history keeps
+   * saying what it said at the time, and the count is what lets the trader decide whether
+   * to bring the old entries along.
+   */
+  countSetupReferences(name: string): { trades: number; days: number } {
+    const wanted = name.trim().toLowerCase();
+    if (!wanted) return { trades: 0, days: 0 };
+
+    const trades = this.getTrades().filter(
+      (trade) => (trade.setupName ?? '').trim().toLowerCase() === wanted
+    ).length;
+    const days = this.getTradingDays().filter((day) =>
+      (day.watchedSetups ?? []).some((entry) => entry.trim().toLowerCase() === wanted)
+    ).length;
+
+    return { trades, days };
+  },
+
+  /**
+   * Moves the entries that refer to a setup onto its new name.
+   *
+   * Separate from the rename on purpose: renaming a setup and rewriting what the journal
+   * already recorded are different decisions, and this one is only made when the trader
+   * asks for it.
+   */
+  relabelSetupReferences(oldName: string, newName: string): { trades: number; days: number } {
+    const from = oldName.trim().toLowerCase();
+    const to = newName.trim();
+    if (!from || !to || from === to.toLowerCase()) return { trades: 0, days: 0 };
+
+    const trades = this.getTrades();
+    let tradesChanged = 0;
+    const nextTrades = trades.map((trade) => {
+      if ((trade.setupName ?? '').trim().toLowerCase() !== from) return trade;
+      tradesChanged += 1;
+      return { ...trade, setupName: to, updatedAt: new Date().toISOString() };
+    });
+    if (tradesChanged) setItem(STORAGE_KEYS.TRADES, nextTrades);
+
+    const days = this.getTradingDays();
+    let daysChanged = 0;
+    const nextDays = days.map((day) => {
+      const watched = day.watchedSetups ?? [];
+      if (!watched.some((entry) => entry.trim().toLowerCase() === from)) return day;
+      daysChanged += 1;
+      return {
+        ...day,
+        watchedSetups: watched.map((entry) =>
+          entry.trim().toLowerCase() === from ? to : entry
+        ),
+        updatedAt: new Date().toISOString(),
+      };
+    });
+    if (daysChanged) setItem(STORAGE_KEYS.DAYS, nextDays);
+
+    return { trades: tradesChanged, days: daysChanged };
   },
 
   deleteSetup(id: string): Setup[] {
@@ -427,6 +578,8 @@ export const storage = {
       allowedSessions: ['Regular Session'],
       marketBias: 'neutral',
       watchedSetups: ['Engulfing', 'Support', 'Resistance'],
+      // Trade #1 is the default slot, so recording a trade always has a risk attached.
+      defaultRiskTier: 1,
       importantLevels: [],
       waitingFor: '',
       stayOutIf: '',
@@ -491,6 +644,8 @@ export const storage = {
       primaryInstrument: day.primaryInstrument,
       allowedSessions: [...day.allowedSessions],
       marketBias: day.marketBias,
+      defaultRiskTier: day.defaultRiskTier,
+      riskTierCaps: day.riskTierCaps ? [...day.riskTierCaps] : undefined,
       lockedAt,
     };
 

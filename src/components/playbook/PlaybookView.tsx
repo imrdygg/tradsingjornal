@@ -367,7 +367,11 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
       <div className="space-y-3">
         {setups.map((s, index) => {
           const setupImages = s.images || [];
-          const guide: SetupGuide | undefined = resolveSetupGuide(s.name);
+          // The teaching material is keyed by the BUILT-IN name, so a setup the trader has
+          // renamed keeps its guide and its example charts instead of falling back to the
+          // generic ones. See `builtinName` on the Setup type.
+          const studyName = s.builtinName ?? s.name;
+          const guide: SetupGuide | undefined = resolveSetupGuide(studyName);
           const isExpanded = expandedIds.has(s.id);
           const nameMatches = (list: string[] | undefined) =>
             !!list &&
@@ -566,8 +570,8 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
                       {/* Example diagrams: green = bullish, red = bearish. They print in
                           candle by candle as the guide unfolds. */}
                       <div className="grid grid-cols-2 gap-3">
-                        <SetupDiagram setupName={s.name} direction="bullish" animate={isExpanded} />
-                        <SetupDiagram setupName={s.name} direction="bearish" animate={isExpanded} />
+                        <SetupDiagram setupName={studyName} direction="bullish" animate={isExpanded} />
+                        <SetupDiagram setupName={studyName} direction="bearish" animate={isExpanded} />
                       </div>
 
                       <GuideSection
@@ -620,8 +624,8 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
                       */}
                       <div className="space-y-2">
                         <div className="grid grid-cols-2 gap-3">
-                          <SetupDiagram setupName={s.name} direction="bullish" animate={isExpanded} />
-                          <SetupDiagram setupName={s.name} direction="bearish" animate={isExpanded} />
+                          <SetupDiagram setupName={studyName} direction="bullish" animate={isExpanded} />
+                          <SetupDiagram setupName={studyName} direction="bearish" animate={isExpanded} />
                         </div>
                         <p className="text-[10px] text-zinc-500 leading-relaxed">
                           This setup has no built-in chart, so these are the generic rising and

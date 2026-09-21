@@ -237,6 +237,21 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
   /** The coach's recorded call on this entry, or null when it never made one. */
   const coachComparison = compareEntry(trade);
 
+  /**
+   * The risk slot this trade was recorded against, and how close the size came to it.
+   *
+   * `riskTier` is a number for slots #1–#4 and null for a custom amount; undefined means
+   * the trade predates the ladder (an import, or an older record), so no slot is shown
+   * rather than one being guessed at.
+   */
+  const hasRiskSlot = typeof trade.riskTier === 'number' || trade.riskTier === null;
+  const slotName = typeof trade.riskTier === 'number' ? `Trade #${trade.riskTier}` : 'Custom risk';
+  const riskTarget = trade.plannedRisk ?? null;
+  const riskDiff =
+    riskTarget !== null ? Math.round((trade.initialRisk - riskTarget) * 100) / 100 : null;
+  // An invented stop makes the actual risk a placeholder, so it is never called on-plan.
+  const riskOnPlan = riskDiff !== null && !assumedRisk && Math.abs(riskDiff) <= 0.01;
+
   return (
     <ModalOverlay onRequestClose={onClose} label="Trade detail">
       <div
@@ -273,6 +288,16 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
               >
                 {isClosed ? 'Closed' : 'Open'}
               </span>
+              {hasRiskSlot && (
+                <span
+                  data-trade-risk-slot={typeof trade.riskTier === 'number' ? trade.riskTier : 'custom'}
+                  title="The risk slot this trade was taken against"
+                  className="text-[11px] px-2 py-0.5 rounded-full border border-zinc-700 bg-zinc-900 font-mono text-zinc-300"
+                >
+                  {slotName}
+                  {riskTarget !== null ? ` · $${riskTarget}` : ''}
+                </span>
+              )}
             </div>
             <p className="text-[11px] text-zinc-400">
               {trade.setupName ? `${trade.setupName} · ` : ''}
@@ -400,6 +425,81 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
               />
             </div>
           </Section>
+
+          {/*
+            The slot the trade was taken against and what it actually cost. Kept apart from
+            the execution numbers above because this is the discipline question — did the
+            size match the plan — rather than a description of the fill.
+          */}
+          {hasRiskSlot && (
+            <Section
+              title="Risk plan"
+              icon={<ShieldCheck className="w-3.5 h-3.5 text-zinc-400" />}
+              tone={assumedRisk ? 'default' : riskOnPlan ? 'emerald' : 'amber'}
+            >
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <Metric
+                  label="Trade #"
+                  value={typeof trade.riskTier === 'number' ? `#${trade.riskTier}` : 'Custom'}
+                  sub={typeof trade.riskTier === 'number' ? 'fixed slot' : 'custom amount'}
+                />
+                <Metric
+                  label="Target risk"
+                  value={riskTarget !== null ? money(riskTarget) : '—'}
+                  sub={riskTarget === null ? 'no amount recorded' : 'from your plan'}
+                />
+                <Metric
+                  label="Actual risk"
+                  value={
+                    <span className={assumedRisk ? 'text-amber-300' : undefined}>
+                      {money(trade.initialRisk)}
+                    </span>
+                  }
+                  sub={assumedRisk ? 'assumed stop — not real' : undefined}
+                />
+                <Metric
+                  label="Vs. target"
+                  value={
+                    riskDiff === null ? (
+                      '—'
+                    ) : (
+                      <span className={riskOnPlan ? 'text-emerald-400' : 'text-amber-300'}>
+                        {riskDiff > 0 ? '+' : ''}
+                        {money(riskDiff)}
+                      </span>
+                    )
+                  }
+                  sub={
+                    riskDiff === null
+                      ? undefined
+                      : riskOnPlan
+                      ? 'on plan'
+                      : riskDiff > 0
+                      ? 'over the slot'
+                      : 'under the slot'
+                  }
+                />
+              </div>
+
+              <p className="text-[11px] leading-relaxed text-zinc-400">
+                {assumedRisk
+                  ? 'This trade came from a broker CSV, which carries no stop, so its risk is a placeholder and cannot be compared with its slot yet. Set the real stop in Settings → Fix imported risk.'
+                  : riskDiff === null || riskTarget === null
+                  ? `No target amount was recorded against this ${slotName.toLowerCase()}.`
+                  : riskOnPlan
+                  ? `Sized to its slot — the risk on this trade matches the ${money(
+                      riskTarget
+                    )} the slot allows.`
+                  : riskDiff > 0
+                  ? `Took ${money(riskDiff)} more risk than the ${money(
+                      riskTarget
+                    )} its slot allows.`
+                  : `Took ${money(Math.abs(riskDiff))} less risk than the ${money(
+                      riskTarget
+                    )} its slot allows.`}
+              </p>
+            </Section>
+          )}
 
           {/*
             The coach's call at entry, laid out against the fill it was compared with.

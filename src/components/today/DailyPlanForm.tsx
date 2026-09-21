@@ -31,6 +31,11 @@ import { ImportantLevelsEditor } from './ImportantLevelsEditor';
 import { PlanChangeDialog } from './PlanChangeDialog';
 import { formatTimestamp } from '../../lib/storage/date-utils';
 import { instrumentSymbol } from '../../lib/trading/instruments';
+import {
+  DEFAULT_RISK_TIER_AMOUNTS,
+  countTradesByTier,
+  normalizeTierCaps,
+} from '../../lib/trading/risk-tiers';
 import { ImageLightboxModal } from '../common/ImageLightboxModal';
 import { MesScaleInBreakevenCalculator } from './MesScaleInBreakevenCalculator';
 import { PlanFieldCoach } from './PlanFieldCoach';
@@ -85,6 +90,20 @@ interface DailyPlanFormProps {
    * the warning above the form can never disagree about the same position.
    */
   plannedSizeRisk?: PlannedSizeRisk | null;
+  /**
+   * The trader's risk ladder — what trade #1 through #4 each risk.
+   *
+   * Absent falls back to the built-in $25/$50/$75/$100 ladder, so the plan still reads
+   * correctly before the profile has ever been edited.
+   */
+  riskTiers?: number[];
+  /**
+   * Every trade recorded on this day, so the slot caps can show what has been used.
+   *
+   * The whole day's list, not just the open positions: a cap counts trades taken, and a
+   * closed trade still used its slot.
+   */
+  todayTrades?: Trade[];
 }
 
 export const DailyPlanForm: React.FC<DailyPlanFormProps> = ({
@@ -102,8 +121,42 @@ export const DailyPlanForm: React.FC<DailyPlanFormProps> = ({
   coachContext,
   drawdownCapacity,
   plannedSizeRisk,
+  riskTiers = DEFAULT_RISK_TIER_AMOUNTS,
+  todayTrades = [],
 }) => {
   const isLocked = !!day.lockedAt;
+  // Trade #1 is the fallback on a day created before the ladder existed.
+  const defaultRiskTier = day.defaultRiskTier ?? 1;
+  const tierCaps = normalizeTierCaps(day.riskTierCaps);
+  const tierUsage = countTradesByTier(todayTrades);
+  /** Cap values being typed, before they are committed. */
+  const [capDrafts, setCapDrafts] = useState<Record<number, string>>({});
+
+  /** "#1:2 #2:1 #3:∞ #4:∞" — the caps as they read in the audit trail. */
+  const capsLabel = (caps: number[]) =>
+    caps.map((cap, index) => `#${index + 1}:${cap > 0 ? cap : '∞'}`).join(' ');
+
+  /**
+   * Saves one slot's cap.
+   *
+   * Committed on blur or Enter rather than per keystroke: a number input that wrote on
+   * every character would record the plan as "1" halfway through typing "12".
+   */
+  const commitCap = (index: number, raw: string) => {
+    const parsed = parseInt(raw, 10);
+    const next = [...tierCaps];
+    next[index] = Number.isInteger(parsed) && parsed > 0 ? Math.min(parsed, 20) : 0;
+    setCapDrafts((prev) => {
+      const copy = { ...prev };
+      delete copy[index];
+      return copy;
+    });
+    if (next[index] === tierCaps[index]) return;
+
+    handleFieldChange('Trade # Caps', capsLabel(tierCaps), capsLabel(next), () => {
+      onSaveDay({ ...day, riskTierCaps: next });
+    });
+  };
   const [isUnlockDialogOpen, setIsUnlockDialogOpen] = useState(false);
 
   // The day's limit measured against the account's floor, or null when the plan fits.
@@ -512,6 +565,108 @@ export const DailyPlanForm: React.FC<DailyPlanFormProps> = ({
           </div>
         </div>
 
+        {/*
+          The numbered risk slots every trade is recorded against. The top row picks which
+          one the trade form opens on; all four plus the custom amount stay available there,
+          so a default of #1 never turns into a rule against a #3 the setup earns. The "max"
+          field under each slot caps how many trades the plan allows at it.
+        */}
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <label className="text-xs font-medium text-zinc-300">
+              Trade ladder — default slot &amp; per-slot caps
+            </label>
+            <span className="text-[10px] font-mono text-zinc-500">
+              Leave max blank for no cap
+            </span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {riskTiers.map((amount, index) => {
+              const tier = index + 1;
+              const isSelected = defaultRiskTier === tier;
+              const cap = tierCaps[index];
+              const used = tierUsage[index];
+              const atCap = cap > 0 && used >= cap;
+              return (
+                <div
+                  key={tier}
+                  data-testid={`tier-card-${tier}`}
+                  className={`rounded-xl border p-2 space-y-1.5 transition-all ${
+                    isSelected
+                      ? 'border-emerald-700 bg-emerald-950/20'
+                      : 'border-zinc-800 bg-zinc-950/60'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    data-testid={`default-trade-tier-${tier}`}
+                    aria-pressed={isSelected}
+                    onClick={() => {
+                      if (isSelected) return;
+                      handleFieldChange(
+                        'Default Trade #',
+                        `Trade #${defaultRiskTier}`,
+                        `Trade #${tier}`,
+                        () => onSaveDay({ ...day, defaultRiskTier: tier })
+                      );
+                    }}
+                    className={`flex w-full items-center justify-between rounded-lg px-1.5 py-1 text-left transition-colors ${
+                      isSelected
+                        ? 'text-emerald-200'
+                        : 'text-zinc-400 hover:text-zinc-200'
+                    }`}
+                  >
+                    <span className="text-xs font-semibold">Trade #{tier}</span>
+                    <span className="text-xs font-mono font-bold">${amount}</span>
+                  </button>
+
+                  <div className="flex items-center gap-1.5">
+                    <label
+                      htmlFor={`tier-cap-${tier}`}
+                      className="shrink-0 text-[10px] font-mono uppercase text-zinc-500"
+                    >
+                      max
+                    </label>
+                    <input
+                      id={`tier-cap-${tier}`}
+                      data-testid={`tier-cap-${tier}`}
+                      type="number"
+                      min="0"
+                      max="20"
+                      step="1"
+                      inputMode="numeric"
+                      placeholder="—"
+                      value={capDrafts[index] ?? (cap > 0 ? String(cap) : '')}
+                      onChange={(e) =>
+                        setCapDrafts((prev) => ({ ...prev, [index]: e.target.value }))
+                      }
+                      onBlur={(e) => commitCap(index, e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                      }}
+                      className="w-12 rounded-lg border border-zinc-800 bg-zinc-950 px-1.5 py-1 text-center text-[11px] font-mono text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
+                    />
+                    <span
+                      data-testid={`tier-usage-${tier}`}
+                      className={`truncate text-[10px] font-mono ${
+                        atCap ? 'text-amber-300' : 'text-zinc-500'
+                      }`}
+                    >
+                      {cap > 0 ? `${used}/${cap} taken` : `${used} taken`}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {tierCaps.some((cap) => cap > 0) && (
+            <p className="text-[10px] font-mono text-zinc-500 leading-relaxed">
+              A cap is checked when a trade is recorded. Going past one warns and is still
+              recorded — the point is to know, not to be blocked.
+            </p>
+          )}
+        </div>
+
         {/* Expanded Risk Details Sub-panel (if Expanded) */}
         {day.riskMode === 'expanded' && (
           <div className="rounded-xl border border-amber-800/60 bg-amber-950/20 p-4 space-y-3">
@@ -657,11 +812,11 @@ export const DailyPlanForm: React.FC<DailyPlanFormProps> = ({
             )}
           </div>
           <div className="flex flex-wrap gap-1.5">
+            {/* Active setups first, then the trader's own order from Settings → Playbook
+                Setups. Sorting by name here would throw that order away on the one screen
+                where a setup is chosen for the day. */}
             {[...setups]
-              .sort(
-                (a, b) =>
-                  Number(b.active) - Number(a.active) || a.name.localeCompare(b.name)
-              )
+              .sort((a, b) => Number(b.active) - Number(a.active))
               .map((s) => {
                 const isWatched = (day.watchedSetups || []).includes(s.name);
                 const hasImages = s.images && s.images.length > 0;

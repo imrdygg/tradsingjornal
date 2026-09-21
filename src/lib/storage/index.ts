@@ -623,6 +623,21 @@ export const storage = {
     return newDay;
   },
 
+  deleteTradingDay(dayId: string): void {
+    setItem(
+      STORAGE_KEYS.DAYS,
+      this.getTradingDays().filter((day) => day.id !== dayId)
+    );
+    setItem(
+      STORAGE_KEYS.TRADES,
+      this.getTrades().filter((trade) => trade.tradingDayId !== dayId)
+    );
+    setItem(
+      STORAGE_KEYS.REVIEWS,
+      this.getReviews().filter((review) => review.tradingDayId !== dayId)
+    );
+  },
+
   saveTradingDay(day: TradingDay): TradingDay {
     const days = this.getTradingDays();
     const idx = days.findIndex((d) => d.id === day.id);

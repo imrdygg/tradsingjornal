@@ -848,6 +848,13 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     setViewingTradeId((current) => (current === tradeId ? null : current));
   };
 
+  const handleDeleteTradingDay = (dayId: string) => {
+    storage.deleteTradingDay(dayId);
+    setTradingDays(storage.getTradingDays());
+    setTrades(storage.getTrades());
+    setReviews(storage.getReviews());
+  };
+
   /**
    * Adds or replaces the execution review on an already-recorded trade — this
    * is how imported and closed trades get their discipline score.
@@ -1437,7 +1444,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             instruments={instruments}
             focusDayId={historyFocusDayId}
             onConsumeFocusDay={() => setHistoryFocusDayId(null)}
-            onDeleteTrade={handleDeleteTrade}
+            onDeleteTradingDay={handleDeleteTradingDay}
           />
         );
 

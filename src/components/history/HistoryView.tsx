@@ -11,6 +11,7 @@ import {
   Layers,
   Filter,
   Tag,
+  Trash2,
 } from 'lucide-react';
 import { TradingDay, Trade, DailyReview, Setup, Instrument } from '../../types';
 import { formatTradingDate, formatTimestamp } from '../../lib/storage/date-utils';
@@ -41,8 +42,8 @@ interface HistoryViewProps {
   focusDayId?: string | null;
   /** Clears the focus request once it has been applied. */
   onConsumeFocusDay?: () => void;
-  /** Deletes a trade after the history detail confirms the request. */
-  onDeleteTrade: (tradeId: string) => void;
+  /** Deletes a complete historical day, including its trades and review. */
+  onDeleteTradingDay: (dayId: string) => void;
 }
 
 export const HistoryView: React.FC<HistoryViewProps> = ({
@@ -53,7 +54,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
   instruments,
   focusDayId = null,
   onConsumeFocusDay,
-  onDeleteTrade,
+  onDeleteTradingDay,
 }) => {
   const [selectedDayId, setSelectedDayId] = useState<string | null>(null);
 
@@ -243,10 +244,19 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
     setEndDate('');
   };
 
-  const handleDeleteTrade = (trade: Trade) => {
-    const label = `${trade.direction.toUpperCase()} trade at ${trade.entryPrice.toFixed(2)}`;
-    if (window.confirm(`Delete this ${label}? This cannot be undone.`)) {
-      onDeleteTrade(trade.id);
+  const handleDeleteTradingDay = (day: TradingDay) => {
+    const tradeCount = trades.filter((trade) => trade.tradingDayId === day.id).length;
+    const reviewText = reviews.some((review) => review.tradingDayId === day.id)
+      ? ' and its review'
+      : '';
+    const tradeText = `${tradeCount} trade${tradeCount === 1 ? '' : 's'}`;
+    if (
+      window.confirm(
+        `Delete the ${formatTradingDate(day.tradeDate)} history? This removes ${tradeText}${reviewText} and cannot be undone.`
+      )
+    ) {
+      onDeleteTradingDay(day.id);
+      setSelectedDayId(null);
     }
   };
 
@@ -428,15 +438,29 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                       {formatTradingDate(day.tradeDate)}
                     </span>
                   </div>
-                  <span
-                    className={`text-[11px] px-2 py-0.5 rounded font-mono uppercase font-semibold ${
-                      day.riskMode === 'expanded'
-                        ? 'bg-amber-950/80 text-amber-300 border border-amber-800'
-                        : 'bg-zinc-800 text-zinc-300'
-                    }`}
-                  >
-                    {day.riskMode}
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        handleDeleteTradingDay(day);
+                      }}
+                      className="rounded-lg p-1.5 text-zinc-500 hover:bg-rose-950/60 hover:text-rose-300"
+                      title="Delete this history"
+                      aria-label={`Delete history for ${formatTradingDate(day.tradeDate)}`}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                    <span
+                      className={`text-[11px] px-2 py-0.5 rounded font-mono uppercase font-semibold ${
+                        day.riskMode === 'expanded'
+                          ? 'bg-amber-950/80 text-amber-300 border border-amber-800'
+                          : 'bg-zinc-800 text-zinc-300'
+                      }`}
+                    >
+                      {day.riskMode}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-3 gap-2 rounded-xl bg-zinc-950/70 border border-zinc-800/80 p-2.5 font-mono text-xs">
@@ -673,7 +697,6 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                       key={t.id}
                       trade={t}
                       instruments={instruments}
-                      onDelete={() => handleDeleteTrade(t)}
                     />
                   ))}
                 </div>

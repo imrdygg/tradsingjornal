@@ -131,6 +131,14 @@ test.describe('Undoing a plan lock', () => {
     await expect(page.getByText(/Before you lock/i)).toBeVisible();
     await expect(page.getByText(/Sector heat map/i)).toBeVisible();
     await expect(page.getByText(/Coach opinion on this plan/i)).toBeVisible();
+
+    // The preview carries the whole plan rather than a summary, so the trader sees
+    // exactly what the lock commits to without going back to the form.
+    const preview = page.getByRole('dialog');
+    await expect(preview.getByText(/Important price levels/i)).toBeVisible();
+    await expect(preview.getByText(/What am I waiting for\?/i)).toBeVisible();
+    await expect(preview.getByText('Engulfing, Support, Resistance')).toBeVisible();
+
     await page.locator('#plan-lock-confirm-btn').click();
 
     await expect(page.getByText(/Immutable Baseline Stored/i)).toBeVisible();

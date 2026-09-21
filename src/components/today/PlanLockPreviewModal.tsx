@@ -8,6 +8,10 @@ import {
   Target,
   Eye,
   CalendarClock,
+  Tag,
+  ShieldAlert,
+  FileText,
+  Clock,
 } from 'lucide-react';
 import { TradingDay, Instrument, Trade, DailyReview, Setup } from '../../types';
 import { ModalOverlay } from '../common/ModalOverlay';
@@ -193,7 +197,7 @@ export const PlanLockPreviewModal: React.FC<PlanLockPreviewModalProps> = ({
           </div>
         </div>
 
-        {/* 1. Plan stats — what is being committed to */}
+        {/* 1. The day's plan, read-only — the whole thing the lock commits to, not a summary */}
         <div className="rounded-xl border border-zinc-800 bg-zinc-950/80 p-3.5 space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-[10px] font-mono uppercase font-bold text-zinc-400 flex items-center gap-1.5">
@@ -229,16 +233,101 @@ export const PlanLockPreviewModal: React.FC<PlanLockPreviewModalProps> = ({
               </span>
             </div>
           </div>
-          <div className="grid sm:grid-cols-2 gap-2 pt-1 border-t border-zinc-800/70">
+          {/* Sessions and the watch list, spelled out rather than counted. */}
+          <div className="grid sm:grid-cols-2 gap-3 pt-2 border-t border-zinc-800/70">
+            <div>
+              <span className="text-zinc-500 uppercase font-mono text-[10px] block">
+                Sessions allowed
+              </span>
+              <span className="text-[11px] text-zinc-300 leading-relaxed">
+                {(day.allowedSessions || []).length
+                  ? (day.allowedSessions || []).join(' · ')
+                  : 'no session selected'}
+              </span>
+            </div>
+            <div>
+              <span className="text-zinc-500 uppercase font-mono text-[10px] block">
+                Setups watched
+              </span>
+              <span className="text-[11px] text-zinc-300 leading-relaxed">
+                {(day.watchedSetups || []).length
+                  ? (day.watchedSetups || []).join(', ')
+                  : 'no setups selected'}
+              </span>
+            </div>
+          </div>
+
+          {/* Key levels — the prices the plan is built around. */}
+          <div className="pt-2 border-t border-zinc-800/70">
+            <span className="text-zinc-500 uppercase font-mono text-[10px] flex items-center gap-1.5">
+              <Tag className="w-3 h-3 text-zinc-400" />
+              Important price levels
+            </span>
+            {(day.importantLevels || []).length ? (
+              <ul className="mt-1.5 grid gap-1 sm:grid-cols-2">
+                {(day.importantLevels || []).map((level) => (
+                  <li key={level.id} className="flex items-baseline gap-2 text-[11px]">
+                    <span className="rounded border border-zinc-800 bg-zinc-900 px-1.5 py-0.5 font-mono font-bold text-zinc-100">
+                      {level.price.toFixed(2)}
+                    </span>
+                    {level.label && <span className="text-zinc-300 truncate">{level.label}</span>}
+                    {level.notes && (
+                      <span className="text-zinc-500 italic truncate">— {level.notes}</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-1 text-[11px] text-zinc-500">No key levels marked for today.</p>
+            )}
+          </div>
+
+          {/* The two questions that decide whether a trade is taken at all. */}
+          <div className="grid sm:grid-cols-2 gap-3 pt-2 border-t border-zinc-800/70">
             <p className="text-[11px] text-zinc-400 leading-relaxed">
-              <span className="text-zinc-500 uppercase font-mono text-[10px] block">Watching for</span>
-              {day.watchedSetups.length ? day.watchedSetups.join(', ') : 'no setups selected'}
+              <span className="text-zinc-500 uppercase font-mono text-[10px] flex items-center gap-1.5">
+                <Clock className="w-3 h-3 text-zinc-400" />
+                What am I waiting for?
+              </span>
+              {day.waitingFor ? day.waitingFor : 'nothing written'}
             </p>
             <p className="text-[11px] text-zinc-400 leading-relaxed">
-              <span className="text-zinc-500 uppercase font-mono text-[10px] block">Stay out if</span>
+              <span className="text-zinc-500 uppercase font-mono text-[10px] flex items-center gap-1.5">
+                <ShieldAlert className="w-3 h-3 text-zinc-400" />
+                Stay out if
+              </span>
               {day.stayOutIf ? day.stayOutIf : 'no stay-out rule written'}
             </p>
           </div>
+
+          <p className="text-[11px] text-zinc-400 leading-relaxed pt-2 border-t border-zinc-800/70">
+            <span className="text-zinc-500 uppercase font-mono text-[10px] flex items-center gap-1.5">
+              <FileText className="w-3 h-3 text-zinc-400" />
+              Notes
+            </span>
+            {day.notes ? day.notes : 'no notes for today'}
+          </p>
+
+          {/* Expanded risk: the written reason this day is allowed more than the normal limit. */}
+          {day.riskMode === 'expanded' && (
+            <div className="rounded-lg border border-amber-800/60 bg-amber-950/20 p-2.5 space-y-1.5">
+              <span className="text-[10px] font-mono uppercase font-bold text-amber-300 flex items-center gap-1.5">
+                <AlertTriangle className="w-3 h-3 text-amber-400" />
+                Expanded risk — why this day is bigger
+              </span>
+              <p className="text-[11px] text-zinc-300 leading-relaxed">
+                Normal limit {money(day.normalLossLimit)} → today {money(day.plannedLossLimit)}
+              </p>
+              {day.profitCushionContext && (
+                <p className="text-[11px] text-zinc-400 leading-relaxed">
+                  Cushion: {day.profitCushionContext}
+                </p>
+              )}
+              <p className="text-[11px] text-zinc-400 leading-relaxed">
+                {day.riskIncreaseReason ? day.riskIncreaseReason : 'no written reason recorded'}
+              </p>
+            </div>
+          )}
         </div>
 
         {/* 2. Sector heat map — what the market is doing right now */}

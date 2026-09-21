@@ -1437,6 +1437,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             instruments={instruments}
             focusDayId={historyFocusDayId}
             onConsumeFocusDay={() => setHistoryFocusDayId(null)}
+            onDeleteTrade={handleDeleteTrade}
           />
         );
 

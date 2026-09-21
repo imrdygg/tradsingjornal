@@ -10,12 +10,22 @@ import {
   X,
   Layers,
   Filter,
+  Tag,
 } from 'lucide-react';
 import { TradingDay, Trade, DailyReview, Setup, Instrument } from '../../types';
 import { formatTradingDate, formatTimestamp } from '../../lib/storage/date-utils';
 import { dayHasRecordedActivity } from '../../lib/history/day-activity';
 import { TradeCard } from '../trades/TradeCard';
 import { ModalOverlay } from '../common/ModalOverlay';
+
+/**
+ * How many of a day's price levels a card in the list shows.
+ *
+ * The card is a summary — enough to recognise the day at a glance, not the whole plan. A
+ * handful of levels is typical, and a day carrying a dozen (an overnight range marked
+ * tick by tick) would otherwise push every other card off the screen.
+ */
+const LEVELS_ON_CARD = 3;
 
 interface HistoryViewProps {
   tradingDays: TradingDay[];
@@ -31,6 +41,8 @@ interface HistoryViewProps {
   focusDayId?: string | null;
   /** Clears the focus request once it has been applied. */
   onConsumeFocusDay?: () => void;
+  /** Deletes a trade after the history detail confirms the request. */
+  onDeleteTrade: (tradeId: string) => void;
 }
 
 export const HistoryView: React.FC<HistoryViewProps> = ({
@@ -41,6 +53,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
   instruments,
   focusDayId = null,
   onConsumeFocusDay,
+  onDeleteTrade,
 }) => {
   const [selectedDayId, setSelectedDayId] = useState<string | null>(null);
 
@@ -49,6 +62,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
   const [filterRiskMode, setFilterRiskMode] = useState<'all' | 'normal' | 'expanded'>('all');
   const [filterSession, setFilterSession] = useState<string>('all');
   const [filterSetup, setFilterSetup] = useState<string>('all');
+  const [filterLevelTag, setFilterLevelTag] = useState<string>('all');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
 
@@ -121,6 +135,19 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
     [tradingDays, tradesPerDay, dayStats]
   );
 
+  const availableLevelTags = useMemo(() => {
+    const tags = new Set<string>();
+    for (const day of tradingDays) {
+      for (const level of day.importantLevels ?? []) {
+        for (const tag of level.tags ?? []) {
+          const normalized = tag.trim();
+          if (normalized) tags.add(normalized);
+        }
+      }
+    }
+    return Array.from(tags).sort((a, b) => a.localeCompare(b));
+  }, [tradingDays]);
+
   // Filtered days list
   const filteredDays = useMemo(() => {
     return daysWithActivity.filter((day) => {
@@ -152,6 +179,15 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
         if (!hasSetup) return false;
       }
 
+      // Level tag filter. A day matches when at least one of its important levels has the
+      // selected tag; tags belong to levels, not to the day's trades.
+      if (filterLevelTag !== 'all') {
+        const hasLevelTag = (day.importantLevels ?? []).some((level) =>
+          (level.tags ?? []).some((tag) => tag.trim() === filterLevelTag)
+        );
+        if (!hasLevelTag) return false;
+      }
+
       return true;
     });
   }, [
@@ -163,6 +199,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
     filterResult,
     filterSession,
     filterSetup,
+    filterLevelTag,
     trades,
   ]);
 
@@ -187,6 +224,32 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
     return trades.filter((t) => t.tradingDayId === selectedDayId);
   }, [trades, selectedDayId]);
 
+  const hasActiveFilters =
+    filterResult !== 'all' ||
+    filterRiskMode !== 'all' ||
+    filterSession !== 'all' ||
+    filterSetup !== 'all' ||
+    filterLevelTag !== 'all' ||
+    !!startDate ||
+    !!endDate;
+
+  const handleResetFilters = () => {
+    setFilterResult('all');
+    setFilterRiskMode('all');
+    setFilterSession('all');
+    setFilterSetup('all');
+    setFilterLevelTag('all');
+    setStartDate('');
+    setEndDate('');
+  };
+
+  const handleDeleteTrade = (trade: Trade) => {
+    const label = `${trade.direction.toUpperCase()} trade at ${trade.entryPrice.toFixed(2)}`;
+    if (window.confirm(`Delete this ${label}? This cannot be undone.`)) {
+      onDeleteTrade(trade.id);
+    }
+  };
+
   const selectedDayReview = useMemo(() => {
     if (!selectedDayId) return undefined;
     return reviews.find((r) => r.tradingDayId === selectedDayId);
@@ -209,12 +272,23 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
 
       {/* Filter Bar */}
       <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 space-y-2.5">
-        <div className="flex items-center gap-1.5 text-xs text-zinc-400 font-mono font-semibold uppercase">
-          <Filter className="w-3.5 h-3.5 text-zinc-300" />
-          Filter Days
+        <div className="flex items-center justify-between gap-2 text-xs text-zinc-400 font-mono font-semibold uppercase">
+          <div className="flex items-center gap-1.5">
+            <Filter className="w-3.5 h-3.5 text-zinc-300" />
+            Filter Days
+          </div>
+          {hasActiveFilters && (
+            <button
+              type="button"
+              onClick={handleResetFilters}
+              className="text-[10px] normal-case tracking-normal text-zinc-400 hover:text-zinc-200"
+            >
+              Reset filters
+            </button>
+          )}
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2">
           <div>
             <label className="text-[10px] text-zinc-400 block mb-0.5 flex items-center gap-1">
               <Calendar className="w-3 h-3 text-emerald-400" />
@@ -300,6 +374,25 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
               ))}
             </select>
           </div>
+
+          <div>
+            <label className="text-[10px] text-zinc-400 block mb-0.5 flex items-center gap-1">
+              <Tag className="w-3 h-3 text-emerald-400" />
+              Level Tag
+            </label>
+            <select
+              value={filterLevelTag}
+              onChange={(e) => setFilterLevelTag(e.target.value)}
+              className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-200 focus:outline-none"
+            >
+              <option value="all">All Level Tags</option>
+              {availableLevelTags.map((tag) => (
+                <option key={tag} value={tag}>
+                  {tag}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 
@@ -314,6 +407,9 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
           {filteredDays.map((day) => {
             const stats = dayStats.get(day.id);
+            const dayLevels = day.importantLevels ?? [];
+            const shownLevels = dayLevels.slice(0, LEVELS_ON_CARD);
+            const hiddenLevels = dayLevels.length - shownLevels.length;
             const pnl = stats?.realizedPnL || 0;
             const pnlColor =
               pnl > 0 ? 'text-emerald-400' : pnl < 0 ? 'text-rose-400' : 'text-zinc-400';
@@ -363,6 +459,50 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                     </span>
                   </div>
                 </div>
+
+                {/*
+                  The prices the day was planned around, each with its own tags.
+
+                  Shown per level rather than as one pooled tag list, because a tag belongs
+                  to the level it was put on: pooling "liquidity" from four levels would
+                  claim something about all of them. Days with no levels show nothing here.
+                */}
+                {shownLevels.length > 0 && (
+                  <div className="space-y-1 rounded-xl border border-zinc-800/80 bg-zinc-950/70 p-2.5">
+                    <span className="text-[10px] text-zinc-400 uppercase font-mono flex items-center gap-1.5">
+                      <Tag className="w-3 h-3 text-zinc-400" />
+                      Price levels ({dayLevels.length})
+                    </span>
+                    {shownLevels.map((level) => (
+                      <div
+                        key={level.id}
+                        className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 min-w-0"
+                      >
+                        <span className="font-mono font-bold text-xs text-zinc-200">
+                          {level.price.toFixed(2)}
+                        </span>
+                        {level.label && (
+                          <span className="text-[11px] text-zinc-300 truncate max-w-[55%]">
+                            {level.label}
+                          </span>
+                        )}
+                        {(level.tags ?? []).map((tag) => (
+                          <span
+                            key={tag}
+                            className="rounded border border-zinc-700 bg-zinc-900 px-1 py-px font-mono text-[9px] text-zinc-400"
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    ))}
+                    {hiddenLevels > 0 && (
+                      <span className="text-[10px] text-zinc-500 font-mono">
+                        +{hiddenLevels} more — open the day
+                      </span>
+                    )}
+                  </div>
+                )}
 
                 <div className="flex items-center justify-between text-xs text-zinc-400 pt-1">
                   <span className="truncate max-w-[200px]">
@@ -455,6 +595,48 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                 </div>
               )}
 
+              {/*
+                The prices the plan was built around, tags and all.
+
+                Shown only when the day actually has levels: most days have none, and a
+                line saying so on every one of them would be noise in an archive. Styled
+                like the lock preview so a level reads the same wherever it is met.
+              */}
+              {(selectedDay.importantLevels ?? []).length > 0 && (
+                <div className="pt-2 border-t border-zinc-800/60">
+                  <span className="text-zinc-400 text-[10px] uppercase font-mono flex items-center gap-1.5">
+                    <Tag className="w-3 h-3 text-zinc-400" />
+                    Important price levels ({(selectedDay.importantLevels ?? []).length})
+                  </span>
+                  <ul className="mt-1.5 grid gap-1 sm:grid-cols-2">
+                    {(selectedDay.importantLevels ?? []).map((level) => (
+                      <li
+                        key={level.id}
+                        className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[11px]"
+                      >
+                        <span className="rounded border border-zinc-800 bg-zinc-900 px-1.5 py-0.5 font-mono font-bold text-zinc-100">
+                          {level.price.toFixed(2)}
+                        </span>
+                        {level.label && (
+                          <span className="text-zinc-300 truncate">{level.label}</span>
+                        )}
+                        {(level.tags ?? []).map((tag) => (
+                          <span
+                            key={tag}
+                            className="rounded border border-zinc-700 bg-zinc-800/80 px-1.5 py-0.5 font-mono text-[10px] text-zinc-400"
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                        {level.notes && (
+                          <span className="text-zinc-500 italic truncate">— {level.notes}</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
               {/* Plan changes audit list */}
               {selectedDay.planChanges && selectedDay.planChanges.length > 0 && (
                 <div className="pt-2 border-t border-zinc-800/60 space-y-1.5">
@@ -487,7 +669,12 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
               ) : (
                 <div className="space-y-2.5">
                   {selectedDayTrades.map((t) => (
-                    <TradeCard key={t.id} trade={t} instruments={instruments} />
+                    <TradeCard
+                      key={t.id}
+                      trade={t}
+                      instruments={instruments}
+                      onDelete={() => handleDeleteTrade(t)}
+                    />
                   ))}
                 </div>
               )}

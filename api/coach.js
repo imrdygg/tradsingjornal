@@ -363,7 +363,9 @@ function formatDailyBarsForPrompt(bars) {
   const periodHigh = highs.length ? Math.max(...highs) : null;
   const periodLow = lows.length ? Math.min(...lows) : null;
   const avgClose = closed.length > 0 ? closed.reduce((sum, b) => sum + b.close, 0) / closed.length : null;
-  lines.push(`Sessions in the series: ${bars.bars.length} daily bars ending ${bars.bars[bars.length - 1].date}.`);
+  lines.push(
+    `Sessions in the series: ${bars.bars.length} daily bars ending ${bars.bars[bars.bars.length - 1].date}.`
+  );
   lines.push("Every bar, as date: open / high / low / close (volume):");
   for (const bar of bars.bars) {
     lines.push(

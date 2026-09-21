@@ -393,11 +393,21 @@ export const PlanLockPreviewModal: React.FC<PlanLockPreviewModalProps> = ({
             {(day.importantLevels || []).length ? (
               <ul className="mt-1.5 grid gap-1 sm:grid-cols-2">
                 {(day.importantLevels || []).map((level) => (
-                  <li key={level.id} className="flex items-baseline gap-2 text-[11px]">
+                  <li key={level.id} className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[11px]">
                     <span className="rounded border border-zinc-800 bg-zinc-900 px-1.5 py-0.5 font-mono font-bold text-zinc-100">
                       {level.price.toFixed(2)}
                     </span>
                     {level.label && <span className="text-zinc-300 truncate">{level.label}</span>}
+                    {/* Tags travel with the level into the lock preview: they are part of
+                        how the plan was read, so they are shown before it is committed. */}
+                    {(level.tags ?? []).map((tag) => (
+                      <span
+                        key={tag}
+                        className="rounded border border-zinc-700 bg-zinc-800/80 px-1.5 py-0.5 font-mono text-[10px] text-zinc-400"
+                      >
+                        {tag}
+                      </span>
+                    ))}
                     {level.notes && (
                       <span className="text-zinc-500 italic truncate">— {level.notes}</span>
                     )}

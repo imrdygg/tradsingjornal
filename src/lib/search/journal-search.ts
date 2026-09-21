@@ -90,6 +90,10 @@ function buildPlanHaystack(day: TradingDay): string {
     ...(day.watchedSetups ?? []),
     ...(day.importantLevels ?? []).map((level) => level.label),
     ...(day.importantLevels ?? []).map((level) => String(level.price)),
+    // A level's tags are its own way of being found: searching "liquidity" should surface
+    // the day whose levels were tagged that way, the same as a trade's tags do.
+    ...(day.importantLevels ?? []).flatMap((level) => level.tags ?? []),
+    ...(day.importantLevels ?? []).map((level) => level.notes),
     ...(day.planChanges ?? []).map((change) => change.reason),
     day.tradeDate,
     String(day.plannedLossLimit),

@@ -48,6 +48,14 @@ export interface ImportantLevel {
   price: number;
   label?: string;
   notes?: string;
+  /**
+   * Free-form labels for this level, entered comma-separated.
+   *
+   * Where `label` names the level itself ("Overnight High"), tags classify it so a set of
+   * levels can be read at a glance and found later by search — "liquidity", "news",
+   * "key". Stored the same way a trade's tags are, so one habit covers both.
+   */
+  tags?: string[];
 }
 
 export interface PlanChange {

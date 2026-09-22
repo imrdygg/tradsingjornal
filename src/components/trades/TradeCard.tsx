@@ -42,6 +42,56 @@ interface TradeCardProps {
 /** Signed R, so a miss reads as a negative rather than an unsigned gap. */
 const signedR = (n: number) => `${n > 0 ? '+' : ''}${n.toFixed(2)}R`;
 
+/**
+ * One subject's writing on the card — "Entry" or "Exit".
+ *
+ * The reason and the note are kept under the subject they describe rather than mixed
+ * into one block, so the card reads the same way the trade record does. Text is clamped
+ * with the full value on hover: a long note must not push the card's buttons off screen,
+ * and the detail view is where the whole thing can be read.
+ */
+const TradeWriting: React.FC<{
+  subject: 'Entry' | 'Exit';
+  reason?: string;
+  note?: string;
+}> = ({ subject, reason, note }) => {
+  if (!reason && !note) return null;
+  return (
+    <div className="min-w-0 space-y-1">
+      <span
+        className={`block text-[10px] font-mono uppercase tracking-wider ${
+          subject === 'Entry' ? 'text-emerald-400' : 'text-amber-400'
+        }`}
+      >
+        {subject}
+      </span>
+      {reason && (
+        <div>
+          <span className="block text-[9px] font-mono uppercase tracking-wider text-zinc-500">
+            Reason
+          </span>
+          <p className="text-zinc-300 italic leading-relaxed line-clamp-2" title={reason}>
+            "{reason}"
+          </p>
+        </div>
+      )}
+      {note && (
+        <div>
+          <span className="block text-[9px] font-mono uppercase tracking-wider text-zinc-500">
+            Note
+          </span>
+          <p
+            className="text-zinc-400 leading-relaxed whitespace-pre-line line-clamp-3"
+            title={note}
+          >
+            {note}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const TradeCard: React.FC<TradeCardProps> = ({
   trade,
   instruments,
@@ -302,6 +352,14 @@ export const TradeCard: React.FC<TradeCardProps> = ({
         </div>
       </div>
 
+      {/* What the trader wrote, grouped by the subject it describes. */}
+      {(trade.entryReason || trade.notes || trade.exitReason || trade.exitNote) && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2.5 border-t border-zinc-800/60 pt-2.5 text-[11px]">
+          <TradeWriting subject="Entry" reason={trade.entryReason} note={trade.notes} />
+          <TradeWriting subject="Exit" reason={trade.exitReason} note={trade.exitNote} />
+        </div>
+      )}
+
       {/* Attached Chart Screenshots (Click to see big) */}
       {tradeImages.length > 0 && (
         <div className="pt-1">
@@ -386,18 +444,6 @@ export const TradeCard: React.FC<TradeCardProps> = ({
               <HelpCircle className="w-3 h-3" /> Review pending
             </span>
           ) : null}
-
-          {trade.entryReason && (
-            <span className="truncate max-w-[200px] text-[11px] text-zinc-400 italic">
-              "{trade.entryReason}"
-            </span>
-          )}
-
-          {trade.exitReason && (
-            <span className="truncate max-w-[200px] text-[11px] text-zinc-400 italic">
-              Exit: "{trade.exitReason}"
-            </span>
-          )}
         </div>
 
         {/* Action buttons */}

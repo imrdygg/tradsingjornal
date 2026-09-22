@@ -724,7 +724,6 @@ export function readEntryFacts(raw: unknown): CoachEntryFacts | null {
     setupName: typeof record.setupName === 'string' ? record.setupName.trim() : undefined,
     entryReason: typeof record.entryReason === 'string' ? record.entryReason.trim() : undefined,
     targetPrice: readNumber(record.targetPrice),
-    exitPlan: typeof record.exitPlan === 'string' ? record.exitPlan.trim() : undefined,
     session: typeof record.session === 'string' ? record.session.trim() : 'Regular Session',
   };
 }

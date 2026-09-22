@@ -69,7 +69,7 @@ test.describe('Trade details', () => {
     // Everything is asserted inside the modal: the collapsed card behind it
     // renders the same values.
     const detail = page.locator('#trade-detail-modal');
-    await expect(detail.getByText('Your notes')).toBeVisible();
+    await expect(detail.getByRole('heading', { name: 'Entry' })).toBeVisible();
     await expect(detail.getByText('Reclaim of the overnight low')).toBeVisible();
     await expect(detail.getByText('clean', { exact: true })).toBeVisible();
     await expect(detail.getByText('Execution', { exact: true })).toBeVisible();

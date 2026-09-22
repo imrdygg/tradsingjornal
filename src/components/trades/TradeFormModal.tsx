@@ -89,8 +89,8 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
   const [exitPrice, setExitPrice] = useState('');
   const [exitTime, setExitTime] = useState('');
   const [targetPrice, setTargetPrice] = useState('');
-  const [exitPlan, setExitPlan] = useState('');
   const [exitReason, setExitReason] = useState('');
+  const [exitNote, setExitNote] = useState('');
   const [entryReason, setEntryReason] = useState('');
   const [notes, setNotes] = useState('');
   const [tags, setTags] = useState('');
@@ -159,8 +159,8 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
       setTargetPrice(
         editingTrade.targetPrice !== undefined ? editingTrade.targetPrice.toString() : ''
       );
-      setExitPlan(editingTrade.exitPlan || '');
       setExitReason(editingTrade.exitReason || '');
+      setExitNote(editingTrade.exitNote || '');
       setEntryReason(editingTrade.entryReason || '');
       setNotes(editingTrade.notes || '');
       setTags(editingTrade.tags ? editingTrade.tags.join(', ') : '');
@@ -202,8 +202,8 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
       setTargetPrice(
         prefill.targetPrice !== undefined ? prefill.targetPrice.toString() : ''
       );
-      setExitPlan(prefill.exitPlan || '');
       setExitReason(prefill.exitReason || '');
+      setExitNote(prefill.exitNote || '');
       setEntryReason(prefill.entryReason || '');
       setNotes(prefill.notes || '');
       setTags(prefill.tags ? prefill.tags.join(', ') : '');
@@ -246,8 +246,8 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
       setExitPrice('');
       setExitTime('');
       setTargetPrice('');
-      setExitPlan('');
       setExitReason('');
+      setExitNote('');
       setEntryReason('');
       setNotes('');
       setTags('');
@@ -507,8 +507,8 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
       setupName,
       entryReason: entryReason.trim() || undefined,
       targetPrice: target,
-      exitPlan: exitPlan.trim() || undefined,
       exitReason: exitReason.trim() || undefined,
+      exitNote: exitNote.trim() || undefined,
       notes: notes.trim() || undefined,
       tags: parsedTags.length ? parsedTags : undefined,
       initialRisk,
@@ -779,6 +779,18 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
               ))}
           </div>
 
+          {/*
+            Entry. Price, size and timing are one subject, so they sit under one heading
+            with the reason and the note — the trader is answering "what did I take" once,
+            rather than hunting for the reason field at the bottom of the form.
+          */}
+          <div className="flex flex-wrap items-baseline gap-x-2 pt-2 border-t border-zinc-800/80">
+            <span className="text-xs font-semibold text-emerald-400/90 uppercase tracking-wider font-mono">
+              Entry
+            </span>
+            <span className="text-[10px] text-zinc-500 font-mono">price · size · timing · why</span>
+          </div>
+
           {/* Row 2: Entry Price, Initial Stop, Contracts */}
           <div className="grid grid-cols-3 gap-3">
             <div>
@@ -907,6 +919,40 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
             />
           </div>
 
+          <div>
+            <label
+              htmlFor="trade-entry-reason"
+              className="text-xs font-medium text-zinc-300 block mb-1"
+            >
+              Entry Reason
+            </label>
+            <input
+              id="trade-entry-reason"
+              type="text"
+              placeholder="e.g. Bullish engulfing rejection off key support with volume"
+              value={entryReason}
+              onChange={(e) => setEntryReason(e.target.value)}
+              className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
+            />
+          </div>
+
+          <div>
+            <label
+              htmlFor="trade-entry-note"
+              className="text-xs font-medium text-zinc-300 block mb-1"
+            >
+              Entry Note
+            </label>
+            <textarea
+              id="trade-entry-note"
+              rows={2}
+              placeholder="Anything else about taking this entry — context, how you felt, what you saw"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              className="w-full resize-y rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
+            />
+          </div>
+
           {/* Live Calculations Preview Card */}
           {calculations && (
             <div className="rounded-xl border border-zinc-800 bg-zinc-950/80 p-3 text-xs space-y-1 font-mono">
@@ -1011,160 +1057,137 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
           )}
 
           {/*
-            Exit plan: the level and the condition the trade is meant to come off at.
-            Separate from the actual exit below, because this is written at entry — while
-            the position is still open — and is the counterpart to the entry reason.
+            Exit. The target and the fill sit beside each other, with the reason and the note
+            under them — the same shape as the entry above, so the two read as one trade told
+            twice rather than fields scattered through the form. The fill is left blank while
+            the trade is open; only the target is worth setting before then.
           */}
-          <div className="pt-2 border-t border-zinc-800/80 space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider font-mono">
-                Exit Plan (When will you exit?)
-              </span>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label
-                  htmlFor="trade-target-price"
-                  className="text-xs font-medium text-zinc-400 block mb-1"
-                >
-                  Target Price (Optional)
-                </label>
-                <input
-                  id="trade-target-price"
-                  type="number"
-                  step="0.25"
-                  placeholder="6742.25"
-                  value={targetPrice}
-                  onChange={(e) => setTargetPrice(e.target.value)}
-                  className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label
-                  htmlFor="trade-exit-plan"
-                  className="text-xs font-medium text-zinc-400 block mb-1"
-                >
-                  Exit Plan (Optional)
-                </label>
-                <input
-                  id="trade-exit-plan"
-                  type="text"
-                  placeholder="e.g. Scale out at the prior day high, trail the rest"
-                  value={exitPlan}
-                  onChange={(e) => setExitPlan(e.target.value)}
-                  className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
-                />
-              </div>
-            </div>
+          <div className="flex flex-wrap items-baseline gap-x-2 pt-2 border-t border-zinc-800/80">
+            <span className="text-xs font-semibold text-amber-400/90 uppercase tracking-wider font-mono">
+              Exit
+            </span>
+            <span className="text-[10px] text-zinc-500 font-mono">
+              target · fill · why — leave the fill blank while the trade is open
+            </span>
           </div>
 
-          {/* Exit Section (Optional if trade is still open) */}
-          <div className="pt-2 border-t border-zinc-800/80 space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider font-mono">
-                Exit Information (Leave blank for Open trade)
-              </span>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label
-                  htmlFor="trade-exit-price"
-                  className="text-xs font-medium text-zinc-400 block mb-1"
-                >
-                  Exit Price
-                </label>
-                <input
-                  id="trade-exit-price"
-                  type="number"
-                  step="0.25"
-                  placeholder="6732.25"
-                  value={exitPrice}
-                  onChange={(e) => setExitPrice(e.target.value)}
-                  className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-medium text-zinc-400 block mb-1">
-                  Exit Date / Time
-                </label>
-                <input
-                  id="trade-exit-time"
-                  type="datetime-local"
-                  value={exitTime}
-                  onChange={(e) => setExitTime(e.target.value)}
-                  className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none"
-                />
-              </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label
+                htmlFor="trade-target-price"
+                className="text-xs font-medium text-zinc-300 block mb-1"
+              >
+                Target Price
+              </label>
+              <input
+                id="trade-target-price"
+                type="number"
+                step="0.25"
+                placeholder="6742.25"
+                value={targetPrice}
+                onChange={(e) => setTargetPrice(e.target.value)}
+                className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
+              />
             </div>
 
             <div>
               <label
-                htmlFor="trade-exit-reason"
-                className="text-xs font-medium text-zinc-400 block mb-1"
+                htmlFor="trade-exit-price"
+                className="text-xs font-medium text-zinc-300 block mb-1"
               >
-                Exit Reason (Optional)
+                Exit Price
               </label>
               <input
-                id="trade-exit-reason"
-                type="text"
-                placeholder="e.g. Hit the target into resistance and momentum stalled"
-                value={exitReason}
-                onChange={(e) => setExitReason(e.target.value)}
-                className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
+                id="trade-exit-price"
+                type="number"
+                step="0.25"
+                placeholder="6732.25"
+                value={exitPrice}
+                onChange={(e) => setExitPrice(e.target.value)}
+                className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-medium text-zinc-300 block mb-1">
+                Exit Date / Time
+              </label>
+              <input
+                id="trade-exit-time"
+                type="datetime-local"
+                value={exitTime}
+                onChange={(e) => setExitTime(e.target.value)}
+                className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none"
               />
             </div>
           </div>
 
-          {/* Entry Reason & Notes */}
-          <div className="space-y-3 pt-2 border-t border-zinc-800/80">
-            <div>
-              <label
-                htmlFor="trade-entry-reason"
-                className="text-xs font-medium text-zinc-400 block mb-1"
-              >
-                Entry Reason (Optional)
-              </label>
-              <input
-                id="trade-entry-reason"
-                type="text"
-                placeholder="e.g. Bullish engulfing candle rejection off key support level with volume confirmation"
-                value={entryReason}
-                onChange={(e) => setEntryReason(e.target.value)}
-                className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
-              />
-            </div>
+          <div>
+            <label
+              htmlFor="trade-exit-reason"
+              className="text-xs font-medium text-zinc-300 block mb-1"
+            >
+              Exit Reason
+            </label>
+            <input
+              id="trade-exit-reason"
+              type="text"
+              placeholder="e.g. Hit the target into resistance and momentum stalled"
+              value={exitReason}
+              onChange={(e) => setExitReason(e.target.value)}
+              className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
+            />
+          </div>
 
-            <div>
-              <label
-                htmlFor="trade-tags"
-                className="text-xs font-medium text-zinc-400 block mb-1"
-              >
-                Notes / Tags (Comma separated)
-              </label>
-              <input
-                id="trade-tags"
-                type="text"
-                placeholder="Tags: clean, morning, trend-aligned"
-                value={tags}
-                onChange={(e) => setTags(e.target.value)}
-                className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
-              />
-            </div>
+          <div>
+            <label
+              htmlFor="trade-exit-note"
+              className="text-xs font-medium text-zinc-300 block mb-1"
+            >
+              Exit Note
+            </label>
+            <textarea
+              id="trade-exit-note"
+              rows={2}
+              placeholder="Anything else about getting out — what you saw, what you would do differently"
+              value={exitNote}
+              onChange={(e) => setExitNote(e.target.value)}
+              className="w-full resize-y rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
+            />
+          </div>
 
-            {/* Chart Screenshot Attachments */}
-            <div className="pt-1">
-              <ImageUploader
-                images={images}
-                onChange={setImages}
-                onPreviewImage={(idx) => setPreviewIndex(idx)}
-                maxImages={6}
-                label="Trade Charts & Video"
-                helperText="Attach entry chart setup, execution context or result screenshots — or a quick 30-60 second clip of the trade."
-                idPrefix="trade-modal-images"
-              />
-            </div>
+          {/* Tags belong to the trade as a whole, so they are shared, not split by subject. */}
+          <div className="pt-2 border-t border-zinc-800/80">
+            <label
+              htmlFor="trade-tags"
+              className="text-xs font-medium text-zinc-300 block mb-1"
+            >
+              Tags{' '}
+              <span className="text-[10px] font-normal text-zinc-500 font-mono">
+                (shared by entry and exit, comma separated)
+              </span>
+            </label>
+            <input
+              id="trade-tags"
+              type="text"
+              placeholder="clean, morning, trend-aligned"
+              value={tags}
+              onChange={(e) => setTags(e.target.value)}
+              className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
+            />
+          </div>
+
+          {/* Chart Screenshot Attachments */}
+          <div className="pt-2 border-t border-zinc-800/80">
+            <ImageUploader
+              images={images}
+              onChange={setImages}
+              onPreviewImage={(idx) => setPreviewIndex(idx)}
+              maxImages={6}
+              label="Trade Charts & Video"
+              helperText="Attach entry chart setup, execution context or result screenshots — or a quick 30-60 second clip of the trade."
+              idPrefix="trade-modal-images"
+            />
           </div>
 
           {/* Action buttons */}

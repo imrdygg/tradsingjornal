@@ -204,20 +204,27 @@ export interface Trade {
    */
   targetPrice?: number;
   /**
-   * When and how the trader plans to get out, in their own words.
-   *
-   * The exit counterpart to `entryReason`, set while the position is open. The plan can
-   * be a level, a time, a condition or a combination — whatever the trader will watch for.
-   */
-  exitPlan?: string;
-  /**
    * Why the trade was actually exited, written after the fact.
    *
    * The exit counterpart to `entryReason`: what the trader says made them close, kept as
    * their own words rather than inferred from the price.
    */
   exitReason?: string;
+  /**
+   * The trader's own note on the ENTRY — free-form writing beside `entryReason`.
+   *
+   * Named plainly `notes` for the records written before notes were split by subject; it
+   * is the entry-side note the form shows under "Entry note". The exit-side one is
+   * `exitNote`.
+   */
   notes?: string;
+  /**
+   * The trader's own note on the EXIT, written after the fact.
+   *
+   * The exit counterpart to `notes`, so the record of getting out has somewhere to live
+   * that is not the entry note. Tags are shared between the two; notes are not.
+   */
+  exitNote?: string;
   tags?: string[];
   initialRisk: number; // $
   /**

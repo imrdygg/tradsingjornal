@@ -122,11 +122,12 @@ export interface JournalDigest {
   /** The trader's own words, trimmed. Lets the coach quote them back. */
   traderOwnWords: {
     entryReasons: string[];
-    /** How the trader said they would exit, in their own words, newest first. */
-    exitPlans: string[];
     /** Why the trader said they did exit, in their own words, newest first. */
     exitReasons: string[];
+    /** The trader's own entry notes, newest first. */
     tradeNotes: string[];
+    /** The trader's own exit notes, newest first. */
+    exitNotes: string[];
     tradeManagementNotes: string[];
     didWell: string[];
     didPoorly: string[];
@@ -563,9 +564,9 @@ export function buildJournalDigest(input: {
     behavior,
     traderOwnWords: {
       entryReasons: collectWords(closedNewestFirst.map((t) => t.entryReason)),
-      exitPlans: collectWords(closedNewestFirst.map((t) => t.exitPlan)),
-      exitReasons: collectWords(closedNewestFirst.map((t) => t.exitReason)),
       tradeNotes: collectWords(closedNewestFirst.map((t) => t.notes)),
+      exitReasons: collectWords(closedNewestFirst.map((t) => t.exitReason)),
+      exitNotes: collectWords(closedNewestFirst.map((t) => t.exitNote)),
       tradeManagementNotes: collectWords(
         closedNewestFirst.map((t) => t.tradeManagement?.notes)
       ),

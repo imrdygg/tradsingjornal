@@ -661,7 +661,6 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
         setupName: trade.setupName,
         entryReason: trade.entryReason,
         targetPrice: trade.targetPrice,
-        exitPlan: trade.exitPlan,
         session: trade.session,
       });
       if (!result.ok || !('direction' in result.data)) return;
@@ -728,9 +727,9 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       setupName: tradeData.setupName || 'Engulfing',
       entryReason: tradeData.entryReason,
       targetPrice: tradeData.targetPrice,
-      exitPlan: tradeData.exitPlan,
       exitReason: tradeData.exitReason,
       notes: tradeData.notes,
+      exitNote: tradeData.exitNote,
       tags: tradeData.tags,
       initialRisk: tradeData.initialRisk || 50,
       // The risk slot the form recorded the trade against. `null` is the custom option and

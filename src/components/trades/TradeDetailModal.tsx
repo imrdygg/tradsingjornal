@@ -648,75 +648,83 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
             </Section>
           ) : null}
 
-          {/* What the trader wrote */}
-          <Section title="Your notes" icon={<NotebookPen className="w-3.5 h-3.5 text-amber-400" />}>
-            {trade.entryReason ||
-            trade.exitPlan ||
-            trade.exitReason ||
-            trade.notes ||
-            (trade.tags && trade.tags.length > 0) ? (
+          {/* What the trader wrote, grouped by the subject it describes. */}
+          <Section title="Entry" icon={<NotebookPen className="w-3.5 h-3.5 text-emerald-400" />}>
+            {trade.entryReason || trade.notes ? (
               <div className="space-y-2.5 text-xs">
                 {trade.entryReason && (
                   <div>
                     <span className="text-[10px] uppercase font-mono tracking-wider text-zinc-500 block">
-                      Entry reason
+                      Reason
                     </span>
                     <p className="text-zinc-200 leading-relaxed whitespace-pre-line">
                       {trade.entryReason}
                     </p>
                   </div>
                 )}
-                {trade.exitPlan && (
-                  <div>
-                    <span className="text-[10px] uppercase font-mono tracking-wider text-zinc-500 block">
-                      Exit plan
-                    </span>
-                    <p className="text-zinc-200 leading-relaxed whitespace-pre-line">
-                      {trade.exitPlan}
-                    </p>
-                  </div>
-                )}
-                {trade.exitReason && (
-                  <div>
-                    <span className="text-[10px] uppercase font-mono tracking-wider text-zinc-500 block">
-                      Exit reason
-                    </span>
-                    <p className="text-zinc-200 leading-relaxed whitespace-pre-line">
-                      {trade.exitReason}
-                    </p>
-                  </div>
-                )}
                 {trade.notes && (
                   <div>
                     <span className="text-[10px] uppercase font-mono tracking-wider text-zinc-500 block">
-                      Notes
+                      Note
                     </span>
                     <p className="text-zinc-300 leading-relaxed whitespace-pre-line">
                       {trade.notes}
                     </p>
                   </div>
                 )}
-                {trade.tags && trade.tags.length > 0 && (
-                  <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-                    {trade.tags.map((tag) => (
-                      <span
-                        key={tag}
-                        className="px-2 py-0.5 rounded-md bg-zinc-800 border border-zinc-700 text-[10px] font-mono text-zinc-300"
-                      >
-                        {tag}
-                      </span>
-                    ))}
-                  </div>
-                )}
               </div>
             ) : (
               <p className="text-[11px] text-zinc-500 leading-relaxed">
-                Nothing written for this trade yet. Use <strong className="text-zinc-300">Edit</strong>{' '}
-                to add an entry reason, an exit plan and notes — future-you will want to know why
-                you took it and when you meant to get out.
+                Nothing written for the entry. Use{' '}
+                <strong className="text-zinc-300">Edit</strong> to add an entry reason and note —
+                future-you will want to know why you took it.
               </p>
             )}
           </Section>
+
+          {/* Exit writing, when there is any: an open trade has none yet. */}
+          {(trade.exitReason || trade.exitNote) && (
+            <Section title="Exit" icon={<NotebookPen className="w-3.5 h-3.5 text-amber-400" />}>
+              <div className="space-y-2.5 text-xs">
+                {trade.exitReason && (
+                  <div>
+                    <span className="text-[10px] uppercase font-mono tracking-wider text-zinc-500 block">
+                      Reason
+                    </span>
+                    <p className="text-zinc-200 leading-relaxed whitespace-pre-line">
+                      {trade.exitReason}
+                    </p>
+                  </div>
+                )}
+                {trade.exitNote && (
+                  <div>
+                    <span className="text-[10px] uppercase font-mono tracking-wider text-zinc-500 block">
+                      Note
+                    </span>
+                    <p className="text-zinc-300 leading-relaxed whitespace-pre-line">
+                      {trade.exitNote}
+                    </p>
+                  </div>
+                )}
+              </div>
+            </Section>
+          )}
+
+          {/* Tags are shared by both subjects, so they sit on their own. */}
+          {trade.tags && trade.tags.length > 0 && (
+            <Section title="Tags" icon={<NotebookPen className="w-3.5 h-3.5 text-zinc-400" />}>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {trade.tags.map((tag) => (
+                  <span
+                    key={tag}
+                    className="px-2 py-0.5 rounded-md bg-zinc-800 border border-zinc-700 text-[10px] font-mono text-zinc-300"
+                  >
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            </Section>
+          )}
 
           {/* Management */}
           {management &&

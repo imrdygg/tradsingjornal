@@ -12,6 +12,7 @@ import {
   Activity,
   Layers,
   Scale,
+  Target,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -55,6 +56,13 @@ import {
   summariseSlotTrends,
   type SlotTrendPoint,
 } from '../../lib/analytics/risk-plan-adherence';
+import {
+  THIN_TARGET_SAMPLE,
+  summariseTargetExits,
+  summariseTargetExitsBySetup,
+  summariseTargetHitTrend,
+  type HitRateTrendPoint,
+} from '../../lib/analytics/target-exits';
 
 /**
  * One colour per slot, in ladder order (#1–#4, then custom).
@@ -100,6 +108,35 @@ const SlotTrendTooltip: React.FC<{
           </div>
         );
       })}
+    </div>
+  );
+};
+
+/**
+ * The weekly target hit-rate tooltip.
+ *
+ * The sample travels with the rate on purpose: a 100% week built from one trade is noise, and
+ * the tooltip is the only place that can say so while the line above it looks convincing.
+ */
+const HitRateTooltip: React.FC<{
+  active?: boolean;
+  payload?: Array<{ payload?: HitRateTrendPoint }>;
+}> = ({ active, payload }) => {
+  const point = payload?.[0]?.payload;
+  if (!active || !point) return null;
+
+  return (
+    <div className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-[11px] font-mono space-y-1">
+      <div className="text-zinc-300">{point.bucket}</div>
+      <div className="flex items-center gap-2">
+        <span className="inline-block h-2 w-2 rounded-sm bg-emerald-400" />
+        <span className="text-zinc-400">Reached target</span>
+        <span className="font-bold text-zinc-100">{point.hitPct}%</span>
+        <span className="text-zinc-500">
+          {point.hit}/{point.measured} trade{point.measured === 1 ? '' : 's'}
+        </span>
+      </div>
+      <div className="text-zinc-500">Avg gap {point.avgGapR > 0 ? '+' : ''}{point.avgGapR.toFixed(2)}R</div>
     </div>
   );
 };
@@ -191,6 +228,9 @@ const ComparisonBreakdown: React.FC<{
 /** Signed dollars, so a figure that can be negative is never ambiguous. */
 const signedMoney = (n: number) =>
   `${n > 0 ? '+' : n < 0 ? '-' : ''}$${Math.abs(n).toFixed(2)}`;
+
+/** Signed R, so an exit that fell short reads as a negative rather than an unsigned gap. */
+const signedR = (n: number) => `${n > 0 ? '+' : ''}${n.toFixed(2)}R`;
 
 /** Green above zero, red below, neutral at flat. */
 const pnlTone = (n: number) =>
@@ -345,6 +385,36 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
       ),
     [coachTrades, dateByDayId]
   );
+
+  /**
+   * Planned target versus realized exit, in R.
+   *
+   * Built from the same filtered slice as the panels above, so switching the date filter
+   * moves this with everything else. Open positions stay in the input: one carrying a target
+   * is a live plan, and the summary reports it separately rather than dropping it.
+   */
+  const targetExits = useMemo(() => summariseTargetExits(coachTrades), [coachTrades]);
+
+  /** The same measurement split by setup, so a habit that lives in one play stands out. */
+  const targetBySetup = useMemo(() => summariseTargetExitsBySetup(coachTrades), [coachTrades]);
+
+  /**
+   * Target hit rate, week by week, so the habit can be read as improving or worsening rather
+   * than as a single all-time number. Dated off the trading day, like the slot trend.
+   */
+  const targetTrend = useMemo(
+    () =>
+      summariseTargetHitTrend(
+        coachTrades,
+        (trade) =>
+          dateByDayId.get(trade.tradingDayId) ??
+          (trade.entryTime ? trade.entryTime.slice(0, 10) : null)
+      ),
+    [coachTrades, dateByDayId]
+  );
+
+  /** The most recent weeks, so a long journal does not draw an unreadable chart. */
+  const targetTrendWeeks = useMemo(() => targetTrend.slice(-12), [targetTrend]);
 
   /** The most recent weeks, so a long journal does not draw an unreadable chart. */
   const trendWeeks = useMemo(() => slotTrend.points.slice(-12), [slotTrend]);
@@ -1438,6 +1508,336 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
                   {adherence.unrecorded} trade{adherence.unrecorded === 1 ? '' : 's'} carr
                   {adherence.unrecorded === 1 ? 'ies' : 'y'} no slot at all (recorded before the
                   ladder, or imported), so there is nothing to measure them against.
+                </>
+              )}
+            </p>
+          </>
+        )}
+      </div>
+
+      {/*
+        Target vs realized R.
+
+        The trade form shows the target in R at the moment of entry; this reads back across
+        every trade whether the exits actually matched the plans. Both the target and the fill
+        are converted to R off the same stop, so a miss is measured in the trader's own risk
+        rather than in points that mean different things at different sizes.
+      */}
+      <div
+        id="target-vs-realized"
+        className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4 sm:p-5 space-y-4"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-300 font-mono flex items-center gap-2">
+              <Target className="w-4 h-4 text-emerald-400" />
+              Target vs realized R — did the exits match the plan
+            </h3>
+            <p className="mt-1 text-[10px] text-zinc-500 leading-relaxed max-w-xl">
+              Each trade's target price and its actual exit are both measured in R off that
+              trade's own stop, so the plan and the fill are compared on the same scale. A
+              target 2R out reached at 1.5R is half a risk of the plan left behind — a miss the
+              P&amp;L alone will not show.
+            </p>
+          </div>
+          <span className="text-[11px] font-mono text-zinc-400">
+            {targetExits.measured} measured
+            {targetExits.openWithTarget > 0 ? ` · ${targetExits.openWithTarget} open with a target` : ''}
+          </span>
+        </div>
+
+        {targetExits.measured === 0 ? (
+          <p className="text-xs text-zinc-400 leading-relaxed">
+            No closed trade with a target and a usable stop yet. Set a target price when you
+            record a trade and this panel will compare what you planned to make with what the
+            exit actually earned.
+          </p>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3.5 space-y-1">
+                <span className="text-[10px] uppercase font-mono tracking-wider text-zinc-400 block">
+                  Reached target
+                </span>
+                <span
+                  data-testid="target-hit-rate"
+                  className={`text-xl font-bold font-mono ${
+                    targetExits.hitPct === null
+                      ? 'text-zinc-200'
+                      : targetExits.hitPct >= 60
+                      ? 'text-emerald-400'
+                      : targetExits.hitPct >= 40
+                      ? 'text-amber-400'
+                      : 'text-rose-400'
+                  }`}
+                >
+                  {targetExits.hitPct === null ? '—' : `${targetExits.hitPct}%`}
+                </span>
+                <span className="text-[10px] text-zinc-400 font-mono block">
+                  {targetExits.hit} of {targetExits.measured} exits
+                </span>
+              </div>
+
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3.5 space-y-1">
+                <span className="text-[10px] uppercase font-mono tracking-wider text-zinc-400 block">
+                  Avg target
+                </span>
+                <span className="text-xl font-bold font-mono text-zinc-100">
+                  {signedR(targetExits.avgTargetR)}
+                </span>
+                <span className="text-[10px] text-zinc-400 font-mono block">
+                  what the plans aimed for
+                </span>
+              </div>
+
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3.5 space-y-1">
+                <span className="text-[10px] uppercase font-mono tracking-wider text-zinc-400 block">
+                  Avg realized
+                </span>
+                <span
+                  data-testid="target-realized"
+                  className={`text-xl font-bold font-mono ${pnlTone(targetExits.avgRealizedR)}`}
+                >
+                  {signedR(targetExits.avgRealizedR)}
+                </span>
+                <span className="text-[10px] text-zinc-400 font-mono block">
+                  what the exits actually earned
+                </span>
+              </div>
+
+              {/*
+                The headline number: realized minus target, averaged. Negative is a plan that
+                is being routinely undershot, which is the whole reason to compare them.
+              */}
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3.5 space-y-1">
+                <span className="text-[10px] uppercase font-mono tracking-wider text-zinc-400 block">
+                  Avg gap
+                </span>
+                <span
+                  data-testid="target-avg-gap"
+                  className={`text-xl font-bold font-mono ${
+                    targetExits.avgGapR >= 0 ? 'text-emerald-400' : 'text-amber-400'
+                  }`}
+                >
+                  {signedR(targetExits.avgGapR)}
+                </span>
+                <span className="text-[10px] text-zinc-400 font-mono block">
+                  {targetExits.avgGapR >= 0 ? 'exits run past the plan' : 'exits fall short of the plan'}
+                </span>
+              </div>
+
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3.5 space-y-1">
+                <span className="text-[10px] uppercase font-mono tracking-wider text-zinc-400 block">
+                  Worst shortfall
+                </span>
+                <span
+                  data-testid="target-worst-short"
+                  className={`text-xl font-bold font-mono ${
+                    targetExits.worstShortR === null ? 'text-zinc-200' : 'text-rose-300'
+                  }`}
+                >
+                  {targetExits.worstShortR === null ? '—' : `-${targetExits.worstShortR.toFixed(2)}R`}
+                </span>
+                <span className="text-[10px] text-zinc-400 font-mono block">
+                  {targetExits.avgShortR === null
+                    ? 'nothing fell short'
+                    : `${targetExits.avgShortR.toFixed(2)}R avg when it did`}
+                </span>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-[11px] font-mono">
+                <thead>
+                  <tr className="border-b border-zinc-800 text-zinc-400 text-left">
+                    <th className="pb-1.5 font-medium">Date</th>
+                    <th className="pb-1.5 font-medium">Instrument</th>
+                    <th className="pb-1.5 font-medium">Side</th>
+                    <th className="pb-1.5 font-medium text-right">Target</th>
+                    <th className="pb-1.5 font-medium text-right">Exit</th>
+                    <th className="pb-1.5 font-medium text-right">Vs plan</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-800/40">
+                  {targetExits.rows.slice(0, 12).map((row) => (
+                    <tr key={row.trade.id} className="text-zinc-300">
+                      <td className="py-1.5 text-zinc-400">
+                        {dateByDayId.get(row.trade.tradingDayId) ??
+                          (row.trade.entryTime ? row.trade.entryTime.slice(0, 10) : '—')}
+                      </td>
+                      <td className="py-1.5">
+                        {instrumentSymbol(instruments, row.trade.instrumentId)}
+                      </td>
+                      <td className="py-1.5 text-zinc-400">
+                        {row.trade.direction === 'long' ? 'Long' : 'Short'}
+                      </td>
+                      <td className="py-1.5 text-right text-zinc-400">{signedR(row.targetR)}</td>
+                      <td className={`py-1.5 text-right ${pnlTone(row.realizedR)}`}>
+                        {signedR(row.realizedR)}
+                      </td>
+                      <td
+                        className={`py-1.5 text-right ${
+                          row.hit ? 'text-emerald-400' : 'text-amber-400'
+                        }`}
+                      >
+                        {signedR(row.gapR)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {targetExits.rows.length > 12 && (
+                <p className="pt-1.5 text-[10px] text-zinc-500 font-mono">
+                  Showing the most recent 12 of {targetExits.rows.length} measured trades.
+                </p>
+              )}
+            </div>
+
+            {/*
+              The same measurement per setup. A shortfall spread evenly is a discipline
+              problem; one concentrated in a single setup usually means that setup's target
+              is set somewhere the trade never reaches.
+            */}
+            {targetBySetup.length > 0 && (
+              <div className="space-y-2 border-t border-zinc-800/70 pt-3">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-400">
+                  Hit rate by setup
+                </span>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-[11px] font-mono">
+                    <thead>
+                      <tr className="border-b border-zinc-800 text-zinc-400 text-left">
+                        <th className="pb-1.5 font-medium">Setup</th>
+                        <th className="pb-1.5 font-medium">Trades</th>
+                        <th className="pb-1.5 font-medium">Hit</th>
+                        <th className="pb-1.5 font-medium">Rate</th>
+                        <th className="pb-1.5 font-medium text-right">Avg target</th>
+                        <th className="pb-1.5 font-medium text-right">Avg exit</th>
+                        <th className="pb-1.5 font-medium text-right">Avg gap</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-800/40">
+                      {targetBySetup.map((row) => (
+                        <tr key={row.setupName} className="text-zinc-300">
+                          <td className="py-1.5">
+                            <span className="flex items-center gap-1.5">
+                              <span className="truncate max-w-[12rem]" title={row.setupName}>
+                                {row.setupName}
+                              </span>
+                              {row.thin && (
+                                <span
+                                  className="shrink-0 rounded border border-amber-800/70 bg-amber-950/40 px-1 py-0.5 text-[9px] uppercase text-amber-300"
+                                  title={`Only ${row.measured} trade(s) with a target — too few to read as a rate.`}
+                                >
+                                  thin
+                                </span>
+                              )}
+                            </span>
+                          </td>
+                          <td className="py-1.5 text-zinc-400">{row.measured}</td>
+                          <td className="py-1.5 text-emerald-400">{row.hit}</td>
+                          <td className="py-1.5">{row.hitPct}%</td>
+                          <td className="py-1.5 text-right text-zinc-400">
+                            {signedR(row.avgTargetR)}
+                          </td>
+                          <td className={`py-1.5 text-right ${pnlTone(row.avgRealizedR)}`}>
+                            {signedR(row.avgRealizedR)}
+                          </td>
+                          <td
+                            className={`py-1.5 text-right ${
+                              row.avgGapR >= 0 ? 'text-emerald-400' : 'text-amber-400'
+                            }`}
+                          >
+                            {signedR(row.avgGapR)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-[10px] text-zinc-500 leading-relaxed">
+                  Read a setup's gap against its own target: a wide target that is never reached
+                  may be the target rather than the exit.
+                  {targetBySetup.some((row) => row.thin)
+                    ? ` Setups marked thin carry fewer than ${THIN_TARGET_SAMPLE} targeted trades — treat their rate as a hint, not a finding.`
+                    : ''}
+                </p>
+              </div>
+            )}
+
+            {/*
+              Hit rate over time. The figures above are all-time; this is the only place the
+              direction of travel is visible — a rate that is climbing is a plan being fixed.
+            */}
+            <div className="space-y-2 border-t border-zinc-800/70 pt-3">
+              <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-400">
+                Weekly target hit rate
+              </span>
+
+              {targetTrendWeeks.length < 2 ? (
+                <p className="text-[10px] text-zinc-500 leading-relaxed">
+                  {targetTrendWeeks.length === 0
+                    ? 'No week of targeted trades yet, so there is no trend to draw.'
+                    : 'One week of targeted trades so far — a trend needs a second week before it can show a direction.'}
+                </p>
+              ) : (
+                <>
+                  <div className="h-48 w-full" data-testid="target-hit-trend">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={targetTrendWeeks}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+                        <XAxis dataKey="bucket" stroke="#71717a" fontSize={10} tickLine={false} />
+                        <YAxis
+                          domain={[0, 100]}
+                          stroke="#71717a"
+                          fontSize={10}
+                          tickLine={false}
+                          tickFormatter={(val) => `${val}%`}
+                        />
+                        <Tooltip content={<HitRateTooltip />} />
+                        <Line
+                          type="monotone"
+                          dataKey="hitPct"
+                          name="Reached target"
+                          stroke="#10b981"
+                          strokeWidth={2}
+                          dot={{ r: 2 }}
+                          isAnimationActive={false}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  <p className="text-[10px] text-zinc-500 leading-relaxed">
+                    Each point is one week; a missing week simply had no targeted trades to
+                    measure.{' '}
+                    {targetTrend.length > targetTrendWeeks.length
+                      ? `Showing the most recent ${targetTrendWeeks.length} weeks. `
+                      : ''}
+                    Read it for direction over a month rather than off a single week, and check
+                    the sample size in the tooltip — 100% from one trade is noise, not a finding.
+                  </p>
+                </>
+              )}
+            </div>
+
+            <p className="text-[10px] text-zinc-500 leading-relaxed">
+              R is measured from the stop recorded on each trade, so a target that was reached
+              at a different size still reads on the same scale.
+              {targetExits.noTarget > 0 && (
+                <>
+                  {' '}
+                  {targetExits.noTarget} closed trade{targetExits.noTarget === 1 ? '' : 's'} carr
+                  {targetExits.noTarget === 1 ? 'ies' : 'y'} no target, so there is nothing to
+                  compare.
+                </>
+              )}
+              {targetExits.assumed > 0 && (
+                <>
+                  {' '}
+                  {targetExits.assumed} trade{targetExits.assumed === 1 ? '' : 's'} came from a
+                  broker CSV, whose stop the app had to invent — their R is a placeholder and is
+                  left out.
                 </>
               )}
             </p>

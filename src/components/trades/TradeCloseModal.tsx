@@ -28,6 +28,7 @@ interface TradeCloseModalProps {
       pointsPnL: number;
       grossPnL: number;
       rMultiple: number;
+      exitReason?: string;
       executionReview: TradeExecutionReview;
       tradeManagement?: TradeManagement;
       images?: string[];
@@ -49,6 +50,7 @@ export const TradeCloseModal: React.FC<TradeCloseModalProps> = ({
       .toISOString()
       .slice(0, 16);
   });
+  const [exitReason, setExitReason] = useState('');
 
   // Execution Review Questions
   const [followedSetup, setFollowedSetup] = useState<QuestionAnswer>('yes');
@@ -80,6 +82,9 @@ export const TradeCloseModal: React.FC<TradeCloseModalProps> = ({
           : []
       );
       setPreviewIndex(null);
+      // Carry any exit reason already written on the trade, so closing a position that has
+      // one does not wipe it.
+      setExitReason(trade.exitReason || '');
     }
   }, [isOpen, trade]);
 
@@ -195,6 +200,7 @@ export const TradeCloseModal: React.FC<TradeCloseModalProps> = ({
       pointsPnL: pnl.pointsPnL,
       grossPnL: pnl.grossPnL,
       rMultiple,
+      exitReason: exitReason.trim() || undefined,
       executionReview,
       tradeManagement,
       images: images.length > 0 ? images : undefined,
@@ -292,6 +298,20 @@ export const TradeCloseModal: React.FC<TradeCloseModalProps> = ({
                 required
               />
             </div>
+          </div>
+
+          {/* Exit reason: why the trader got out, the counterpart to the entry reason. */}
+          <div>
+            <label className="text-xs font-medium text-zinc-300 block mb-1">
+              Exit Reason (Optional)
+            </label>
+            <input
+              type="text"
+              placeholder="e.g. Target hit into resistance and momentum stalled"
+              value={exitReason}
+              onChange={(e) => setExitReason(e.target.value)}
+              className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
+            />
           </div>
 
           {/* Live Outcome Calculations */}

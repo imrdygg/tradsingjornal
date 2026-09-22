@@ -1,5 +1,14 @@
 import { Trade, TradingDay } from '../../types';
 import { calculateSessionBreakdown, calculateSetupBreakdown, calculateRiskModeComparison } from './aggregations';
+import { summariseTargetExits } from './target-exits';
+
+/**
+ * Closed trades with a target needed before the short-exit habit is called out.
+ *
+ * Below this, a run of short exits is far more likely to be a handful of ordinary trades
+ * than a habit, and an insight that fires on three trades teaches the trader to ignore it.
+ */
+export const MIN_TARGET_SAMPLE = 5;
 
 export type SampleSizeCategory =
   | 'Very limited data'
@@ -159,6 +168,34 @@ export function generateDeterministicInsights(
       sampleVariant: sample.variant,
       metricHighlight: `${sign}$${shortPnL.toFixed(2)}`,
       isPositive: shortPnL > 0 ? true : shortPnL < 0 ? false : null,
+    });
+  }
+
+  // 5. Target exits — is the plan being left on the table?
+  //
+  // A target is only comparable in R, so this reads the same plan-vs-fill gap the analytics
+  // panel computes. It is flagged only once there is a real sample AND the shortfall is on
+  // average, because one exit that stopped short is not a habit.
+  const targetSummary = summariseTargetExits(closed);
+  if (targetSummary.measured >= MIN_TARGET_SAMPLE && targetSummary.avgGapR < 0) {
+    const sample = getSampleSizeLabel(targetSummary.measured);
+    const hitPct = targetSummary.hitPct ?? 0;
+    insights.push({
+      id: 'target-exits-short',
+      category: 'Discipline',
+      title: 'Exits Fall Short of the Target',
+      statement:
+        `Across ${targetSummary.measured} closed trades with a target, the exit reached it ` +
+        `${hitPct}% of the time and finished ${Math.abs(targetSummary.avgGapR).toFixed(2)}R short ` +
+        `of the plan on average` +
+        (targetSummary.worstShortR !== null
+          ? `, with a worst miss of ${targetSummary.worstShortR.toFixed(2)}R.`
+          : '.'),
+      sampleSize: targetSummary.measured,
+      sampleLabel: sample.label,
+      sampleVariant: sample.variant,
+      metricHighlight: `${hitPct}% hit · ${targetSummary.avgGapR.toFixed(2)}R avg`,
+      isPositive: false,
     });
   }
 

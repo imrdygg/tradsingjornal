@@ -9,6 +9,7 @@ import {
   ArrowDownRight,
   Calendar,
   Info,
+  Target,
 } from 'lucide-react';
 import {
   Trade,
@@ -87,6 +88,9 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
   const [entryTime, setEntryTime] = useState('');
   const [exitPrice, setExitPrice] = useState('');
   const [exitTime, setExitTime] = useState('');
+  const [targetPrice, setTargetPrice] = useState('');
+  const [exitPlan, setExitPlan] = useState('');
+  const [exitReason, setExitReason] = useState('');
   const [entryReason, setEntryReason] = useState('');
   const [notes, setNotes] = useState('');
   const [tags, setTags] = useState('');
@@ -152,6 +156,11 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
       setEntryTime(editingTrade.entryTime ? editingTrade.entryTime.slice(0, 16) : '');
       setExitPrice(editingTrade.exitPrice ? editingTrade.exitPrice.toString() : '');
       setExitTime(editingTrade.exitTime ? editingTrade.exitTime.slice(0, 16) : '');
+      setTargetPrice(
+        editingTrade.targetPrice !== undefined ? editingTrade.targetPrice.toString() : ''
+      );
+      setExitPlan(editingTrade.exitPlan || '');
+      setExitReason(editingTrade.exitReason || '');
       setEntryReason(editingTrade.entryReason || '');
       setNotes(editingTrade.notes || '');
       setTags(editingTrade.tags ? editingTrade.tags.join(', ') : '');
@@ -190,6 +199,11 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
       setEntryTime(prefill.entryTime ? prefill.entryTime.slice(0, 16) : localISO);
       setExitPrice('');
       setExitTime('');
+      setTargetPrice(
+        prefill.targetPrice !== undefined ? prefill.targetPrice.toString() : ''
+      );
+      setExitPlan(prefill.exitPlan || '');
+      setExitReason(prefill.exitReason || '');
       setEntryReason(prefill.entryReason || '');
       setNotes(prefill.notes || '');
       setTags(prefill.tags ? prefill.tags.join(', ') : '');
@@ -231,6 +245,9 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
       setEntryTime(localISO);
       setExitPrice('');
       setExitTime('');
+      setTargetPrice('');
+      setExitPlan('');
+      setExitReason('');
       setEntryReason('');
       setNotes('');
       setTags('');
@@ -281,13 +298,41 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
       rMultiple = calculateRMultiple(pnlResult.grossPnL, initialRisk);
     }
 
+    // The planned exit, measured in the same R units as the actual one, so a target can
+    // be judged before the trade is over: a target 1R out is a different trade from one
+    // 3R out, and the form should say which this is while the plan is still being set.
+    const targetExit = parseFloat(targetPrice);
+    let targetR: number | null = null;
+
+    if (!isNaN(targetExit) && targetExit > 0 && targetExit !== entry) {
+      const targetPnL = calculatePnL({
+        direction,
+        entryPrice: entry,
+        exitPrice: targetExit,
+        contracts: qty,
+        instrument: selectedInstrument,
+      });
+      targetR = calculateRMultiple(targetPnL.grossPnL, initialRisk);
+    }
+
     return {
       initialRisk,
       stopDistance: Math.round(stopDistance * 100) / 100,
       pnlResult,
       rMultiple,
+      targetR,
+      /** What the actual exit was worth against the target, in R. */
+      targetGapR: rMultiple !== null && targetR !== null ? rMultiple - targetR : null,
     };
-  }, [entryPrice, initialStop, contracts, exitPrice, direction, selectedInstrument]);
+  }, [
+    entryPrice,
+    initialStop,
+    contracts,
+    exitPrice,
+    targetPrice,
+    direction,
+    selectedInstrument,
+  ]);
 
   /** The dollar risk the chosen slot commits to, or null while the custom amount is blank. */
   const targetRisk = useMemo(() => {
@@ -404,6 +449,12 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
       return;
     }
 
+    const target = targetPrice.trim() ? parseFloat(targetPrice) : undefined;
+    if (target !== undefined && (isNaN(target) || target <= 0)) {
+      setError('Target price must be a valid positive number.');
+      return;
+    }
+
     if (exitTime && entryTime) {
       const entryDate = new Date(entryTime).getTime();
       const exitDate = new Date(exitTime).getTime();
@@ -455,6 +506,9 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
       session,
       setupName,
       entryReason: entryReason.trim() || undefined,
+      targetPrice: target,
+      exitPlan: exitPlan.trim() || undefined,
+      exitReason: exitReason.trim() || undefined,
       notes: notes.trim() || undefined,
       tags: parsedTags.length ? parsedTags : undefined,
       initialRisk,
@@ -899,8 +953,111 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
                   </>
                 )}
               </div>
+
+              {/*
+                The planned exit measured in R, beside what the trade actually did. A target
+                is only meaningful against the risk being taken, and the gap says at a glance
+                whether the exit met the plan or left R on the table.
+              */}
+              {calculations.targetR !== null && (
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1.5 mt-1 border-t border-zinc-800/60 text-[11px]">
+                  <span className="flex items-center gap-1 text-zinc-400">
+                    <Target className="w-3 h-3 shrink-0 text-zinc-300" />
+                    Target {targetPrice} ={' '}
+                    <span
+                      className={
+                        calculations.targetR > 0
+                          ? 'text-emerald-300'
+                          : calculations.targetR < 0
+                          ? 'text-rose-300'
+                          : 'text-zinc-200'
+                      }
+                    >
+                      {calculations.targetR > 0 ? '+' : ''}
+                      {calculations.targetR.toFixed(2)}R
+                    </span>
+                  </span>
+
+                  {calculations.rMultiple !== null && calculations.targetGapR !== null && (
+                    <span className="text-zinc-400">
+                      Exit {exitPrice} ={' '}
+                      <span
+                        className={
+                          calculations.rMultiple > 0
+                            ? 'text-emerald-300'
+                            : calculations.rMultiple < 0
+                            ? 'text-rose-300'
+                            : 'text-zinc-200'
+                        }
+                      >
+                        {calculations.rMultiple > 0 ? '+' : ''}
+                        {calculations.rMultiple.toFixed(2)}R
+                      </span>{' '}
+                      ·{' '}
+                      <span
+                        className={
+                          calculations.targetGapR >= 0 ? 'text-emerald-400' : 'text-amber-300'
+                        }
+                      >
+                        {calculations.targetGapR >= 0
+                          ? `${calculations.targetGapR.toFixed(2)}R past target`
+                          : `${Math.abs(calculations.targetGapR).toFixed(2)}R short of target`}
+                      </span>
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
           )}
+
+          {/*
+            Exit plan: the level and the condition the trade is meant to come off at.
+            Separate from the actual exit below, because this is written at entry — while
+            the position is still open — and is the counterpart to the entry reason.
+          */}
+          <div className="pt-2 border-t border-zinc-800/80 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider font-mono">
+                Exit Plan (When will you exit?)
+              </span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label
+                  htmlFor="trade-target-price"
+                  className="text-xs font-medium text-zinc-400 block mb-1"
+                >
+                  Target Price (Optional)
+                </label>
+                <input
+                  id="trade-target-price"
+                  type="number"
+                  step="0.25"
+                  placeholder="6742.25"
+                  value={targetPrice}
+                  onChange={(e) => setTargetPrice(e.target.value)}
+                  className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="trade-exit-plan"
+                  className="text-xs font-medium text-zinc-400 block mb-1"
+                >
+                  Exit Plan (Optional)
+                </label>
+                <input
+                  id="trade-exit-plan"
+                  type="text"
+                  placeholder="e.g. Scale out at the prior day high, trail the rest"
+                  value={exitPlan}
+                  onChange={(e) => setExitPlan(e.target.value)}
+                  className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
+                />
+              </div>
+            </div>
+          </div>
 
           {/* Exit Section (Optional if trade is still open) */}
           <div className="pt-2 border-t border-zinc-800/80 space-y-3">
@@ -940,6 +1097,23 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
                   className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none"
                 />
               </div>
+            </div>
+
+            <div>
+              <label
+                htmlFor="trade-exit-reason"
+                className="text-xs font-medium text-zinc-400 block mb-1"
+              >
+                Exit Reason (Optional)
+              </label>
+              <input
+                id="trade-exit-reason"
+                type="text"
+                placeholder="e.g. Hit the target into resistance and momentum stalled"
+                value={exitReason}
+                onChange={(e) => setExitReason(e.target.value)}
+                className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
+              />
             </div>
           </div>
 

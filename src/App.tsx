@@ -660,6 +660,8 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
         initialStop: trade.initialStop,
         setupName: trade.setupName,
         entryReason: trade.entryReason,
+        targetPrice: trade.targetPrice,
+        exitPlan: trade.exitPlan,
         session: trade.session,
       });
       if (!result.ok || !('direction' in result.data)) return;
@@ -725,6 +727,9 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       session: tradeData.session || 'Regular Session',
       setupName: tradeData.setupName || 'Engulfing',
       entryReason: tradeData.entryReason,
+      targetPrice: tradeData.targetPrice,
+      exitPlan: tradeData.exitPlan,
+      exitReason: tradeData.exitReason,
       notes: tradeData.notes,
       tags: tradeData.tags,
       initialRisk: tradeData.initialRisk || 50,
@@ -787,6 +792,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       pointsPnL: number;
       grossPnL: number;
       rMultiple: number;
+      exitReason?: string;
       executionReview: TradeExecutionReview;
       tradeManagement?: TradeManagement;
       images?: string[];
@@ -803,6 +809,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       pointsPnL: exitData.pointsPnL,
       grossPnL: exitData.grossPnL,
       rMultiple: exitData.rMultiple,
+      exitReason: exitData.exitReason ?? existing.exitReason,
       executionReview: exitData.executionReview,
       tradeManagement: exitData.tradeManagement,
       images: exitData.images && exitData.images.length > 0 ? exitData.images : existing.images,

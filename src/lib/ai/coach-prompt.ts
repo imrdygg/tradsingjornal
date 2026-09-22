@@ -458,6 +458,8 @@ export function formatDigestForPrompt(digest: JournalDigest): string {
     for (const word of list) lines.push(`- "${word}"`);
   };
   renderWords('WHY THEY ENTERED', words.entryReasons);
+  renderWords('WHEN THEY PLANNED TO EXIT', words.exitPlans);
+  renderWords('WHY THEY EXITED', words.exitReasons);
   renderWords('TRADE NOTES', words.tradeNotes);
   renderWords('TRADE MANAGEMENT NOTES', words.tradeManagementNotes);
   renderWords('WHAT THEY SAID WENT WELL', words.didWell);
@@ -552,6 +554,9 @@ export function formatTradeForPrompt(trade: CoachTradeFacts): string {
   }
 
   if (trade.entryReason) lines.push(`\nWhy they said they entered: "${trade.entryReason}"`);
+  if (trade.targetPrice !== undefined) lines.push(`\nExit price they planned around: ${trade.targetPrice}`);
+  if (trade.exitPlan) lines.push(`\nWhen they planned to exit: "${trade.exitPlan}"`);
+  if (trade.exitReason) lines.push(`\nWhy they said they exited: "${trade.exitReason}"`);
   if (trade.notes) lines.push(`\nTrade notes: "${trade.notes}"`);
 
   if (trade.dayPlan) {
@@ -666,6 +671,8 @@ export function formatEntryForPrompt(entry: {
   initialStop: number;
   setupName?: string;
   entryReason?: string;
+  targetPrice?: number;
+  exitPlan?: string;
   session: string;
 }): string {
   const lines: string[] = [];
@@ -676,6 +683,8 @@ export function formatEntryForPrompt(entry: {
   );
   if (entry.setupName) lines.push(`Setup they logged it as: ${entry.setupName}.`);
   if (entry.entryReason) lines.push(`Their reason in their own words: "${entry.entryReason}".`);
+  if (entry.targetPrice !== undefined) lines.push(`Their planned exit price: ${entry.targetPrice}.`);
+  if (entry.exitPlan) lines.push(`Their plan for exiting: "${entry.exitPlan}".`);
   lines.push(
     'Make YOUR OWN call on the live numbers, and do not simply agree with them — this is ' +
       'recorded beside their entry to compare the two, so agreeing out of politeness makes the ' +

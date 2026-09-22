@@ -759,6 +759,8 @@ function formatDigestForPrompt(digest) {
     for (const word of list) lines.push(`- "${word}"`);
   };
   renderWords("WHY THEY ENTERED", words.entryReasons);
+  renderWords("WHEN THEY PLANNED TO EXIT", words.exitPlans);
+  renderWords("WHY THEY EXITED", words.exitReasons);
   renderWords("TRADE NOTES", words.tradeNotes);
   renderWords("TRADE MANAGEMENT NOTES", words.tradeManagementNotes);
   renderWords("WHAT THEY SAID WENT WELL", words.didWell);
@@ -837,6 +839,12 @@ function formatTradeForPrompt(trade) {
   }
   if (trade.entryReason) lines.push(`
 Why they said they entered: "${trade.entryReason}"`);
+  if (trade.targetPrice !== void 0) lines.push(`
+Exit price they planned around: ${trade.targetPrice}`);
+  if (trade.exitPlan) lines.push(`
+When they planned to exit: "${trade.exitPlan}"`);
+  if (trade.exitReason) lines.push(`
+Why they said they exited: "${trade.exitReason}"`);
   if (trade.notes) lines.push(`
 Trade notes: "${trade.notes}"`);
   if (trade.dayPlan) {
@@ -907,6 +915,8 @@ function formatEntryForPrompt(entry) {
   );
   if (entry.setupName) lines.push(`Setup they logged it as: ${entry.setupName}.`);
   if (entry.entryReason) lines.push(`Their reason in their own words: "${entry.entryReason}".`);
+  if (entry.targetPrice !== void 0) lines.push(`Their planned exit price: ${entry.targetPrice}.`);
+  if (entry.exitPlan) lines.push(`Their plan for exiting: "${entry.exitPlan}".`);
   lines.push(
     "Make YOUR OWN call on the live numbers, and do not simply agree with them \u2014 this is recorded beside their entry to compare the two, so agreeing out of politeness makes the comparison worthless."
   );
@@ -1689,6 +1699,8 @@ function readEntryFacts(raw) {
     initialStop,
     setupName: typeof record.setupName === "string" ? record.setupName.trim() : void 0,
     entryReason: typeof record.entryReason === "string" ? record.entryReason.trim() : void 0,
+    targetPrice: readNumber2(record.targetPrice),
+    exitPlan: typeof record.exitPlan === "string" ? record.exitPlan.trim() : void 0,
     session: typeof record.session === "string" ? record.session.trim() : "Regular Session"
   };
 }

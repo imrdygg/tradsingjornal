@@ -31,6 +31,7 @@ import {
 import { ModalOverlay } from '../common/ModalOverlay';
 import { ImageLightboxModal } from '../common/ImageLightboxModal';
 import { calculateTradeRuleFollowing } from '../../lib/analytics/discipline';
+import { compareTargetOnTrade } from '../../lib/analytics/target-exits';
 import { findInstrument } from '../../lib/trading/instruments';
 import { formatTimestamp } from '../../lib/storage/date-utils';
 import { isVideoUrl } from '../../lib/media/media-utils';
@@ -80,6 +81,9 @@ const money = (value: number) =>
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
+
+/** Signed R, so a miss reads as a negative rather than an unsigned gap. */
+const signedR = (value: number) => `${value > 0 ? '+' : ''}${value.toFixed(2)}R`;
 
 const answerCopy = (answer: QuestionAnswer) =>
   answer === 'yes' ? 'Yes' : answer === 'no' ? 'No' : 'N/A';
@@ -215,6 +219,8 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
 
   const duration = formatDuration(trade.entryTime, trade.exitTime);
   const pnlPositive = trade.grossPnL > 0;
+  // The planned exit in R, measured off the same stop as the realized R below.
+  const targetComparison = compareTargetOnTrade(trade);
 
   const handleSaveReview = () => {
     if (!onSaveExecutionReview) return;
@@ -383,6 +389,17 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
               <Metric label="Entry" value={trade.entryPrice.toFixed(2)} />
               <Metric label="Initial stop" value={trade.initialStop.toFixed(2)} />
               <Metric
+                label="Target"
+                value={trade.targetPrice !== undefined ? trade.targetPrice.toFixed(2) : '—'}
+                sub={
+                  targetComparison
+                    ? `${signedR(targetComparison.targetR)} planned`
+                    : trade.targetPrice !== undefined
+                    ? 'planned exit'
+                    : undefined
+                }
+              />
+              <Metric
                 label="Exit"
                 value={trade.exitPrice !== undefined ? trade.exitPrice.toFixed(2) : '—'}
                 sub={
@@ -404,6 +421,21 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                     : undefined
                 }
               />
+              {targetComparison && targetComparison.gapR !== null && (
+                <Metric
+                  label="Vs target"
+                  value={
+                    <span className={targetComparison.hit ? 'text-emerald-400' : 'text-amber-300'}>
+                      {signedR(targetComparison.gapR)}
+                    </span>
+                  }
+                  sub={
+                    targetComparison.hit
+                      ? `past the ${signedR(targetComparison.targetR)} target`
+                      : `short of the ${signedR(targetComparison.targetR)} target`
+                  }
+                />
+              )}
               <Metric
                 label="Initial risk"
                 value={
@@ -618,7 +650,11 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
 
           {/* What the trader wrote */}
           <Section title="Your notes" icon={<NotebookPen className="w-3.5 h-3.5 text-amber-400" />}>
-            {trade.entryReason || trade.notes || (trade.tags && trade.tags.length > 0) ? (
+            {trade.entryReason ||
+            trade.exitPlan ||
+            trade.exitReason ||
+            trade.notes ||
+            (trade.tags && trade.tags.length > 0) ? (
               <div className="space-y-2.5 text-xs">
                 {trade.entryReason && (
                   <div>
@@ -627,6 +663,26 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                     </span>
                     <p className="text-zinc-200 leading-relaxed whitespace-pre-line">
                       {trade.entryReason}
+                    </p>
+                  </div>
+                )}
+                {trade.exitPlan && (
+                  <div>
+                    <span className="text-[10px] uppercase font-mono tracking-wider text-zinc-500 block">
+                      Exit plan
+                    </span>
+                    <p className="text-zinc-200 leading-relaxed whitespace-pre-line">
+                      {trade.exitPlan}
+                    </p>
+                  </div>
+                )}
+                {trade.exitReason && (
+                  <div>
+                    <span className="text-[10px] uppercase font-mono tracking-wider text-zinc-500 block">
+                      Exit reason
+                    </span>
+                    <p className="text-zinc-200 leading-relaxed whitespace-pre-line">
+                      {trade.exitReason}
                     </p>
                   </div>
                 )}
@@ -656,7 +712,8 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
             ) : (
               <p className="text-[11px] text-zinc-500 leading-relaxed">
                 Nothing written for this trade yet. Use <strong className="text-zinc-300">Edit</strong>{' '}
-                to add an entry reason and notes — future-you will want to know why you took it.
+                to add an entry reason, an exit plan and notes — future-you will want to know why
+                you took it and when you meant to get out.
               </p>
             )}
           </Section>

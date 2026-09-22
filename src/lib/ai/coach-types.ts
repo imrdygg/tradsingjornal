@@ -64,6 +64,10 @@ export interface CoachEntryFacts {
   initialStop: number;
   setupName?: string;
   entryReason?: string;
+  /** The price the trader planned to exit at, when they set one. */
+  targetPrice?: number;
+  /** The trader's own plan for when and how they will get out. */
+  exitPlan?: string;
   session: string;
 }
 
@@ -297,6 +301,12 @@ export interface CoachTradeFacts {
   source: string;
   status: string;
   entryReason?: string;
+  /** The exit price the trader planned around, when they set one. */
+  targetPrice?: number;
+  /** The trader's stated plan for exiting, set while the position was open. */
+  exitPlan?: string;
+  /** Why the trader actually exited, in their own words, on a closed trade. */
+  exitReason?: string;
   notes?: string;
   tags?: string[];
   initialRisk: number;

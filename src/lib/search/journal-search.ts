@@ -58,6 +58,9 @@ function buildTradeHaystack(trade: Trade, symbol: string, tradeDate: string): st
   return [
     trade.setupName,
     trade.entryReason,
+    trade.exitPlan,
+    trade.exitReason,
+    trade.targetPrice !== undefined ? String(trade.targetPrice) : undefined,
     trade.notes,
     trade.session,
     trade.direction === 'long' ? 'long' : 'short',

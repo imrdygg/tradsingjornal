@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { Trade, Instrument } from '../../types';
 import { calculateTradeRuleFollowing } from '../../lib/analytics/discipline';
+import { compareTargetOnTrade } from '../../lib/analytics/target-exits';
 import { instrumentSymbol } from '../../lib/trading/instruments';
 import { CoachEntryCallBadge } from './CoachEntryCallBadge';
 import { formatTimestamp } from '../../lib/storage/date-utils';
@@ -38,6 +39,9 @@ interface TradeCardProps {
   onDelete?: (tradeId: string) => void;
 }
 
+/** Signed R, so a miss reads as a negative rather than an unsigned gap. */
+const signedR = (n: number) => `${n > 0 ? '+' : ''}${n.toFixed(2)}R`;
+
 export const TradeCard: React.FC<TradeCardProps> = ({
   trade,
   instruments,
@@ -49,6 +53,10 @@ export const TradeCard: React.FC<TradeCardProps> = ({
 }) => {
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const symbol = instrumentSymbol(instruments, trade.instrumentId);
+
+  // The planned exit in R, beside what the trade did — the card's read of "did I take what
+  // I planned to take". Null when the trade carries no usable target.
+  const targetComparison = compareTargetOnTrade(trade);
 
   /**
    * The whole card is clickable to open the trade's details, but nothing
@@ -237,6 +245,27 @@ export const TradeCard: React.FC<TradeCardProps> = ({
               ? `${trade.pointsPnL > 0 ? '+' : ''}${trade.pointsPnL.toFixed(2)} pts`
               : '—'}
           </span>
+          {targetComparison && (
+            <span
+              className="text-[10px] font-mono block"
+              title="The target measured in R off this trade's own stop"
+            >
+              <span className="text-zinc-500">
+                Target {trade.targetPrice!.toFixed(2)} ·{' '}
+              </span>
+              <span className="text-zinc-300">{signedR(targetComparison.targetR)}</span>
+              {targetComparison.gapR !== null && (
+                <span
+                  className={targetComparison.hit ? 'text-emerald-400' : 'text-amber-300'}
+                >
+                  {' '}
+                  {targetComparison.gapR >= 0
+                    ? `+${targetComparison.gapR.toFixed(2)}R over`
+                    : `−${Math.abs(targetComparison.gapR).toFixed(2)}R short`}
+                </span>
+              )}
+            </span>
+          )}
         </div>
 
         <div>
@@ -361,6 +390,12 @@ export const TradeCard: React.FC<TradeCardProps> = ({
           {trade.entryReason && (
             <span className="truncate max-w-[200px] text-[11px] text-zinc-400 italic">
               "{trade.entryReason}"
+            </span>
+          )}
+
+          {trade.exitReason && (
+            <span className="truncate max-w-[200px] text-[11px] text-zinc-400 italic">
+              Exit: "{trade.exitReason}"
             </span>
           )}
         </div>

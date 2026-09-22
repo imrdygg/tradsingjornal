@@ -195,6 +195,28 @@ export interface Trade {
   setupId?: string;
   setupName?: string;
   entryReason?: string;
+  /**
+   * The price the exit was planned around when the trade was entered.
+   *
+   * A plan, not a fill: it is what the trader intended to exit at, kept beside the actual
+   * `exitPrice` so the two can be compared after the fact. Optional because it is not
+   * every trade that has a fixed target.
+   */
+  targetPrice?: number;
+  /**
+   * When and how the trader plans to get out, in their own words.
+   *
+   * The exit counterpart to `entryReason`, set while the position is open. The plan can
+   * be a level, a time, a condition or a combination — whatever the trader will watch for.
+   */
+  exitPlan?: string;
+  /**
+   * Why the trade was actually exited, written after the fact.
+   *
+   * The exit counterpart to `entryReason`: what the trader says made them close, kept as
+   * their own words rather than inferred from the price.
+   */
+  exitReason?: string;
   notes?: string;
   tags?: string[];
   initialRisk: number; // $

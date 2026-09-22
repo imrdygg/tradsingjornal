@@ -1,6 +1,7 @@
 import type { Trade } from '../../types';
 import { hasAssumedRisk } from '../trading/risk-fixup';
 import { RISK_TIER_COUNT } from '../trading/risk-tiers';
+import { formatBucket, weekStart } from './weekly-buckets';
 
 /**
  * Did each trade stick to the risk plan it was recorded against?
@@ -92,32 +93,6 @@ export interface SlotTrend {
   slotLabels: string[];
   /** Weeks with at least one measured trade, oldest first. */
   points: SlotTrendPoint[];
-}
-
-const MONTH_LABELS = [
-  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-];
-
-/** "2026-09-14" -> "Sep 14". Built by hand so the label never depends on the machine's locale. */
-function formatBucket(bucketKey: string): string {
-  const [, month, day] = bucketKey.split('-').map(Number);
-  return `${MONTH_LABELS[month - 1] ?? '?'} ${day}`;
-}
-
-/**
- * The Monday of the week an ISO date falls in, as YYYY-MM-DD, or null for an unusable date.
- *
- * Weeks run Monday to Sunday, and the arithmetic is done in UTC: the stored date is a plain
- * calendar date, so reading it in local time would push trades into the neighbouring week
- * for anyone east or west of the machine that wrote them.
- */
-function weekStart(dateStr: string): string | null {
-  const date = new Date(`${dateStr}T00:00:00Z`);
-  if (Number.isNaN(date.getTime())) return null;
-  const sinceMonday = (date.getUTCDay() + 6) % 7;
-  date.setUTCDate(date.getUTCDate() - sinceMonday);
-  return date.toISOString().slice(0, 10);
 }
 
 /** The slot key a trade belongs to, or null when it cannot be judged at all. */

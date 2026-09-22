@@ -445,11 +445,15 @@ describe('buildJournalDigest', () => {
         makeTrade({
           id: 'old',
           entryReason: 'older reason',
+          exitPlan: 'older plan',
+          exitReason: 'older exit',
           exitTime: '2026-09-18T14:00:00.000Z',
         }),
         makeTrade({
           id: 'new',
           entryReason: 'newer reason',
+          exitPlan: 'newer plan',
+          exitReason: 'newer exit',
           notes: longNote,
           exitTime: '2026-09-18T16:00:00.000Z',
         }),
@@ -458,6 +462,10 @@ describe('buildJournalDigest', () => {
 
     expect(digest.traderOwnWords.entryReasons[0]).toBe('newer reason');
     expect(digest.traderOwnWords.entryReasons[1]).toBe('older reason');
+    expect(digest.traderOwnWords.exitPlans[0]).toBe('newer plan');
+    expect(digest.traderOwnWords.exitPlans[1]).toBe('older plan');
+    expect(digest.traderOwnWords.exitReasons[0]).toBe('newer exit');
+    expect(digest.traderOwnWords.exitReasons[1]).toBe('older exit');
     expect(digest.traderOwnWords.tradeNotes[0].length).toBeLessThan(longNote.length);
     expect(digest.traderOwnWords.tradeNotes[0].endsWith('…')).toBe(true);
   });

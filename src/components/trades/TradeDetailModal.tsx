@@ -206,6 +206,14 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
 
   const isClosed = trade.status === 'closed';
   const isLong = trade.direction === 'long';
+  /**
+   * Whether a stop — and so a risk figure — was recorded at all.
+   *
+   * The form lets a trade be written down from its fills alone. Nothing was measured in
+   * that case, so the record shows a dash rather than a $0.00 risk and a 0.00R result,
+   * both of which would read as findings rather than as missing information.
+   */
+  const riskRecorded = trade.initialRisk > 0;
   const review = trade.executionReview;
   const ruleFollowing = calculateTradeRuleFollowing(review);
   const management: TradeManagement | undefined = trade.tradeManagement;
@@ -387,7 +395,11 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
           <Section title="Execution" icon={<Target className="w-3.5 h-3.5 text-zinc-400" />}>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
               <Metric label="Entry" value={trade.entryPrice.toFixed(2)} />
-              <Metric label="Initial stop" value={trade.initialStop.toFixed(2)} />
+              <Metric
+                label="Initial stop"
+                value={riskRecorded ? trade.initialStop.toFixed(2) : '—'}
+                sub={riskRecorded ? undefined : 'no stop recorded'}
+              />
               <Metric
                 label="Target"
                 value={trade.targetPrice !== undefined ? trade.targetPrice.toFixed(2) : '—'}
@@ -416,7 +428,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                   </span>
                 }
                 sub={
-                  isClosed && trade.rMultiple !== undefined
+                  isClosed && riskRecorded && trade.rMultiple !== undefined
                     ? `${trade.rMultiple > 0 ? '+' : ''}${trade.rMultiple.toFixed(2)}R`
                     : undefined
                 }
@@ -439,11 +451,21 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
               <Metric
                 label="Initial risk"
                 value={
-                  <span className={assumedRisk ? 'text-amber-300' : undefined}>
-                    {money(trade.initialRisk)}
-                  </span>
+                  riskRecorded ? (
+                    <span className={assumedRisk ? 'text-amber-300' : undefined}>
+                      {money(trade.initialRisk)}
+                    </span>
+                  ) : (
+                    '—'
+                  )
                 }
-                sub={assumedRisk ? 'assumed stop — not real' : undefined}
+                sub={
+                  assumedRisk
+                    ? 'assumed stop — not real'
+                    : riskRecorded
+                    ? undefined
+                    : 'no stop recorded'
+                }
               />
               <Metric label="Duration" value={duration ?? '—'} />
               <Metric

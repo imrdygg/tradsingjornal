@@ -731,7 +731,11 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       notes: tradeData.notes,
       exitNote: tradeData.exitNote,
       tags: tradeData.tags,
-      initialRisk: tradeData.initialRisk || 50,
+      // A trade logged without a stop records no risk, and 0 is a real answer there — the
+      // `|| 50` this used to be would have turned "no stop" into a confident $50 of risk,
+      // which is exactly the invented number the rest of the journal refuses to show. Only
+      // a caller that omits the field entirely still falls back.
+      initialRisk: tradeData.initialRisk ?? 50,
       // The risk slot the form recorded the trade against. `null` is the custom option and
       // is a real value, so it is taken as given rather than merged like the fields above;
       // undefined falls back to what was stored (a pre-ladder trade keeps having none).
@@ -1162,6 +1166,103 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
         return (
           <div className="space-y-6">
             {/*
+              Today, said in one line.
+
+              The page used to open on a search box, a lesson banner, four collapsible panels
+              and a plan form before the first trade appeared. What a trader actually wants
+              from this tab is the day's result and a way to write a trade down, so that is
+              the whole of it: this strip, then the journal. Everything the app had built on
+              top of that is still here, one click down in the section below.
+            */}
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 backdrop-blur-sm sm:p-5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <h1 className="text-lg font-bold tracking-tight text-zinc-100">Today</h1>
+                  <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] text-zinc-400">
+                    <span>{todayTradingDay.tradeDate}</span>
+                    <span
+                      className={
+                        todayRealizedPnL > 0
+                          ? 'text-emerald-400'
+                          : todayRealizedPnL < 0
+                          ? 'text-rose-400'
+                          : 'text-zinc-400'
+                      }
+                    >
+                      {todayRealizedPnL > 0 ? '+' : ''}${todayRealizedPnL.toFixed(2)} today
+                    </span>
+                    <span>
+                      {todayTrades.length} {todayTrades.length === 1 ? 'trade' : 'trades'}
+                    </span>
+                    <span>
+                      {todayWins}W/{todayLosses}L
+                    </span>
+                    <span>{instrumentSymbol(instruments, todayTradingDay.primaryInstrument)}</span>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    id="btn-add-trade-top"
+                    onClick={() => openAddTrade()}
+                    className="flex items-center gap-2 rounded-xl bg-zinc-100 px-4 py-2 text-xs font-bold text-zinc-950 shadow-sm transition-all hover:scale-[1.02] hover:bg-white active:scale-[0.98]"
+                  >
+                    <Plus className="h-4 w-4 stroke-[2.5]" />
+                    Log a Trade
+                  </button>
+
+                  <button
+                    onClick={() => setIsReviewModalOpen(true)}
+                    className="flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-800/80 px-4 py-2 text-xs font-semibold text-zinc-200 shadow-sm transition-all hover:bg-zinc-800"
+                  >
+                    <Award className="h-4 w-4 text-amber-400" />
+                    {todayReview ? 'Update Daily Review' : 'End-of-Day Review'}
+                  </button>
+                </div>
+              </div>
+
+              {importNotification && (
+                <div className="mt-3 flex items-center gap-2 rounded-lg border border-emerald-800 bg-emerald-950/80 px-3 py-1.5 font-mono text-xs text-emerald-400">
+                  <Sparkles className="h-3.5 w-3.5" />
+                  <span>{importNotification}</span>
+                  <button
+                    onClick={() => setImportNotification(null)}
+                    className="ml-2 text-zinc-400 hover:text-zinc-200"
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/*
+              Everything else the app knows how to do, folded into one line.
+
+              The search box, the lesson, the review trend, the coach panels, the risk summary,
+              the drawdown strip and the whole morning plan all still render exactly as they
+              did — they just no longer stand between the trader and the day's trades. Folded
+              rather than deleted: the plan and the risk ladder are the reason the journal
+              exists, and they stay one click away.
+            */}
+            <CollapsibleSection
+              id="section-today-advanced"
+              title="Plan, risk, coach & search"
+              meta={
+                <span className="font-mono text-[11px] text-zinc-500">
+                  {todayTradingDay.lockedAt ? 'plan locked' : 'plan not locked'}
+                </span>
+              }
+              defaultOpen={false}
+              persistKey="today-advanced"
+            >
+            {/*
+              The panels below are the previous page, kept verbatim — spacing and all — with
+              one wrapper around them. They are deliberately not re-indented: nothing inside
+              changed, and shifting two hundred untouched lines sideways would bury the part
+              of this that actually did.
+            */}
+            <div className="space-y-6">
+            {/*
               Journal-wide search: one box that finds trades by tags, setups, notes, P&L
               and date/time. First at the top because finding a past record is the one
               action that can start from any other.
@@ -1280,41 +1381,6 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               <CoachEntryComparison trades={todayTrades} instruments={instruments} />
             </CollapsibleSection>
 
-            {/* Quick Actions & Notification */}
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <button
-                  id="btn-add-trade-top"
-                  onClick={() => openAddTrade()}
-                  className="flex items-center gap-2 rounded-xl bg-zinc-100 hover:bg-white text-zinc-950 px-4 py-2 text-xs font-bold shadow-sm transition-all hover:scale-[1.02] active:scale-[0.98]"
-                >
-                  <Plus className="w-4 h-4 stroke-[2.5]" />
-                  Add Trade (under 1 min)
-                </button>
-
-                <button
-                  onClick={() => setIsReviewModalOpen(true)}
-                  className="flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-800/80 hover:bg-zinc-800 px-4 py-2 text-xs font-semibold text-zinc-200 transition-all shadow-sm"
-                >
-                  <Award className="w-4 h-4 text-amber-400" />
-                  {todayReview ? 'Update Daily Review' : 'End-of-Day Review'}
-                </button>
-              </div>
-
-              {importNotification && (
-                <div className="text-xs text-emerald-400 font-mono bg-emerald-950/80 border border-emerald-800 px-3 py-1.5 rounded-lg flex items-center gap-2">
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>{importNotification}</span>
-                  <button
-                    onClick={() => setImportNotification(null)}
-                    className="text-zinc-400 hover:text-zinc-200 ml-2"
-                  >
-                    ✕
-                  </button>
-                </div>
-              )}
-            </div>
-
             {/*
               What the account can still absorb, directly above what today is allowed to
               risk. The plan's loss limit can read unchanged while the room behind it is
@@ -1363,34 +1429,38 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               />
             </CollapsibleSection>
 
-            {/* Today's Recorded Trades Section */}
-            <CollapsibleSection
-              id="today-trades"
-              title={
-                <span className="text-xs font-bold uppercase tracking-wider text-zinc-400 font-mono flex items-center gap-2">
-                  <Layers className="w-4 h-4 text-zinc-300" />
+            </div>
+            </CollapsibleSection>
+
+            {/*
+              The journal itself — the reason the tab exists.
+
+              Kept out of the folded section above on purpose: whatever else a trader has
+              turned on, the trades they took today are the thing they came to see.
+            */}
+            <section id="today-trades" className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="flex items-center gap-2 font-mono text-xs font-bold uppercase tracking-wider text-zinc-400">
+                  <Layers className="h-4 w-4 text-zinc-300" />
                   Today's Trade Executions ({todayTrades.length})
-                </span>
-              }
-              meta={
-                <span className="text-[11px] text-zinc-400 font-mono">
+                </h2>
+                <span className="font-mono text-[11px] text-zinc-400">
                   {todayTrades.filter((t) => t.status === 'open').length} Open •{' '}
                   {todayTrades.filter((t) => t.status === 'closed').length} Closed
                 </span>
-              }
-              persistKey="today-trades"
-              className="space-y-3"
-            >
+              </div>
+
               {todayTrades.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-zinc-800 bg-zinc-900/20 p-8 text-center space-y-3">
                   <p className="text-xs text-zinc-400">
-                    No trades logged for today yet. Lock your morning plan first, then record executions cleanly.
+                    No trades logged for today yet. Entry, exit, why, note and tags — that is
+                    the whole of it.
                   </p>
                   <button
                     onClick={() => openAddTrade()}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 text-zinc-200 text-xs font-medium hover:bg-zinc-700 transition-colors"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 text-zinc-200 text-xs font-medium transition-colors hover:bg-zinc-700"
                   >
-                    <Plus className="w-3.5 h-3.5" /> Record Trade
+                    <Plus className="w-3.5 h-3.5" /> Log a Trade
                   </button>
                 </div>
               ) : (
@@ -1415,7 +1485,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
                   ))}
                 </div>
               )}
-            </CollapsibleSection>
+            </section>
           </div>
         );
 

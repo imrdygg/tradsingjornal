@@ -36,10 +36,27 @@ async function gotoTab(page: Page, tab: string, heading: RegExp) {
   await expect(page.getByRole('heading', { name: heading })).toBeVisible();
 }
 
+/**
+ * The Today tab now opens on the day's trades alone: the morning plan, the risk summary,
+ * the drawdown strip and the coach panels sit behind one folded section.
+ */
+async function expandTodayAdvanced(page: Page) {
+  // Addressed by the body it controls, not by aria-expanded: the section holds other
+  // collapsibles, so "any collapsed button inside it" is not the section's own toggle.
+  const toggle = page.locator('button[aria-controls="section-today-advanced-body"]').first();
+  if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click();
+}
+
+/** The form asks for entry/exit/why/note/tags; everything else is under "More options". */
+async function expandTradeOptions(page: Page) {
+  const toggle = page.locator('#trade-more-options-toggle');
+  if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click();
+}
+
 async function openAddTrade(page: Page) {
   await page.locator('#btn-add-trade-top').click();
   await expect(
-    page.getByRole('heading', { name: /Record Futures Trade/i })
+    page.getByRole('heading', { name: /Log a Trade/i })
   ).toBeVisible();
 }
 
@@ -55,6 +72,7 @@ test.beforeEach(async ({ page }) => {
 test.describe('Recording a trade lists every playbook setup', () => {
   test('all default setups appear in the Setup dropdown', async ({ page }) => {
     await openAddTrade(page);
+    await expandTradeOptions(page);
 
     const select = page.locator('#trade-setup-select');
     await expect(select).toBeVisible();
@@ -80,8 +98,9 @@ test.describe('Recording a trade lists every playbook setup', () => {
     await expect(card.getByText('Off', { exact: true })).toBeVisible();
 
     // It must still be offered when recording a trade.
-    await gotoTab(page, 'today', /Morning Plan/i);
+    await gotoTab(page, 'today', /^Today$/);
     await openAddTrade(page);
+    await expandTradeOptions(page);
 
     const options = await page.locator('#trade-setup-select option').allTextContents();
     expect(options.some((o) => o.trim().startsWith('Engulfing'))).toBeTruthy();
@@ -93,8 +112,9 @@ test.describe('Recording a trade lists every playbook setup', () => {
     await page.getByPlaceholder(/Fair Value Gap/).fill('VWAP Reclaim');
     await page.getByRole('button', { name: 'Add', exact: true }).click();
 
-    await gotoTab(page, 'today', /Morning Plan/i);
+    await gotoTab(page, 'today', /^Today$/);
     await openAddTrade(page);
+    await expandTradeOptions(page);
 
     const options = await page.locator('#trade-setup-select option').allTextContents();
     expect(options.some((o) => o.trim() === 'VWAP Reclaim')).toBeTruthy();
@@ -129,6 +149,9 @@ test.describe('Break-even calculator uses real numbers', () => {
     await page.locator('#trade-contracts').fill('2');
     await page.getByRole('button', { name: /Save Open Trade/i }).click();
 
+    // The scale-in calculator lives in the folded section with the rest of the plan.
+    await expandTodayAdvanced(page);
+
     // The calculator should have picked the real fill up, not 7730/7700.
     await expect(page.locator('#breakeven-entry-price')).toHaveValue('6700.00');
     await expect(page.locator('#breakeven-contracts-held')).toHaveValue('2');
@@ -143,6 +166,8 @@ test.describe('Break-even calculator uses real numbers', () => {
   });
 
   test('no example preset buttons remain on the calculator', async ({ page }) => {
+    await expandTodayAdvanced(page);
+
     // The calculator is opt-in now, so it is opened before it can be inspected.
     await page.locator('#toggle-scale-in').click();
     await expect(page.getByText(/Your Example \(1 @ 7730/i)).toHaveCount(0);
@@ -152,6 +177,8 @@ test.describe('Break-even calculator uses real numbers', () => {
   test('scaling in is optional: the calculator is folded away until it is asked for', async ({
     page,
   }) => {
+    await expandTodayAdvanced(page);
+
     // With no open position there is nothing to add to, so the step stays collapsed and
     // nothing about it is required before locking.
     await expect(page.locator('#toggle-scale-in')).toHaveAttribute('aria-expanded', 'false');
@@ -175,6 +202,7 @@ test.describe('Logging a scale-in as its own trade', () => {
     await page.locator('#trade-initial-stop').fill('7710');
     await page.locator('#trade-contracts').fill('1');
     await page.getByRole('button', { name: /Save Open Trade/i }).click();
+    await expandTodayAdvanced(page);
 
     // Describe the add: 5 more contracts at 7700 with price now at 7700.
     await page.locator('#breakeven-current-price').fill('7700');
@@ -187,7 +215,7 @@ test.describe('Logging a scale-in as its own trade', () => {
     await page.locator('#breakeven-log-scale-in').click();
 
     // The record form opens as a NEW trade, pre-filled with the add.
-    await expect(page.getByRole('heading', { name: /Record Futures Trade/i })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /Log a Trade/i })).toBeVisible();
     await expect(page.getByText(/Pre-filled from the break-even calculator/i)).toBeVisible();
     await expect(page.locator('#trade-entry-price')).toHaveValue('7700');
     await expect(page.locator('#trade-contracts')).toHaveValue('5');
@@ -210,6 +238,7 @@ test.describe('Logging a scale-in as its own trade', () => {
     await page.locator('#trade-initial-stop').fill('7710');
     await page.locator('#trade-contracts').fill('1');
     await page.getByRole('button', { name: /Save Open Trade/i }).click();
+    await expandTodayAdvanced(page);
 
     await page.locator('#breakeven-current-price').fill('7700');
     await page.locator('#breakeven-add-price').fill('7700');
@@ -242,6 +271,8 @@ test.describe('Logging a scale-in as its own trade', () => {
   });
 
   test('the log button is disabled until the numbers make sense', async ({ page }) => {
+    await expandTodayAdvanced(page);
+
     // No open trade, so the optional calculator is folded away until it is opened.
     await page.locator('#toggle-scale-in').click();
 

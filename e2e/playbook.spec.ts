@@ -15,6 +15,17 @@ const DIAGRAM_WITH_LEVEL = 'svg[role="img"] line[stroke-dasharray="4 3"]';
 const ENGULFING_SUMMARY =
   'A two-candle reversal pattern where one candle fully "swallows" the body of the previous one';
 
+/**
+ * The Today tab opens on the day's trades alone; the morning plan — and the "Study in
+ * Playbook" link that lives on it — is behind one folded section.
+ */
+async function expandTodayAdvanced(page: Page) {
+  // Addressed by the body it controls, not by aria-expanded: the section holds other
+  // collapsibles, so "any collapsed button inside it" is not the section's own toggle.
+  const toggle = page.locator('button[aria-controls="section-today-advanced-body"]').first();
+  if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click();
+}
+
 /** Open the Playbook tab via whichever nav is visible at the current viewport. */
 async function gotoPlaybook(page: Page) {
   const desktop = page.locator('#nav-btn-playbook');
@@ -283,7 +294,8 @@ test.describe('Setup charts & video attachments', () => {
 
 test.describe('Playbook deep-link', () => {
   test('Morning Plan "Study in Playbook" opens the tab focused on watched setups', async ({ page }) => {
-    // Start on Today where the Morning Plan lives.
+    // Start on Today where the Morning Plan lives, folded away with the rest of the plan.
+    await expandTodayAdvanced(page);
     await expect(page.getByRole('heading', { name: /Morning Plan/i })).toBeVisible();
 
     // Watched setups are seeded as Engulfing/Support/Resistance; make the
@@ -299,6 +311,7 @@ test.describe('Playbook deep-link', () => {
   });
 
   test('watched-setups changes on the plan are reflected in the Playbook badge', async ({ page }) => {
+    await expandTodayAdvanced(page);
     await expect(page.getByRole('heading', { name: /Morning Plan/i })).toBeVisible();
 
     // Add Breakout to today's watch list from the plan form.

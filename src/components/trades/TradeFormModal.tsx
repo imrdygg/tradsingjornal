@@ -8,6 +8,7 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   Calendar,
+  ChevronDown,
   Info,
   Target,
 } from 'lucide-react';
@@ -97,6 +98,16 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
   const [images, setImages] = useState<string[]>([]);
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const [error, setError] = useState('');
+  /**
+   * Whether the optional half of the form is on screen.
+   *
+   * The five fields a trade is actually made of — entry, exit, why, note, tags — are all
+   * that show by default. Instrument, contracts-by-plan, sessions, setups, the risk ladder,
+   * times, the target and the charts are real features, but none of them is needed to write
+   * down a trade, so they are folded away rather than deleted and stay one click from the
+   * form. Reset to closed on every open so a trader is never met by a form they left long.
+   */
+  const [moreOptions, setMoreOptions] = useState(false);
   /**
    * Which numbered slot of the risk plan this trade is taken against.
    *
@@ -258,6 +269,8 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
     }
     setPreviewIndex(null);
     setError('');
+    // Every open starts from the five fields, whatever was expanded last time.
+    setMoreOptions(false);
     // Only a fresh, hand-entered trade has its size derived from its slot. An edit keeps
     // the size that was actually filled, and a scale-in keeps the calculator's size.
     autoSizeRef.current = !editingTrade && !prefill;
@@ -266,25 +279,36 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
   // Live Calculations Preview
   const calculations = useMemo(() => {
     const entry = parseFloat(entryPrice);
-    const stop = parseFloat(initialStop);
     const qty = parseInt(contracts, 10);
+    //
+    // The stop is optional. Without one there is no risk figure to record and no R to
+    // divide by — but the fills, and the P&L they produce, are still worth showing while
+    // the trade is being typed in, so they are computed either way.
+    const hasStop = initialStop.trim() !== '' && !isNaN(parseFloat(initialStop));
+    const stop = hasStop ? parseFloat(initialStop) : NaN;
 
-    if (isNaN(entry) || isNaN(stop) || isNaN(qty) || qty <= 0 || entry === stop) {
+    if (isNaN(entry) || isNaN(qty) || qty <= 0) {
       return null;
     }
 
-    const initialRisk = calculateInitialRisk({
-      entryPrice: entry,
-      stopPrice: stop,
-      contracts: qty,
-      instrument: selectedInstrument,
-    });
+    // A stop sitting on the entry is not a stop: it prices no risk, so it is treated as
+    // no stop at all rather than as a confident zero.
+    const riskKnown = hasStop && entry !== stop;
 
-    const stopDistance = Math.abs(entry - stop);
+    const initialRisk = riskKnown
+      ? calculateInitialRisk({
+          entryPrice: entry,
+          stopPrice: stop,
+          contracts: qty,
+          instrument: selectedInstrument,
+        })
+      : 0;
+
+    const stopDistance = riskKnown ? Math.round(Math.abs(entry - stop) * 100) / 100 : null;
 
     const exit = parseFloat(exitPrice);
     let pnlResult = null;
-    let rMultiple = null;
+    let rMultiple: number | null = null;
 
     if (!isNaN(exit) && exit > 0) {
       pnlResult = calculatePnL({
@@ -295,7 +319,7 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
         instrument: selectedInstrument,
       });
 
-      rMultiple = calculateRMultiple(pnlResult.grossPnL, initialRisk);
+      rMultiple = riskKnown ? calculateRMultiple(pnlResult.grossPnL, initialRisk) : null;
     }
 
     // The planned exit, measured in the same R units as the actual one, so a target can
@@ -304,7 +328,7 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
     const targetExit = parseFloat(targetPrice);
     let targetR: number | null = null;
 
-    if (!isNaN(targetExit) && targetExit > 0 && targetExit !== entry) {
+    if (riskKnown && !isNaN(targetExit) && targetExit > 0 && targetExit !== entry) {
       const targetPnL = calculatePnL({
         direction,
         entryPrice: entry,
@@ -316,8 +340,9 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
     }
 
     return {
+      riskKnown,
       initialRisk,
-      stopDistance: Math.round(stopDistance * 100) / 100,
+      stopDistance,
       pnlResult,
       rMultiple,
       targetR,
@@ -408,20 +433,27 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
     setError('');
 
     const entry = parseFloat(entryPrice);
-    const stop = parseFloat(initialStop);
     const qty = parseInt(contracts, 10);
+    //
+    // The stop is optional. A trade without one records its fills and nothing about risk,
+    // which is the honest thing to store when the trader never gave a level to lose at —
+    // the alternative is inventing a stop, and every risk statistic downstream would then
+    // be fiction. The entry price stands in for it so the record still has a number there.
+    const stopEntered = initialStop.trim() !== '';
+    const stop = stopEntered ? parseFloat(initialStop) : entry;
+    const riskKnown = stopEntered && entry !== stop;
 
     if (isNaN(entry) || entry <= 0) {
       setError('Entry price must be a valid positive number.');
       return;
     }
 
-    if (isNaN(stop) || stop <= 0) {
-      setError('Initial stop must be a valid positive number.');
+    if (stopEntered && (isNaN(stop) || stop <= 0)) {
+      setError('Initial stop must be a valid positive number, or left blank.');
       return;
     }
 
-    if (entry === stop) {
+    if (stopEntered && entry === stop) {
       setError('Initial stop price cannot equal entry price.');
       return;
     }
@@ -436,9 +468,10 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
       return;
     }
 
-    // A new trade must say which risk slot it belongs to. An edit is allowed to leave a
-    // pre-ladder trade alone rather than forcing a number onto it.
-    if (!editingTrade && targetRisk === null) {
+    // A new trade that records a stop must say which risk slot it belongs to. An edit is
+    // allowed to leave a pre-ladder trade alone rather than forcing a number onto it, and
+    // a trade with no stop has no risk for a slot to describe.
+    if (!editingTrade && riskKnown && targetRisk === null) {
       setError('Pick a Trade # for this trade, or enter the custom risk amount.');
       return;
     }
@@ -464,12 +497,14 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
       }
     }
 
-    const initialRisk = calculateInitialRisk({
-      entryPrice: entry,
-      stopPrice: stop,
-      contracts: qty,
-      instrument: selectedInstrument,
-    });
+    const initialRisk = riskKnown
+      ? calculateInitialRisk({
+          entryPrice: entry,
+          stopPrice: stop,
+          contracts: qty,
+          instrument: selectedInstrument,
+        })
+      : 0;
 
     let grossPnL = 0;
     let pointsPnL = 0;
@@ -513,12 +548,15 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
       tags: parsedTags.length ? parsedTags : undefined,
       initialRisk,
       // The slot this trade was taken against, and the risk it committed to. Null is the
-      // custom option; undefined is left only for a pre-ladder trade being edited.
-      riskTier:
-        riskTier === null && targetRisk === null && editingTrade?.riskTier === undefined
-          ? undefined
-          : riskTier,
-      plannedRisk: targetRisk ?? undefined,
+      // custom option; undefined is left only for a pre-ladder trade being edited. With no
+      // stop there is nothing measured, so the slot is left off entirely: a planned amount
+      // beside a risk of zero would read as a plan that was followed.
+      riskTier: !riskKnown
+        ? undefined
+        : riskTier === null && targetRisk === null && editingTrade?.riskTier === undefined
+        ? undefined
+        : riskTier,
+      plannedRisk: riskKnown ? targetRisk ?? undefined : undefined,
       grossPnL,
       pointsPnL,
       rMultiple,
@@ -550,8 +588,11 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
           <div className="flex items-center gap-2">
             <h3 className="text-sm sm:text-base font-bold text-zinc-100 flex items-center gap-2">
               <Plus className="w-4 h-4 text-zinc-300" />
-              {editingTrade ? 'Edit Trade Execution' : 'Record Futures Trade (under 1 min)'}
+              {editingTrade ? 'Edit Trade' : 'Log a Trade'}
             </h3>
+            <span className="hidden text-[10px] font-mono text-zinc-500 sm:inline">
+              entry · exit · why · note · tags
+            </span>
           </div>
           <button
             onClick={onClose}
@@ -581,36 +622,68 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
             </div>
           )}
 
-          {/* Row 1: Direction & Instrument */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-medium text-zinc-300 block mb-1">Direction</label>
-              <div className="grid grid-cols-2 gap-1 rounded-xl bg-zinc-950 p-1 border border-zinc-800">
-                <button
-                  type="button"
-                  onClick={() => setDirection('long')}
-                  className={`flex items-center justify-center gap-1 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                    direction === 'long'
-                      ? 'bg-emerald-950/90 text-emerald-300 border border-emerald-800 shadow-sm'
-                      : 'text-zinc-400 hover:text-zinc-200'
-                  }`}
-                >
-                  <ArrowUpRight className="w-3.5 h-3.5" /> Long
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDirection('short')}
-                  className={`flex items-center justify-center gap-1 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                    direction === 'short'
-                      ? 'bg-rose-950/90 text-rose-300 border border-rose-800 shadow-sm'
-                      : 'text-zinc-400 hover:text-zinc-200'
-                  }`}
-                >
-                  <ArrowDownRight className="w-3.5 h-3.5" /> Short
-                </button>
-              </div>
+          {/*
+            Direction is the one thing about an entry that cannot be defaulted: it decides
+            which side the P&L falls on. Everything else on this form has a sensible value
+            already, so the trader only has to spell out what they alone know.
+          */}
+          <div>
+            <label className="text-xs font-medium text-zinc-300 block mb-1">Direction</label>
+            <div className="grid grid-cols-2 gap-1 rounded-xl bg-zinc-950 p-1 border border-zinc-800">
+              <button
+                type="button"
+                onClick={() => setDirection('long')}
+                className={`flex items-center justify-center gap-1 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  direction === 'long'
+                    ? 'bg-emerald-950/90 text-emerald-300 border border-emerald-800 shadow-sm'
+                    : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                <ArrowUpRight className="w-3.5 h-3.5" /> Long
+              </button>
+              <button
+                type="button"
+                onClick={() => setDirection('short')}
+                className={`flex items-center justify-center gap-1 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  direction === 'short'
+                    ? 'bg-rose-950/90 text-rose-300 border border-rose-800 shadow-sm'
+                    : 'text-zinc-400 hover:text-zinc-200'
+                }`}
+              >
+                <ArrowDownRight className="w-3.5 h-3.5" /> Short
+              </button>
             </div>
+          </div>
 
+          {/*
+            The optional half of the form.
+
+            Every field below this toggle is a real feature — the instrument, the plan's
+            risk slot, sessions, setups, the target, the charts — but none of them is needed
+            to write a trade down. They are folded, not removed, so the form opens as the five
+            things a trade is, and the depth is still one click away for the days it is wanted.
+          */}
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-zinc-800 bg-zinc-950/60 px-3 py-2">
+            <span className="text-[11px] leading-relaxed text-zinc-500">
+              Optional, for the days you want them: the instrument, your plan's risk slot,
+              the timing, the target and your charts.
+            </span>
+            <button
+              type="button"
+              id="trade-more-options-toggle"
+              onClick={() => setMoreOptions((open) => !open)}
+              aria-expanded={moreOptions}
+              className="flex shrink-0 items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-800/80 px-2.5 py-1 text-[11px] font-semibold text-zinc-200 transition-colors hover:bg-zinc-800"
+            >
+              <ChevronDown
+                className={`h-3 w-3 transition-transform ${moreOptions ? '' : '-rotate-90'}`}
+              />
+              More options
+            </button>
+          </div>
+
+          {/* Which market — only worth changing when it is not the day's primary. */}
+          {moreOptions && (
             <div>
               <label
                 htmlFor="trade-instrument-select"
@@ -631,9 +704,10 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
                 ))}
               </select>
             </div>
-          </div>
+          )}
 
           {/* Trade # — the numbered risk slot this trade is taken against. */}
+          {moreOptions && (
           <div className="rounded-xl border border-zinc-800 bg-zinc-950/70 p-3 space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-xs font-medium text-zinc-300">
@@ -778,17 +852,18 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
                 </p>
               ))}
           </div>
+          )}
 
           {/*
-            Entry. Price, size and timing are one subject, so they sit under one heading
-            with the reason and the note — the trader is answering "what did I take" once,
-            rather than hunting for the reason field at the bottom of the form.
+            Entry. Price, size and stop are one subject, so they sit under one heading with
+            the reason and the note — the trader is answering "what did I take" once, rather
+            than hunting for the reason field at the bottom of the form.
           */}
           <div className="flex flex-wrap items-baseline gap-x-2 pt-2 border-t border-zinc-800/80">
             <span className="text-xs font-semibold text-emerald-400/90 uppercase tracking-wider font-mono">
               Entry
             </span>
-            <span className="text-[10px] text-zinc-500 font-mono">price · size · timing · why</span>
+            <span className="text-[10px] text-zinc-500 font-mono">price · size · stop · why</span>
           </div>
 
           {/* Row 2: Entry Price, Initial Stop, Contracts */}
@@ -815,9 +890,10 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
             <div>
               <label
                 htmlFor="trade-initial-stop"
-                className="text-xs font-medium text-zinc-300 block mb-1"
+                className="text-xs font-medium text-zinc-300 block mb-1 flex items-center justify-between"
               >
-                Initial Stop <span className="text-rose-400">*</span>
+                <span>Stop</span>
+                <span className="text-[10px] font-normal text-zinc-500">optional</span>
               </label>
               <input
                 id="trade-initial-stop"
@@ -827,7 +903,6 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
                 value={initialStop}
                 onChange={(e) => setInitialStop(e.target.value)}
                 className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none"
-                required
               />
             </div>
 
@@ -856,6 +931,8 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
           </div>
 
           {/* Row 3: Session & Setup */}
+          {moreOptions && (
+          <>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="text-xs font-medium text-zinc-300 block mb-1">Session</label>
@@ -918,18 +995,20 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
               required
             />
           </div>
+          </>
+          )}
 
           <div>
             <label
               htmlFor="trade-entry-reason"
               className="text-xs font-medium text-zinc-300 block mb-1"
             >
-              Entry Reason
+              Why
             </label>
             <input
               id="trade-entry-reason"
               type="text"
-              placeholder="e.g. Bullish engulfing rejection off key support with volume"
+              placeholder="What made you take it?"
               value={entryReason}
               onChange={(e) => setEntryReason(e.target.value)}
               className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
@@ -941,12 +1020,12 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
               htmlFor="trade-entry-note"
               className="text-xs font-medium text-zinc-300 block mb-1"
             >
-              Entry Note
+              Note
             </label>
             <textarea
               id="trade-entry-note"
               rows={2}
-              placeholder="Anything else about taking this entry — context, how you felt, what you saw"
+              placeholder="Anything else worth remembering — what you saw, how you felt"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               className="w-full resize-y rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
@@ -963,12 +1042,16 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-zinc-300">
                 <div>
                   <span className="text-zinc-500 block text-[10px]">Stop Distance</span>
-                  <span>{calculations.stopDistance} pts</span>
+                  <span>
+                    {calculations.stopDistance !== null
+                      ? `${calculations.stopDistance} pts`
+                      : '—'}
+                  </span>
                 </div>
                 <div>
                   <span className="text-zinc-500 block text-[10px]">Initial Risk</span>
                   <span className="font-bold text-rose-300">
-                    ${calculations.initialRisk.toFixed(2)}
+                    {calculations.riskKnown ? `$${calculations.initialRisk.toFixed(2)}` : '—'}
                   </span>
                 </div>
                 {calculations.pnlResult && (
@@ -991,14 +1074,26 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
                     <div>
                       <span className="text-zinc-500 block text-[10px]">R Multiple</span>
                       <span className="font-bold text-zinc-200">
-                        {calculations.rMultiple !== null && calculations.rMultiple > 0
-                          ? `+${calculations.rMultiple.toFixed(2)}R`
-                          : `${calculations.rMultiple?.toFixed(2)}R`}
+                        {calculations.rMultiple === null
+                          ? '—'
+                          : `${calculations.rMultiple > 0 ? '+' : ''}${calculations.rMultiple.toFixed(
+                              2
+                            )}R`}
                       </span>
                     </div>
                   </>
                 )}
               </div>
+
+              {/*
+                Said once, plainly: the stop is what makes risk and R exist, and a trade
+                without one is still a complete record of the fills.
+              */}
+              {!calculations.riskKnown && (
+                <p className="pt-1.5 mt-1 border-t border-zinc-800/60 text-[11px] text-zinc-500">
+                  Add a stop to record risk and R. The fills stand on their own without one.
+                </p>
+              )}
 
               {/*
                 The planned exit measured in R, beside what the trade actually did. A target
@@ -1057,104 +1152,107 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
           )}
 
           {/*
-            Exit. The target and the fill sit beside each other, with the reason and the note
-            under them — the same shape as the entry above, so the two read as one trade told
-            twice rather than fields scattered through the form. The fill is left blank while
-            the trade is open; only the target is worth setting before then.
+            Exit. The fill is the one thing worth asking for — a trade with an exit price is a
+            closed trade. The target and the timing are plan detail, so they live with the rest
+            of the optional fields; the fill is left blank while the trade is still running.
           */}
           <div className="flex flex-wrap items-baseline gap-x-2 pt-2 border-t border-zinc-800/80">
             <span className="text-xs font-semibold text-amber-400/90 uppercase tracking-wider font-mono">
               Exit
             </span>
             <span className="text-[10px] text-zinc-500 font-mono">
-              target · fill · why — leave the fill blank while the trade is open
+              leave it blank while the trade is still open
             </span>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div>
-              <label
-                htmlFor="trade-target-price"
-                className="text-xs font-medium text-zinc-300 block mb-1"
-              >
-                Target Price
-              </label>
-              <input
-                id="trade-target-price"
-                type="number"
-                step="0.25"
-                placeholder="6742.25"
-                value={targetPrice}
-                onChange={(e) => setTargetPrice(e.target.value)}
-                className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
-              />
-            </div>
-
-            <div>
-              <label
-                htmlFor="trade-exit-price"
-                className="text-xs font-medium text-zinc-300 block mb-1"
-              >
-                Exit Price
-              </label>
-              <input
-                id="trade-exit-price"
-                type="number"
-                step="0.25"
-                placeholder="6732.25"
-                value={exitPrice}
-                onChange={(e) => setExitPrice(e.target.value)}
-                className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="text-xs font-medium text-zinc-300 block mb-1">
-                Exit Date / Time
-              </label>
-              <input
-                id="trade-exit-time"
-                type="datetime-local"
-                value={exitTime}
-                onChange={(e) => setExitTime(e.target.value)}
-                className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none"
-              />
-            </div>
-          </div>
-
           <div>
             <label
-              htmlFor="trade-exit-reason"
+              htmlFor="trade-exit-price"
               className="text-xs font-medium text-zinc-300 block mb-1"
             >
-              Exit Reason
+              Exit Price
             </label>
             <input
-              id="trade-exit-reason"
-              type="text"
-              placeholder="e.g. Hit the target into resistance and momentum stalled"
-              value={exitReason}
-              onChange={(e) => setExitReason(e.target.value)}
-              className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
+              id="trade-exit-price"
+              type="number"
+              step="0.25"
+              placeholder="6732.25"
+              value={exitPrice}
+              onChange={(e) => setExitPrice(e.target.value)}
+              className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
             />
           </div>
 
-          <div>
-            <label
-              htmlFor="trade-exit-note"
-              className="text-xs font-medium text-zinc-300 block mb-1"
-            >
-              Exit Note
-            </label>
-            <textarea
-              id="trade-exit-note"
-              rows={2}
-              placeholder="Anything else about getting out — what you saw, what you would do differently"
-              value={exitNote}
-              onChange={(e) => setExitNote(e.target.value)}
-              className="w-full resize-y rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
-            />
-          </div>
+          {moreOptions && (
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label
+                    htmlFor="trade-target-price"
+                    className="text-xs font-medium text-zinc-300 block mb-1"
+                  >
+                    Target Price
+                  </label>
+                  <input
+                    id="trade-target-price"
+                    type="number"
+                    step="0.25"
+                    placeholder="6742.25"
+                    value={targetPrice}
+                    onChange={(e) => setTargetPrice(e.target.value)}
+                    className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium text-zinc-300 block mb-1">
+                    Exit Date / Time
+                  </label>
+                  <input
+                    id="trade-exit-time"
+                    type="datetime-local"
+                    value={exitTime}
+                    onChange={(e) => setExitTime(e.target.value)}
+                    className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="trade-exit-reason"
+                  className="text-xs font-medium text-zinc-300 block mb-1"
+                >
+                  Exit Reason
+                </label>
+                <input
+                  id="trade-exit-reason"
+                  type="text"
+                  placeholder="e.g. Hit the target into resistance and momentum stalled"
+                  value={exitReason}
+                  onChange={(e) => setExitReason(e.target.value)}
+                  className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label
+                  htmlFor="trade-exit-note"
+                  className="text-xs font-medium text-zinc-300 block mb-1"
+                >
+                  Exit Note
+                </label>
+                <textarea
+                  id="trade-exit-note"
+                  rows={2}
+                  placeholder="Anything else about getting out — what you saw, what you would do differently"
+                  value={exitNote}
+                  onChange={(e) => setExitNote(e.target.value)}
+                  className="w-full resize-y rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
+                />
+              </div>
+            </>
+          )}
 
           {/* Tags belong to the trade as a whole, so they are shared, not split by subject. */}
           <div className="pt-2 border-t border-zinc-800/80">
@@ -1164,7 +1262,7 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
             >
               Tags{' '}
               <span className="text-[10px] font-normal text-zinc-500 font-mono">
-                (shared by entry and exit, comma separated)
+                (comma separated)
               </span>
             </label>
             <input
@@ -1177,18 +1275,24 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
             />
           </div>
 
-          {/* Chart Screenshot Attachments */}
-          <div className="pt-2 border-t border-zinc-800/80">
-            <ImageUploader
-              images={images}
-              onChange={setImages}
-              onPreviewImage={(idx) => setPreviewIndex(idx)}
-              maxImages={6}
-              label="Trade Charts & Video"
-              helperText="Attach entry chart setup, execution context or result screenshots — or a quick 30-60 second clip of the trade."
-              idPrefix="trade-modal-images"
-            />
-          </div>
+          {/*
+            Chart Screenshot Attachments — optional, and hidden with the rest of the depth.
+            Images already on the trade are held in state regardless, so folding this away
+            and saving never drops a chart.
+          */}
+          {moreOptions && (
+            <div className="pt-2 border-t border-zinc-800/80">
+              <ImageUploader
+                images={images}
+                onChange={setImages}
+                onPreviewImage={(idx) => setPreviewIndex(idx)}
+                maxImages={6}
+                label="Trade Charts & Video"
+                helperText="Attach entry chart setup, execution context or result screenshots — or a quick 30-60 second clip of the trade."
+                idPrefix="trade-modal-images"
+              />
+            </div>
+          )}
 
           {/* Action buttons */}
           <div className="flex items-center justify-end gap-2 pt-3 border-t border-zinc-800">

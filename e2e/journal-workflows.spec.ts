@@ -27,9 +27,26 @@ async function openSettings(page: Page, heading: RegExp) {
   await expect(page.getByRole('heading', { name: heading })).toBeVisible();
 }
 
+/**
+ * The Today tab opens on the day's trades alone. The morning plan, the risk summary and
+ * the coach panels are one click below, in a single folded section.
+ */
+async function expandTodayAdvanced(page: Page) {
+  // Addressed by the body it controls, not by aria-expanded: the section holds other
+  // collapsibles, so "any collapsed button inside it" is not the section's own toggle.
+  const toggle = page.locator('button[aria-controls="section-today-advanced-body"]').first();
+  if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click();
+}
+
+/** The form asks for entry/exit/why/note/tags; everything else is under "More options". */
+async function expandTradeOptions(page: Page) {
+  const toggle = page.locator('#trade-more-options-toggle');
+  if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click();
+}
+
 async function openAddTrade(page: Page) {
   await page.locator('#btn-add-trade-top').click();
-  await expect(page.getByRole('heading', { name: /Record Futures Trade/i })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Log a Trade/i })).toBeVisible();
 }
 
 /** Opens the first trade's detail view via whichever control is on screen. */
@@ -69,7 +86,8 @@ test.describe('Trade details', () => {
     // Everything is asserted inside the modal: the collapsed card behind it
     // renders the same values.
     const detail = page.locator('#trade-detail-modal');
-    await expect(detail.getByRole('heading', { name: 'Entry' })).toBeVisible();
+    // Exact, because "Coach's call on this entry" also contains the word.
+    await expect(detail.getByRole('heading', { name: 'Entry', exact: true })).toBeVisible();
     await expect(detail.getByText('Reclaim of the overnight low')).toBeVisible();
     await expect(detail.getByText('clean', { exact: true })).toBeVisible();
     await expect(detail.getByText('Execution', { exact: true })).toBeVisible();
@@ -127,6 +145,7 @@ test.describe('Completing an execution review', () => {
 
 test.describe('Undoing a plan lock', () => {
   test('a locked plan can be unlocked with a recorded reason', async ({ page }) => {
+    await expandTodayAdvanced(page);
     await expect(page.getByRole('heading', { name: /Morning Plan/i })).toBeVisible();
 
     await page.locator('#lock-plan-btn').click();
@@ -166,6 +185,8 @@ test.describe('Undoing a plan lock', () => {
 test.describe('Multi-instrument labels', () => {
   test('an MNQ trade is labelled MNQ and priced at its own point value', async ({ page }) => {
     await openAddTrade(page);
+    // The instrument is one of the optional fields, so it is unfolded first.
+    await expandTradeOptions(page);
     await page.locator('#trade-instrument-select').selectOption('mnq');
     await page.locator('#trade-entry-price').fill('20000');
     await page.locator('#trade-initial-stop').fill('19990');
@@ -198,6 +219,7 @@ test.describe('Multi-instrument labels', () => {
 
   test('the close dialog names the instrument being closed', async ({ page }) => {
     await openAddTrade(page);
+    await expandTradeOptions(page);
     await page.locator('#trade-instrument-select').selectOption('mnq');
     await page.locator('#trade-entry-price').fill('20000');
     await page.locator('#trade-initial-stop').fill('19990');
@@ -230,7 +252,7 @@ test.describe('Starting fresh', () => {
     await expect(page.getByText(/Journal reset/i)).toBeVisible();
 
     // Journal is empty again...
-    await gotoTab(page, 'today', /Morning Plan/i);
+    await gotoTab(page, 'today', /^Today$/);
     await expect(page.getByRole('heading', { name: /Trade Executions \(0\)/ })).toBeVisible();
 
     // ...but the playbook set-ups survived.

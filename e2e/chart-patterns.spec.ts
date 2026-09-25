@@ -32,6 +32,15 @@ async function gotoPlaybook(page: Page) {
   await expect(page.getByRole('heading', { name: /Trading Setups & Playbook Library/i })).toBeVisible();
 }
 
+/**
+ * The trade form asks for entry/exit/why/note/tags. The setup picker — which is how a trade
+ * is matched to a pattern study guide — lives under "More options".
+ */
+async function expandTradeOptions(page: Page) {
+  const toggle = page.locator('#trade-more-options-toggle');
+  if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click();
+}
+
 async function gotoChartPatterns(page: Page) {
   await gotoPlaybook(page);
   await page.locator('#playbook-tab-patterns').click();
@@ -373,6 +382,7 @@ test.describe('Link from a trade', () => {
     else await page.locator('#mobile-nav-today').click();
 
     await page.locator('#btn-add-trade-top').click();
+    await expandTradeOptions(page);
     await page.locator('#trade-setup-select').selectOption({ label: 'Bullish Flag Pattern' });
     await page.locator('#trade-entry-price').fill('7730');
     await page.locator('#trade-initial-stop').fill('7710');

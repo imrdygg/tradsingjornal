@@ -23,9 +23,26 @@ async function gotoTab(page: Page, tab: string, heading: RegExp) {
   await expect(page.getByRole('heading', { name: heading })).toBeVisible();
 }
 
+/**
+ * The Today tab now opens on the day's trades alone: the coach checkpoints and the rest of
+ * the plan sit behind one folded section.
+ */
+async function expandTodayAdvanced(page: Page) {
+  // Addressed by the body it controls, not by aria-expanded: the section holds other
+  // collapsibles, so "any collapsed button inside it" is not the section's own toggle.
+  const toggle = page.locator('button[aria-controls="section-today-advanced-body"]').first();
+  if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click();
+}
+
+/** The form asks for entry/exit/why/note/tags; the times and the rest are under "More options". */
+async function expandTradeOptions(page: Page) {
+  const toggle = page.locator('#trade-more-options-toggle');
+  if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click();
+}
+
 async function openAddTrade(page: Page) {
   await page.locator('#btn-add-trade-top').click();
-  await expect(page.getByRole('heading', { name: /Record Futures Trade/i })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Log a Trade/i })).toBeVisible();
 }
 
 test.beforeEach(async ({ page }) => {
@@ -159,12 +176,12 @@ test.describe('Behaviour read from the trader own timestamps', () => {
     await page.locator('#trade-initial-stop').fill(String(trade.entry - 20));
     await page.locator('#trade-contracts').fill('2');
     await page.locator('#trade-exit-price').fill(String(trade.exit));
+    // The times are exact here, so they come from under "More options".
+    await expandTradeOptions(page);
     await page.locator('#trade-entry-time').fill(trade.entryTime);
     await page.locator('#trade-exit-time').fill(trade.exitTime);
     await page.getByRole('button', { name: /Save Completed Trade/i }).click();
-    await expect(
-      page.getByRole('heading', { name: /Record Futures Trade/i })
-    ).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: /Log a Trade/i })).toHaveCount(0);
   }
 
   test('shows nothing but an honest empty state on a fresh journal', async ({ page }) => {
@@ -226,7 +243,8 @@ test.describe('Behaviour read from the trader own timestamps', () => {
       exitTime: '2026-09-18T10:00',
     });
 
-    await gotoTab(page, 'today', /Morning Plan/i);
+    await gotoTab(page, 'today', /^Today$/);
+    await expandTodayAdvanced(page);
     await expect(page.locator('#coach-checkpoint-after-loss')).toBeVisible();
   });
 });

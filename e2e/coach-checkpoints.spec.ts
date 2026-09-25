@@ -13,6 +13,18 @@ import { expect, test, type Page } from '@playwright/test';
 
 const ANY_CHECKPOINT = /Pre-session prep|Post-session review/;
 
+/**
+ * The Today tab opens on the day's trades alone. The coach checkpoints — the whole subject
+ * of this file — live in the folded "Plan, risk, coach & search" section with the plan, so
+ * every test here unfolds it before the card is reachable.
+ */
+async function expandTodayAdvanced(page: Page) {
+  // Addressed by the body it controls, not by aria-expanded: the section holds other
+  // collapsibles, so "any collapsed button inside it" is not the section's own toggle.
+  const toggle = page.locator('button[aria-controls="section-today-advanced-body"]').first();
+  if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click();
+}
+
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     for (const key of Object.keys(localStorage)) {
@@ -20,6 +32,7 @@ test.beforeEach(async ({ page }) => {
     }
   });
   await page.goto('/');
+  await expandTodayAdvanced(page);
 });
 
 test.describe('Coach checkpoints on Today', () => {

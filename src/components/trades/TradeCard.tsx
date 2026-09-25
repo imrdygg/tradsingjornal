@@ -160,6 +160,14 @@ export const TradeCard: React.FC<TradeCardProps> = ({
   // Imported trades carry a stop the app had to invent, so their risk and R are not
   // the trader's numbers. Say so rather than presenting them as real.
   const assumedRisk = hasAssumedRisk(trade);
+  /**
+   * Whether a stop — and so a risk figure — was recorded at all.
+   *
+   * A trade can be logged from its fills alone, with the stop left blank. Saying "$0.00"
+   * there would read as a risk that was measured and came out at nothing, and "0.00R" would
+   * read as a result, so both are left unsaid instead.
+   */
+  const riskRecorded = trade.initialRisk > 0;
 
   // Calculate duration if both entry & exit times are present
   let durationStr = 'Open';
@@ -277,7 +285,7 @@ export const TradeCard: React.FC<TradeCardProps> = ({
             {trade.entryPrice.toFixed(2)}
           </span>
           <span className="text-zinc-400 text-[11px] block">
-            Stop: {trade.initialStop.toFixed(2)}
+            {riskRecorded ? `Stop: ${trade.initialStop.toFixed(2)}` : 'No stop set'}
           </span>
           {/* The coach's call at entry, directly under the fill it is compared with. */}
           <CoachEntryCallBadge trade={trade} className="mt-1" />
@@ -321,7 +329,7 @@ export const TradeCard: React.FC<TradeCardProps> = ({
         <div>
           <span className="text-[10px] text-zinc-400 uppercase block">Initial Risk</span>
           <span className="text-zinc-200 font-medium">
-            ${trade.initialRisk.toFixed(2)}
+            {riskRecorded ? `$${trade.initialRisk.toFixed(2)}` : <span className="text-zinc-500">—</span>}
             {assumedRisk && (
               // A data attribute rather than an id: the trades view renders this card
               // and the desktop table at once, so an id here would appear twice.
@@ -344,7 +352,7 @@ export const TradeCard: React.FC<TradeCardProps> = ({
           <span className={`font-bold text-sm ${pnlColor}`}>
             {isClosed ? `${pnlSign}$${trade.grossPnL.toFixed(2)}` : 'In Trade'}
           </span>
-          {isClosed && (
+          {isClosed && riskRecorded && (
             <span className="text-zinc-400 text-[11px] block">
               {trade.rMultiple !== undefined ? `${trade.rMultiple > 0 ? '+' : ''}${trade.rMultiple.toFixed(2)}R` : ''}
             </span>

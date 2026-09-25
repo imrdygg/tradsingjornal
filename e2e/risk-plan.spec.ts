@@ -10,9 +10,26 @@ import { expect, test, type Page } from '@playwright/test';
  * no caps — so a flag only ever appears because the test set one.
  */
 
+/**
+ * The Today tab opens on the day's trades alone: the plan, the risk summary that carries
+ * the cap flags, and the coach panels are behind one folded section.
+ */
+async function expandTodayAdvanced(page: Page) {
+  // Addressed by the body it controls, not by aria-expanded: the section holds other
+  // collapsibles, so "any collapsed button inside it" is not the section's own toggle.
+  const toggle = page.locator('button[aria-controls="section-today-advanced-body"]').first();
+  if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click();
+}
+
+/** The risk ladder is one of the form's optional fields, so it is unfolded first. */
+async function expandTradeOptions(page: Page) {
+  const toggle = page.locator('#trade-more-options-toggle');
+  if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click();
+}
+
 async function openAddTrade(page: Page) {
   await page.locator('#btn-add-trade-top').click();
-  await expect(page.getByRole('heading', { name: /Record Futures Trade/i })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Log a Trade/i })).toBeVisible();
 }
 
 /**
@@ -23,6 +40,7 @@ async function openAddTrade(page: Page) {
  */
 async function recordTrade(page: Page, slot: number, entry = '7730', stop = '7710') {
   await openAddTrade(page);
+  await expandTradeOptions(page);
   await page.locator(`[data-testid="trade-risk-tier-${slot}"]`).click();
   await page.locator('#trade-entry-price').fill(entry);
   await page.locator('#trade-initial-stop').fill(stop);
@@ -33,6 +51,7 @@ async function recordTrade(page: Page, slot: number, entry = '7730', stop = '771
 
 /** Sets a slot's cap in the Morning Plan. Committed on blur, like any other plan field. */
 async function setCap(page: Page, slot: number, cap: number) {
+  await expandTodayAdvanced(page);
   const input = page.locator(`[data-testid="tier-cap-${slot}"]`);
   await input.fill(String(cap));
   await input.blur();
@@ -58,6 +77,7 @@ test.describe('Recording a trade against a risk slot', () => {
 
   test('the custom option takes a free risk amount', async ({ page }) => {
     await openAddTrade(page);
+    await expandTradeOptions(page);
     await page.locator('[data-testid="trade-risk-tier-custom"]').click();
     await page.locator('#trade-custom-risk').fill('40');
     await page.locator('#trade-entry-price').fill('7730');
@@ -79,6 +99,7 @@ test.describe('Slots whose cap the day has used up', () => {
 
     await recordTrade(page, 1);
 
+    await expandTodayAdvanced(page);
     const flag = page.locator('[data-testid="cap-flag-1"]');
     await expect(flag).toBeVisible();
     await expect(flag).toContainText('Trade #1 is full');
@@ -94,6 +115,7 @@ test.describe('Slots whose cap the day has used up', () => {
     // A second trade at the same slot breaks the plan rather than filling it.
     await recordTrade(page, 1, '7740', '7725');
 
+    await expandTodayAdvanced(page);
     const flag = page.locator('[data-testid="cap-flag-1"]');
     await expect(flag).toBeVisible();
     await expect(flag).toHaveAttribute('data-cap-over', 'true');

@@ -155,7 +155,7 @@ test.describe('Editing a trade keeps its day and its provenance', () => {
 
     // Nor after being opened and saved: a trade belongs to the day it was taken,
     // otherwise both days' figures are wrong.
-    await gotoTab(page, 'today', /Morning Plan/i);
+    await gotoTab(page, 'today', /^Today$/);
     await expect(page.getByText(/Today's Trade Executions \(0\)/)).toBeVisible();
     await expect(page.getByText(/No trades logged for today yet/i)).toBeVisible();
   });

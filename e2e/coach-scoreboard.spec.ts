@@ -123,6 +123,19 @@ async function seedJournal(page: Page, trades: SeededTrade[] = TRADES) {
   await page.goto('/');
 }
 
+/**
+ * The coach's chip on a trade, in whichever layout is actually on screen.
+ *
+ * The log renders a desktop table and a mobile card list at the same time and hides one of
+ * them, so the same test id exists twice in the DOM. Addressing it by `:visible` is what
+ * lets one spec cover both viewports instead of asserting against the hidden copy.
+ */
+const visibleCall = (page: Page, tradeId: string) =>
+  page.locator(`[data-testid="coach-call-${tradeId}"]:visible`).first();
+
+/** The table itself, or nothing on a viewport where the card list is what is shown. */
+const visibleTable = (page: Page) => page.locator('table:visible').first();
+
 async function gotoTab(page: Page, tab: string, heading: RegExp) {
   const desktop = page.locator(`#nav-btn-${tab}`);
   const mobile = page.locator(`#mobile-nav-${tab}`);
@@ -190,20 +203,18 @@ test.describe('Coach calls: the Analytics scoreboard and the trade log', () => {
     ]);
     await gotoTab(page, 'trades', /Trade Log/i);
 
-    // Both the table and the mobile cards are in the DOM; the table is the desktop view.
-    const table = page.locator('table').first();
-    await expect(table.getByTestId('coach-call-t1')).toHaveAttribute('data-coach-verdict', 'agreed');
-    await expect(table.getByTestId('coach-call-t1')).toContainText('coach LONG @ 7745.00');
-    await expect(table.getByTestId('coach-call-t2')).toHaveAttribute('data-coach-verdict', 'opposed');
-    await expect(table.getByTestId('coach-call-t2')).toContainText('coach SHORT @ 7745.00');
-    await expect(table.getByTestId('coach-call-t4')).toHaveAttribute('data-coach-verdict', 'coach-flat');
-    await expect(table.getByTestId('coach-call-t4')).toContainText('coach flat');
+    await expect(visibleCall(page, 't1')).toHaveAttribute('data-coach-verdict', 'agreed');
+    await expect(visibleCall(page, 't1')).toContainText('coach LONG @ 7745.00');
+    await expect(visibleCall(page, 't2')).toHaveAttribute('data-coach-verdict', 'opposed');
+    await expect(visibleCall(page, 't2')).toContainText('coach SHORT @ 7745.00');
+    await expect(visibleCall(page, 't4')).toHaveAttribute('data-coach-verdict', 'coach-flat');
+    await expect(visibleCall(page, 't4')).toContainText('coach flat');
 
     // A trade with no recorded call shows no chip at all, rather than an empty one.
     await expect(page.getByTestId('coach-call-t6')).toHaveCount(0);
 
     // Opening the record lays the call out in full, with the reasoning it was made on.
-    await table.getByTestId('coach-call-t1').click();
+    await visibleCall(page, 't1').click();
     const detail = page.locator('#trade-detail-modal');
     await expect(detail).toBeVisible();
     await expect(detail.getByText("Coach's call on this entry")).toBeVisible();
@@ -231,8 +242,14 @@ test.describe('Coach calls: the Analytics scoreboard and the trade log', () => {
     ]);
     await gotoTab(page, 'trades', /Trade Log/i);
 
-    // Clicking any non-button cell opens the record.
-    await page.locator('table').first().locator('tbody tr').first().locator('td').first().click();
+    // Clicking the body of the row — a cell in the table, the card itself on a phone —
+    // opens the record. Which of the two is on screen depends on the viewport.
+    const table = visibleTable(page);
+    if (await table.count()) {
+      await table.locator('tbody tr').first().locator('td').first().click();
+    } else {
+      await page.getByText('MES (1x)').first().click();
+    }
 
     const detail = page.locator('#trade-detail-modal');
     await expect(detail).toBeVisible();

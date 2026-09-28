@@ -38,6 +38,74 @@ export interface DigestDay {
   rulesBroken: string[];
 }
 
+/**
+ * The two windows the recent-form comparison is built from.
+ *
+ * The most recent window is measured against the one immediately before it, at a fixed
+ * size, so the two halves cover a like-for-like number of trades. A short window is
+ * reported as short rather than topped up with older trades, which would quietly turn a
+ * change in form into a change in the sample.
+ */
+export const FORM_WINDOW_TRADES = 10;
+/** Closed trades each window needs before any change in form may be named at all. */
+export const MIN_FORM_WINDOW_TRADES = 6;
+/** How far average R must move between the windows to count as a real change. */
+export const FORM_TREND_AVG_R = 0.15;
+
+/** Which way the trader's own numbers say their recent form is going. */
+export type FormTrend = 'improving' | 'declining' | 'steady' | 'mixed' | 'not-enough-data';
+
+/** One side of the recent-form comparison. An empty window reports nulls, never zeros. */
+export interface FormWindow {
+  trades: number;
+  /** Trading days those trades fall on. */
+  days: number;
+  /** Oldest and newest trading date in the window, or null when it is empty. */
+  from: string | null;
+  to: string | null;
+  netPnL: number | null;
+  totalR: number | null;
+  avgR: number | null;
+  /** Wins as a percentage of the window's closed trades. */
+  winRate: number | null;
+  /**
+   * Net P&L per trading day. The per-trade window and the per-day reading disagree often
+   * enough — one oversized day inside a good run — that both are worth stating.
+   */
+  netPnLPerDay: number | null;
+  /** Average end-of-day discipline score over the window's own reviewed days. */
+  disciplineScore: number | null;
+}
+
+/**
+ * How the trader is trending right now, from their own closed trades alone.
+ *
+ * This is the one reading that answers "am I getting better or worse lately", which a
+ * lifetime total cannot: the same record can be a trader who is climbing out of a bad run
+ * or one who has just started giving back a good one. It is deliberately built only from
+ * the trader's own fills and reviews, and it states a trend only when both windows carry a
+ * real sample — a comparison of four trades against four trades is noise with a direction.
+ *
+ * The `note` is written here rather than left to the model so the UI and the prompt make
+ * the same claim from the same numbers.
+ */
+export interface RecentForm {
+  /** Closed trades per window. Both windows are this size by construction. */
+  windowTrades: number;
+  recent: FormWindow;
+  prior: FormWindow;
+  trend: FormTrend;
+  /** recent minus prior. Null when either window is too thin to compare. */
+  avgRDelta: number | null;
+  netPnLPerDayDelta: number | null;
+  winRateDelta: number | null;
+  disciplineDelta: number | null;
+  /** True when both windows hold at least {@link MIN_FORM_WINDOW_TRADES}. */
+  hasEnoughForTrend: boolean;
+  /** The read in the digest's own words, so the UI and the prompt say the same thing. */
+  note: string;
+}
+
 export interface JournalDigest {
   /** The trading date this digest was built for (YYYY-MM-DD). */
   generatedFor: string;
@@ -112,6 +180,8 @@ export interface JournalDigest {
    */
   riskCapacity: RiskCapacity;
   recentDays: DigestDay[];
+  /** Where the trader's numbers say they are heading, most recent window first. */
+  recentForm: RecentForm;
   /**
    * Behaviour visible only in the trader's own timestamps and sizes: when they trade,
    * how long they hold, whether they re-enter straight after a loss, and how their size
@@ -238,6 +308,148 @@ function tallyRules(entries: string[]): DigestRuleFailure[] {
   return [...counts.entries()]
     .map(([rule, times]) => ({ rule, times }))
     .sort((a, b) => b.times - a.times);
+}
+
+// ---- Recent form -----------------------------------------------------------
+
+/** One closed trade, reduced to what the recent-form comparison needs. */
+interface FormTradeRow {
+  /** Trading date, so the window can state the span it covers. */
+  date: string;
+  netPnL: number;
+  r: number;
+  /** That day's end-of-day discipline score, when a review exists for it. */
+  disciplineScore: number | null;
+}
+
+function emptyFormWindow(): FormWindow {
+  return {
+    trades: 0,
+    days: 0,
+    from: null,
+    to: null,
+    netPnL: null,
+    totalR: null,
+    avgR: null,
+    winRate: null,
+    netPnLPerDay: null,
+    disciplineScore: null,
+  };
+}
+
+function buildFormWindow(rows: FormTradeRow[]): FormWindow {
+  if (!rows.length) return emptyFormWindow();
+
+  const netPnL = rows.reduce((sum, row) => sum + row.netPnL, 0);
+  const totalR = rows.reduce((sum, row) => sum + row.r, 0);
+  const wins = rows.filter((row) => row.netPnL > 0).length;
+  const dates = [...new Set(rows.map((row) => row.date))].sort((a, b) => a.localeCompare(b));
+
+  // One score per day: a busy day must not outvote a quiet one merely by holding more trades.
+  const scoreByDate = new Map<string, number>();
+  for (const row of rows) {
+    if (row.disciplineScore !== null && !scoreByDate.has(row.date)) {
+      scoreByDate.set(row.date, row.disciplineScore);
+    }
+  }
+  const scores = [...scoreByDate.values()];
+
+  return {
+    trades: rows.length,
+    days: dates.length,
+    from: dates[0],
+    to: dates[dates.length - 1],
+    netPnL: round(netPnL),
+    totalR: round(totalR),
+    avgR: round(totalR / rows.length),
+    winRate: round((wins / rows.length) * 100, 1),
+    netPnLPerDay: round(netPnL / dates.length),
+    disciplineScore: scores.length
+      ? round(scores.reduce((a, b) => a + b, 0) / scores.length, 1)
+      : null,
+  };
+}
+
+/** A window as one clause, for the digest's own note. */
+function describeFormWindow(label: string, window: FormWindow): string {
+  const money = (n: number) => `${n < 0 ? '-' : ''}$${Math.abs(n).toLocaleString('en-US')}`;
+  const span = window.from ? ` (${window.from} to ${window.to})` : '';
+  return (
+    `${label}${span}: ${money(window.netPnL ?? 0)} net, ${window.avgR}R average, ` +
+    `${window.winRate}% win, ${money(window.netPnLPerDay ?? 0)} per day over ` +
+    `${window.days} day(s)` +
+    (window.disciplineScore === null
+      ? ', no discipline review'
+      : `, discipline ${window.disciplineScore}/100`)
+  );
+}
+
+/**
+ * Compares the trader's most recent closed trades against the same number before them.
+ *
+ * Both halves are required to carry a real sample before a direction is named. That is the
+ * entire point of the exercise: with a handful of trades, a run of two winners looks like
+ * "improving" to anything willing to say so.
+ */
+export function buildRecentForm(rowsNewestFirst: FormTradeRow[]): RecentForm {
+  const recent = buildFormWindow(rowsNewestFirst.slice(0, FORM_WINDOW_TRADES));
+  const prior = buildFormWindow(rowsNewestFirst.slice(FORM_WINDOW_TRADES, FORM_WINDOW_TRADES * 2));
+
+  const hasEnoughForTrend =
+    recent.trades >= MIN_FORM_WINDOW_TRADES && prior.trades >= MIN_FORM_WINDOW_TRADES;
+
+  const avgRDelta = hasEnoughForTrend ? round((recent.avgR ?? 0) - (prior.avgR ?? 0)) : null;
+  const netPnLPerDayDelta = hasEnoughForTrend
+    ? round((recent.netPnLPerDay ?? 0) - (prior.netPnLPerDay ?? 0))
+    : null;
+  const winRateDelta = hasEnoughForTrend
+    ? round((recent.winRate ?? 0) - (prior.winRate ?? 0), 1)
+    : null;
+  const disciplineDelta =
+    recent.disciplineScore !== null && prior.disciplineScore !== null
+      ? round(recent.disciplineScore - prior.disciplineScore, 1)
+      : null;
+
+  let trend: FormTrend = 'not-enough-data';
+  if (hasEnoughForTrend) {
+    const betterR = (avgRDelta ?? 0) >= FORM_TREND_AVG_R;
+    const worseR = (avgRDelta ?? 0) <= -FORM_TREND_AVG_R;
+    const paidMore = (netPnLPerDayDelta ?? 0) > 0;
+    const paidLess = (netPnLPerDayDelta ?? 0) < 0;
+    // R says how well each trade was taken; dollars-per-day says whether that survived
+    // contact with a real week. When they disagree the honest answer is that they disagree.
+    if (betterR && paidMore) trend = 'improving';
+    else if (worseR && paidLess) trend = 'declining';
+    else if ((betterR && paidLess) || (worseR && paidMore)) trend = 'mixed';
+    else trend = 'steady';
+  }
+
+  const lead =
+    trend === 'improving'
+      ? 'Form is improving'
+      : trend === 'declining'
+      ? 'Form is worsening'
+      : trend === 'mixed'
+      ? 'Form is sending mixed signals'
+      : trend === 'steady'
+      ? 'Form is broadly unchanged'
+      : `Not enough closed trades to compare form: ${MIN_FORM_WINDOW_TRADES} are needed on each side`;
+
+  return {
+    windowTrades: FORM_WINDOW_TRADES,
+    recent,
+    prior,
+    trend,
+    avgRDelta,
+    netPnLPerDayDelta,
+    winRateDelta,
+    disciplineDelta,
+    hasEnoughForTrend,
+    note: `${lead}. ${describeFormWindow(
+      `The most recent ${recent.trades} closed trade(s)`,
+      recent
+    )}. ${describeFormWindow(`The ${prior.trades} before them`, prior)}.`,
+  };
 }
 
 /** Human-readable labels for the rules that were NOT followed. */
@@ -438,6 +650,23 @@ export function buildJournalDigest(input: {
   );
   const reviewsNewestFirst = [...reviews].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
+  // ---- Recent form ---------------------------------------------------------
+  // Built from the same newest-first order the owner's words use, so "the most recent
+  // trades" means the same thing everywhere in the digest. A trade whose day is missing
+  // falls back to the date on its own timestamp rather than being dropped from the window.
+  const recentForm = buildRecentForm(
+    closedNewestFirst.map((trade) => {
+      const day = dayById.get(trade.tradingDayId);
+      const review = day ? reviewByDayId.get(day.id) : undefined;
+      return {
+        date: day?.tradeDate ?? (trade.entryTime ? trade.entryTime.slice(0, 10) : ''),
+        netPnL: realized(trade),
+        r: rMultiple(trade),
+        disciplineScore: review ? review.disciplineScore : null,
+      };
+    })
+  );
+
   // ---- Today ---------------------------------------------------------------
   const today = daysByDate.get(todayTradeDate);
   const todayTrades = trades.filter((t) => today && t.tradingDayId === today.id);
@@ -561,6 +790,7 @@ export function buildJournalDigest(input: {
       pnlOf: realized,
     }),
     recentDays,
+    recentForm,
     behavior,
     traderOwnWords: {
       entryReasons: collectWords(closedNewestFirst.map((t) => t.entryReason)),

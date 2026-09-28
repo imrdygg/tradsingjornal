@@ -562,3 +562,130 @@ describe('buildJournalDigest', () => {
     expect(digest.planAdherence.tradesOutsideAllowedSessions).toBe(0);
   });
 });
+
+/**
+ * The recent-form comparison is the one reading that says whether the trader is getting
+ * better or worse lately. Its whole value is that it refuses to answer when the sample is
+ * too small, so the refusals are tested as carefully as the calls.
+ */
+describe('recent form', () => {
+  /** One closed trade per row, on its own day, newest last so index order is chronological. */
+  function formJournal(rows: Array<{ date: string; r: number; netPnL?: number }>) {
+    const tradingDays = rows.map((row, i) => makeDay({ id: `fd${i}`, tradeDate: row.date }));
+    const trades = rows.map((row, i) =>
+      makeTrade({
+        id: `ft${i}`,
+        tradingDayId: `fd${i}`,
+        rMultiple: row.r,
+        netPnL: row.netPnL ?? row.r * 100,
+        entryTime: `${row.date}T13:30:00.000Z`,
+        exitTime: `${row.date}T14:00:00.000Z`,
+      })
+    );
+    return build({ trades, tradingDays });
+  }
+
+  /** `count` consecutive days from a start day, each with the same R. */
+  const run = (count: number, startDay: number, r: number, netPnL?: number) =>
+    Array.from({ length: count }, (_, i) => ({
+      date: `2026-08-${String(startDay + i).padStart(2, '0')}`,
+      r,
+      netPnL,
+    }));
+
+  it('reports nothing to compare on a fresh journal', () => {
+    const { recentForm } = build();
+
+    expect(recentForm.trend).toBe('not-enough-data');
+    expect(recentForm.hasEnoughForTrend).toBe(false);
+    expect(recentForm.recent.trades).toBe(0);
+    expect(recentForm.recent.netPnL).toBeNull();
+    expect(recentForm.avgRDelta).toBeNull();
+    expect(recentForm.note).toContain('Not enough closed trades');
+  });
+
+  it('calls form improving when both R and dollars per day have risen', () => {
+    const { recentForm } = formJournal([...run(10, 1, -0.5), ...run(10, 11, 0.5)]);
+
+    expect(recentForm.hasEnoughForTrend).toBe(true);
+    expect(recentForm.trend).toBe('improving');
+    expect(recentForm.avgRDelta).toBe(1);
+    expect(recentForm.netPnLPerDayDelta).toBe(100);
+    expect(recentForm.recent.avgR).toBe(0.5);
+    expect(recentForm.prior.avgR).toBe(-0.5);
+    expect(recentForm.note).toContain('Form is improving');
+  });
+
+  it('calls form worsening when both R and dollars per day have fallen', () => {
+    const { recentForm } = formJournal([...run(10, 1, 0.5), ...run(10, 11, -0.5)]);
+
+    expect(recentForm.trend).toBe('declining');
+    expect(recentForm.avgRDelta).toBe(-1);
+    expect(recentForm.note).toContain('Form is worsening');
+  });
+
+  it('reports mixed signals when R improves but the days earn less', () => {
+    // Each trade is taken better but the days are smaller: the two halves of the reading
+    // genuinely disagree, and saying so is more useful than picking a winner.
+    const { recentForm } = formJournal([
+      ...run(10, 1, 0, 200),
+      ...run(10, 11, 0.5, 100),
+    ]);
+
+    expect(recentForm.trend).toBe('mixed');
+    expect(recentForm.avgRDelta).toBe(0.5);
+    expect(recentForm.netPnLPerDayDelta).toBe(-100);
+    expect(recentForm.note).toContain('mixed signals');
+  });
+
+  it('refuses to name a direction when the older window is too thin', () => {
+    // 14 closed trades leaves four in the comparison window, which is not a sample.
+    const { recentForm } = formJournal([...run(4, 1, -1), ...run(10, 11, 1)]);
+
+    expect(recentForm.recent.trades).toBe(10);
+    expect(recentForm.prior.trades).toBe(4);
+    expect(recentForm.hasEnoughForTrend).toBe(false);
+    expect(recentForm.trend).toBe('not-enough-data');
+    expect(recentForm.avgRDelta).toBeNull();
+    // The windows are still described, so the trader can see why it will not answer.
+    expect(recentForm.recent.avgR).toBe(1);
+    expect(recentForm.note).toContain('6 are needed on each side');
+  });
+
+  it('keeps only the two most recent windows and spans the dates they cover', () => {
+    const { recentForm } = formJournal(run(25, 1, -0.5));
+
+    expect(recentForm.windowTrades).toBe(10);
+    expect(recentForm.recent.trades).toBe(10);
+    expect(recentForm.prior.trades).toBe(10);
+    // Newest first: the recent window is days 16-25, the one before it days 6-15.
+    expect(recentForm.recent.from).toBe('2026-08-16');
+    expect(recentForm.recent.to).toBe('2026-08-25');
+    expect(recentForm.prior.from).toBe('2026-08-06');
+    expect(recentForm.prior.to).toBe('2026-08-15');
+    expect(recentForm.recent.days).toBe(10);
+  });
+
+  it('reads each trading day once when averaging the discipline score', () => {
+    // Two trades share the second day, so a naive average would count that day twice.
+    const tradingDays = [
+      makeDay({ id: 'd1', tradeDate: '2026-08-01' }),
+      makeDay({ id: 'd2', tradeDate: '2026-08-02' }),
+    ];
+    const trades = [
+      makeTrade({ id: 'a', tradingDayId: 'd1', netPnL: 10, rMultiple: 0.1 }),
+      makeTrade({ id: 'b', tradingDayId: 'd2', netPnL: 20, rMultiple: 0.2, exitTime: '2026-08-02T15:00:00.000Z' }),
+      makeTrade({ id: 'c', tradingDayId: 'd2', netPnL: 30, rMultiple: 0.3, exitTime: '2026-08-02T16:00:00.000Z' }),
+    ];
+    const reviews = [
+      makeReview({ id: 'r1', tradingDayId: 'd1', disciplineScore: 100 }),
+      makeReview({ id: 'r2', tradingDayId: 'd2', disciplineScore: 50 }),
+    ];
+
+    const { recentForm } = build({ trades, tradingDays, reviews });
+
+    expect(recentForm.recent.trades).toBe(3);
+    expect(recentForm.recent.days).toBe(2);
+    expect(recentForm.recent.disciplineScore).toBe(75);
+  });
+});

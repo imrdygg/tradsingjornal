@@ -65,7 +65,7 @@ interface ApiResponse {
 }
 
 
-const ENDPOINT_VERSION = 7;
+const ENDPOINT_VERSION = 8;
 
 /** Total time to spend trying models before returning what we have. */
 const REQUEST_BUDGET_MS = 45_000;
@@ -818,8 +818,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   if (!isCoachMode(mode)) {
     res.status(400).json({
       error:
-        'Unknown coach mode. Expected brief, weekly, trade, prep, postclose, planreview, ' +
-        'planfield, planbuild, scalein, entrycall or chartread.',
+        'Unknown coach mode. Expected brief, weekly, form, trade, prep, postclose, ' +
+        'planreview, planfield, planbuild, scalein, entrycall or chartread.',
     });
     return;
   }

@@ -162,8 +162,8 @@ export const AppShell: React.FC<AppShellProps> = ({
   );
 
   return (
-    <div className="flex min-h-dvh flex-col bg-zinc-950 font-sans text-zinc-100 selection:bg-zinc-800">
-      <header className="sticky top-0 z-40 border-b border-zinc-800/80 bg-zinc-950/90 backdrop-blur-md">
+    <div className="app-shell flex flex-col overflow-hidden bg-zinc-950 font-sans text-zinc-100 selection:bg-zinc-800">
+      <header className="z-40 shrink-0 border-b border-zinc-800/80 bg-zinc-950">
         {/* ---- Main row: brand | nav | actions ---- */}
         <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2.5 sm:px-6">
           {/* Brand */}
@@ -319,13 +319,32 @@ export const AppShell: React.FC<AppShellProps> = ({
         </div>
       </header>
 
-      {/* Main Body */}
-      <main className="mx-auto w-full max-w-7xl flex-1 p-3 pb-28 sm:p-6 sm:pb-32 lg:pb-8">
-        {children}
+      {/*
+        Main Body — the app's ONLY scroll region.
+
+        The shell is one viewport tall and clips, so this column is what actually moves.
+        Scrolling the document instead is what let the bottom nav collide with the mobile
+        browser's own bars: a `fixed; bottom: 0` bar is positioned against the layout
+        viewport, which sits underneath the URL bar while it is showing.
+      */}
+      <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        <div className="mx-auto w-full max-w-7xl p-3 sm:p-6">
+          {children}
+        </div>
       </main>
 
-      {/* Bottom navigation for anything narrower than the desktop nav breakpoint */}
-      <div className="pb-safe fixed bottom-0 left-0 right-0 z-40 border-t border-zinc-800/90 bg-zinc-950/95 pt-1.5 backdrop-blur-lg lg:hidden">
+      {/*
+        Bottom navigation for anything narrower than the desktop nav breakpoint.
+
+        Deliberately an in-flow row at the end of the shell rather than a `fixed` overlay:
+        a fixed bar tracks the layout viewport, so on mobile it slides under the browser's
+        own URL bar as that collapses and expands during a scroll. Sitting in the column,
+        it is always on screen and never needs padding on <main> to clear it.
+      */}
+      <div
+        id="mobile-nav"
+        className="pb-safe z-40 shrink-0 border-t border-zinc-800/90 bg-zinc-950 pt-1.5 lg:hidden"
+      >
         {/* Eight tabs, one per column: Settings moved to the avatar menu, so Markets
             finally fits without the grid wrapping. The label size was tuned so the
             longest label still fits at 320px without wrapping or overflowing. */}

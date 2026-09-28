@@ -15,6 +15,8 @@ export type { CoachEntryCall } from '../../types';
 export type CoachMode =
   | 'brief'
   | 'weekly'
+  /** Which way the trader's numbers say they are heading: recent window against the one before. */
+  | 'form'
   | 'trade'
   | 'prep'
   | 'postclose'
@@ -214,6 +216,28 @@ export interface WeeklyResponse {
   motivation: string;
 }
 
+/**
+ * Where the trader is heading right now, from the two windows in the digest's recent form.
+ *
+ * Deliberately narrower than the weekly review: this is not another summary of the record,
+ * it is a read of the *trend*, so every field is about the difference between the two
+ * windows rather than about the trader in general.
+ */
+export interface FormResponse {
+  headline: string;
+  /** 2-3 sentences comparing the two windows, quoting the figures from both. */
+  trendRead: string;
+  /** What is better in the recent window. Empty array when nothing is. */
+  improved: string[];
+  /** What is worse in the recent window. Empty array when nothing is. */
+  declined: string[];
+  /** What has held steady across both windows. */
+  holding: string[];
+  /** One concrete, checkable next step, matched to the direction they are heading. */
+  nextStep: string;
+  motivation: string;
+}
+
 export interface TradeCritiqueResponse {
   verdict: string;
   didWell: string[];
@@ -265,6 +289,7 @@ export interface PostCloseResponse {
 export type CoachResponse =
   | BriefResponse
   | WeeklyResponse
+  | FormResponse
   | TradeCritiqueResponse
   | PrepResponse
   | PostCloseResponse

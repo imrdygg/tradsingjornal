@@ -160,6 +160,36 @@ test.describe('Coach tab', () => {
 });
 
 /**
+ * The recent-form comparison is computed locally from the trader's own fills, so it has to
+ * be honest on screen before any AI call — and, on a journal too thin to compare, it must
+ * refuse to name a direction rather than call a trend on a handful of trades.
+ */
+test.describe('Recent form', () => {
+  test('shows the comparison and refuses a direction on a thin journal', async ({ page }) => {
+    await gotoTab(page, 'coach', /Coach/i);
+
+    const card = page.locator('#coach-form-card');
+    await expect(card).toBeVisible();
+    await expect(page.locator('#coach-form-trend')).toHaveText(/Too few trades/i);
+    await expect(card).toContainText(/at least 6 closed trades/i);
+  });
+
+  test('asks for nothing until the trader clicks, then reports honestly', async ({ page }) => {
+    await gotoTab(page, 'coach', /Coach/i);
+
+    await expect(page.locator('#coach-form-result')).toHaveCount(0);
+    await expect(page.locator('#coach-error-form')).toHaveCount(0);
+
+    await page.locator('#coach-form-generate').click();
+
+    const error = page.locator('#coach-error-form');
+    await expect(error).toBeVisible();
+    await expect(error).toContainText(/Coach not available here/i);
+    await expect(page.locator('#coach-form-result')).toHaveCount(0);
+  });
+});
+
+/**
  * The behavioural facts come from the trader's own timestamps, so they are computed and
  * displayed entirely locally: no AI service, no market data, no network. These specs
  * fix the two things that would make the card dishonest — reporting a pattern from a

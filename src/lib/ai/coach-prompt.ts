@@ -33,6 +33,7 @@ import type { ChartReadResponse, PlanReviewResponse } from './coach-types';
 export const COACH_MODES: readonly CoachMode[] = [
   'brief',
   'weekly',
+  'form',
   'trade',
   'prep',
   'postclose',
@@ -235,6 +236,21 @@ export function formatDigestForPrompt(digest: JournalDigest): string {
         `Average winner ${o.avgWinR}R, average loser ${o.avgLossR}R.`
     );
     lines.push(`Largest win ${money(o.largestWin)}, largest loss ${money(o.largestLoss)}.`);
+  }
+
+  // ---- Recent form --------------------------------------------------------
+  // The most recent window against the one before it. The READ line is the digest's own
+  // conclusion from the two windows, not the model's, so the writing and the numbers on
+  // screen cannot disagree about which way the trader is heading.
+  lines.push('');
+  lines.push('=== RECENT FORM (the most recent window against the one before it) ===');
+  const form = digest.recentForm;
+  lines.push(form.note);
+  if (!form.hasEnoughForTrend) {
+    lines.push(
+      `THIN: only ${form.recent.trades} and ${form.prior.trades} closed trade(s) in the two ` +
+        `windows. Do NOT call a change in form, in either direction, from this.`
+    );
   }
 
   // ---- Risk capacity ------------------------------------------------------
@@ -715,6 +731,17 @@ export const COACH_RESPONSE_SHAPES: Record<CoachMode, string> = {
   "motivation": "2 sentences, specific and earned"
 }
 Give 1-4 patterns. If the evidence is thin, return fewer patterns and say so in the observation rather than padding the list.`,
+  form: `Return exactly this JSON:
+{
+  "headline": "one sentence, under 16 words, on which way their form is going",
+  "trendRead": "2-3 sentences comparing the two windows under RECENT FORM, quoting the figures from both",
+  "improved": ["what is better in the recent window, each tied to a figure; empty array when nothing is"],
+  "declined": ["what is worse in the recent window, each tied to a figure; empty array when nothing is"],
+  "holding": ["1-3 things that have held steady across both windows"],
+  "nextStep": "one concrete, checkable thing to do differently, matched to the direction they are heading",
+  "motivation": "2 sentences. Specific to this trader and earned by their data. No slogans."
+}
+When the two windows are too thin to compare, say exactly that in trendRead, leave improved and declined empty, and make nextStep about logging more before judging form — never a performance claim.`,
   trade: `Return exactly this JSON:
 {
   "verdict": "2 sentences judging the decision and the execution separately",
@@ -906,6 +933,14 @@ export function buildCoachPrompt(
         `playbook setups fit this chart. The trader is charting one symbol at a time, so the plan is ` +
         `for that symbol only — do not plan for any other market, and do not assume they will trade ` +
         `several today.`
+      : mode === 'form'
+      ? `Read this trader's RECENT FORM: the most recent window of closed trades against the ` +
+        `window immediately before it. Say which way they are heading and quote the figures ` +
+        `from BOTH windows. Point at what changed and what did not. This is not another ` +
+        `performance summary — the trader wants the trend, so anything true of the whole ` +
+        `record rather than of the change between the two windows does not belong here. ` +
+        `If the windows are too thin to compare, say so plainly and ask for more logged ` +
+        `trades instead of naming a direction.`
       : `Critique the single trade described below. Judge the decision and the execution separately. ` +
         `Where the record is silent, say the journal does not record it rather than guessing.`;
 
@@ -1101,6 +1136,18 @@ export function parseCoachResponse(
       riskRead: asText(obj.riskRead, 'riskRead'),
       biggestLeak: asText(obj.biggestLeak, 'biggestLeak'),
       oneChange: asText(obj.oneChange, 'oneChange'),
+      motivation: asText(obj.motivation, 'motivation'),
+    };
+  }
+
+  if (mode === 'form') {
+    return {
+      headline: asText(obj.headline, 'headline'),
+      trendRead: asText(obj.trendRead, 'trendRead'),
+      improved: asTextList(obj.improved, 'improved'),
+      declined: asTextList(obj.declined, 'declined'),
+      holding: asTextList(obj.holding, 'holding'),
+      nextStep: asText(obj.nextStep, 'nextStep'),
       motivation: asText(obj.motivation, 'motivation'),
     };
   }

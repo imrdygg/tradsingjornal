@@ -2,14 +2,16 @@ import { expect, test, type Page } from '@playwright/test';
 import { DEFAULT_SETUPS } from '../src/lib/storage';
 
 /**
- * Regression tests for the issues reported against the Playbook and the
- * position scale-in calculator:
+ * Regression tests for the issues reported against the Playbook, the position
+ * scale-in calculator and the mobile layout:
  *
  *  1. Recording a trade only offered one setup — every playbook setup must be
  *     selectable, including ones toggled "off".
  *  2. Setup names were visually cut off on the Playbook cards.
  *  3. The break-even calculator shipped hard-coded example prices — it must
  *     auto-fill from the trader's real open trade instead.
+ *  4. The bottom navigation disappeared under the browser's own bars while
+ *     scrolling on a phone.
  */
 
 async function gotoPlaybook(page: Page) {
@@ -137,6 +139,48 @@ test.describe('Playbook setup names are shown in full', () => {
       (el) => el.scrollWidth - el.clientWidth
     );
     expect(overflow).toBeLessThanOrEqual(1);
+  });
+});
+
+/**
+ * The bottom nav used to be a `position: fixed; bottom: 0` overlay, which tracks the
+ * layout viewport rather than the visible one. On a phone that puts it underneath the
+ * browser's URL bar as that collapses and expands during a scroll — the bar is there, and
+ * then it is not. The shell now owns the only scroll region, so the nav is simply part of
+ * the column and cannot move. These assertions pin that structure, not just the pixels.
+ */
+test.describe('The bottom nav stays on screen while the page scrolls', () => {
+  test('keeps its place, and the document itself never scrolls', async ({ page }) => {
+    // The Playbook is the longest surface, so it guarantees something to scroll.
+    await gotoPlaybook(page);
+
+    const nav = page.locator('#mobile-nav');
+    const viewport = page.viewportSize();
+    expect(viewport).not.toBeNull();
+    if (!(await nav.isVisible())) test.skip(true, 'The desktop layout has no bottom bar.');
+
+    const before = await nav.boundingBox();
+    expect(before).not.toBeNull();
+    // On screen to begin with, and not hanging off the bottom edge.
+    expect(before!.y).toBeGreaterThan(0);
+    expect(before!.y + before!.height).toBeLessThanOrEqual(viewport!.height + 1);
+
+    const scrolled = await page.locator('main').evaluate(async (el) => {
+      el.scrollTop = el.scrollHeight;
+      await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+      return el.scrollTop;
+    });
+    // If nothing scrolled the rest of this test would pass for the wrong reason.
+    expect(scrolled).toBeGreaterThan(0);
+
+    const after = await nav.boundingBox();
+    expect(after).not.toBeNull();
+    expect(Math.abs(after!.y - before!.y)).toBeLessThanOrEqual(1);
+    expect(after!.y + after!.height).toBeLessThanOrEqual(viewport!.height + 1);
+
+    // The window must not be the scroller. That is the whole fix: a fixed bar moves with
+    // the layout viewport, whereas a row in a shell that owns the scroll cannot move at all.
+    expect(await page.evaluate(() => window.scrollY)).toBe(0);
   });
 });
 

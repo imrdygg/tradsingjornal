@@ -12,6 +12,24 @@ body,
   min-height: 100%;
 }
 
+/* ---------------------------------------------------------------------------
+   App shell height
+
+   The shell is exactly one *visible* viewport tall, and the middle column owns the
+   app's only scroll region. That is what keeps the header and the bottom nav on
+   screen: on mobile both Chrome and Safari resize the visible area as their URL bars
+   collapse and expand while scrolling, and anything placed against the layout
+   viewport — a `position: fixed; bottom: 0` bar above all — ends up hidden behind
+   those bars. `dvh` follows the visible height instead, so the nav stays put.
+
+   `100vh` is declared first for browsers that have no `dvh`: without a real height,
+   the shell's `overflow: hidden` would clip the page rather than scroll it.
+   --------------------------------------------------------------------------- */
+.app-shell {
+  height: 100vh;
+  height: 100dvh;
+}
+
 html {
   background-color: #09090b;
 }

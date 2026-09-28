@@ -61,6 +61,7 @@ describe('mode coverage', () => {
     expect([...COACH_MODES].sort()).toEqual(
       [
         'brief',
+        'form',
         'planreview',
         'postclose',
         'prep',

@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Sparkles, AlertTriangle, TrendingUp, BookOpenCheck, Target } from 'lucide-react';
+import { Sparkles, AlertTriangle, TrendingUp, BookOpenCheck, Target, Activity } from 'lucide-react';
 import {
   DailyReview,
   Instrument,
@@ -11,6 +11,7 @@ import { buildJournalDigest } from '../../lib/ai/journal-digest';
 import type {
   BriefResponse,
   CoachMode,
+  FormResponse,
   TradeCritiqueResponse,
   WeeklyResponse,
 } from '../../lib/ai/coach-types';
@@ -33,6 +34,7 @@ import {
 } from './coach-ui';
 import { COACH_WAIT_STEPS } from '../common/AiThinking';
 import { BehaviorCard } from './BehaviorCard';
+import { RecentFormCard } from './RecentFormCard';
 import { instrumentSymbol } from '../../lib/trading/instruments';
 import { formatTimestamp } from '../../lib/storage/date-utils';
 
@@ -126,6 +128,7 @@ export const CoachView: React.FC<CoachViewProps> = ({
   const [briefState, setBriefState] = useState<RequestState>(IDLE);
   const [weeklyState, setWeeklyState] = useState<RequestState>(IDLE);
   const [tradeState, setTradeState] = useState<RequestState>(IDLE);
+  const [formState, setFormState] = useState<RequestState>(IDLE);
 
   // Closed trades, newest first, for the critique picker.
   const criticableTrades = useMemo(
@@ -232,6 +235,111 @@ export const CoachView: React.FC<CoachViewProps> = ({
         take its word for it.
       */}
       <BehaviorCard behavior={digest.behavior} />
+
+      {/* The two windows the form read is built from, before any AI call. */}
+      <RecentFormCard form={digest.recentForm} />
+
+      {/* ------------------------------------------------------------------ */}
+      {/* Recent form read                                                    */}
+      {/* ------------------------------------------------------------------ */}
+      <CoachCard className="space-y-3.5">
+        <SectionHeader
+          icon={<Activity className="w-4 h-4 text-amber-400" />}
+          title="Recent form"
+          description="What changed between your most recent window and the one before it — and what did not."
+        />
+
+        {!formState.result && (
+          <GenerateButton
+            id="coach-form-generate"
+            label={formState.failure ? 'Try again' : 'Read my recent form'}
+            loadingLabel="Comparing the two windows…"
+            loading={formState.loading}
+            onClick={() => run('form', setFormState)}
+          />
+        )}
+
+        {formState.loading && (
+          <CoachLoading
+            label="Comparing your recent trades with the ones before them…"
+            steps={COACH_WAIT_STEPS('two windows')}
+          />
+        )}
+
+        {formState.failure && (
+          <CoachErrorPanel
+            code={formState.failure.code}
+            message={formState.failure.message}
+            idSuffix="form"
+          />
+        )}
+
+        {formState.result?.ok && (
+          <CoachResultPanel
+            id="coach-form-result"
+            heading="Result"
+            meta={
+              formState.writtenAt
+                ? `written ${formatTimestamp(formState.writtenAt, timezone)}`
+                : undefined
+            }
+            resultKey={formState.writtenAt}
+            busy={formState.loading}
+            onRegenerate={() => run('form', setFormState)}
+            regenerateLabel="Regenerate read"
+          >
+            <p className="text-sm font-semibold text-zinc-100 leading-snug">
+              {(formState.result.data as FormResponse).headline}
+            </p>
+            <p className="text-xs text-zinc-300 leading-relaxed">
+              {(formState.result.data as FormResponse).trendRead}
+            </p>
+            <div className="grid sm:grid-cols-2 gap-3">
+              <div>
+                <span className="text-[10px] font-mono uppercase font-bold text-emerald-400">
+                  Improved
+                </span>
+                <div className="mt-1.5">
+                  <CoachBullets
+                    items={(formState.result.data as FormResponse).improved}
+                    tone="good"
+                    emptyLabel="Nothing measurable has improved in the recent window."
+                  />
+                </div>
+              </div>
+              <div>
+                <span className="text-[10px] font-mono uppercase font-bold text-amber-400">
+                  Declined
+                </span>
+                <div className="mt-1.5">
+                  <CoachBullets
+                    items={(formState.result.data as FormResponse).declined}
+                    tone="bad"
+                    emptyLabel="Nothing has got worse in the recent window."
+                  />
+                </div>
+              </div>
+            </div>
+            <div>
+              <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
+                Holding steady
+              </span>
+              <div className="mt-1.5">
+                <CoachBullets
+                  items={(formState.result.data as FormResponse).holding}
+                  tone="neutral"
+                  emptyLabel="Nothing logged as holding steady across both windows."
+                />
+              </div>
+            </div>
+            <CoachAction
+              label="Next step"
+              text={(formState.result.data as FormResponse).nextStep}
+            />
+            <CoachMotivation text={(formState.result.data as FormResponse).motivation} />
+          </CoachResultPanel>
+        )}
+      </CoachCard>
 
       {/* ------------------------------------------------------------------ */}
       {/* Daily brief                                                         */}

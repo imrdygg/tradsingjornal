@@ -444,6 +444,7 @@ function formatMarketBriefForPrompt(brief) {
 var COACH_MODES = [
   "brief",
   "weekly",
+  "form",
   "trade",
   "prep",
   "postclose",
@@ -591,6 +592,15 @@ function formatDigestForPrompt(digest) {
       `Total ${o.totalR}R, average ${o.avgR}R per trade, expectancy ${o.expectancyR}R per trade. Average winner ${o.avgWinR}R, average loser ${o.avgLossR}R.`
     );
     lines.push(`Largest win ${money(o.largestWin)}, largest loss ${money(o.largestLoss)}.`);
+  }
+  lines.push("");
+  lines.push("=== RECENT FORM (the most recent window against the one before it) ===");
+  const form = digest.recentForm;
+  lines.push(form.note);
+  if (!form.hasEnoughForTrend) {
+    lines.push(
+      `THIN: only ${form.recent.trades} and ${form.prior.trades} closed trade(s) in the two windows. Do NOT call a change in form, in either direction, from this.`
+    );
   }
   lines.push("");
   lines.push("=== RISK CAPACITY (the account drawdown the trader agreed to) ===");
@@ -944,6 +954,17 @@ var COACH_RESPONSE_SHAPES = {
   "motivation": "2 sentences, specific and earned"
 }
 Give 1-4 patterns. If the evidence is thin, return fewer patterns and say so in the observation rather than padding the list.`,
+  form: `Return exactly this JSON:
+{
+  "headline": "one sentence, under 16 words, on which way their form is going",
+  "trendRead": "2-3 sentences comparing the two windows under RECENT FORM, quoting the figures from both",
+  "improved": ["what is better in the recent window, each tied to a figure; empty array when nothing is"],
+  "declined": ["what is worse in the recent window, each tied to a figure; empty array when nothing is"],
+  "holding": ["1-3 things that have held steady across both windows"],
+  "nextStep": "one concrete, checkable thing to do differently, matched to the direction they are heading",
+  "motivation": "2 sentences. Specific to this trader and earned by their data. No slogans."
+}
+When the two windows are too thin to compare, say exactly that in trendRead, leave improved and declined empty, and make nextStep about logging more before judging form \u2014 never a performance claim.`,
   trade: `Return exactly this JSON:
 {
   "verdict": "2 sentences judging the decision and the execution separately",
@@ -1057,7 +1078,7 @@ You are also drafting TODAY'S PLAN around this one instrument: bias, contracts, 
 };
 function buildCoachPrompt(mode, digest, trade, marketBrief, extras) {
   const context = formatDigestForPrompt(digest);
-  const task = mode === "brief" ? `Write today's brief for this trader. Cover what happened most recently, what is working, and the one thing to focus on today. If they have not logged today's plan, say so and tell them to plan before trading.` : mode === "weekly" ? `Write this trader's review of their recent performance. Find what the numbers actually show, including anything uncomfortable. One change only.` : mode === "prep" ? `Prepare this trader for today's session. Their plan and their recent behaviour are both here. Tell them how to approach the session given both, what specifically to watch out for based on mistakes they have actually repeated, and what is still missing from today's plan.` : mode === "postclose" ? `Review the session that has just finished. Compare the plan they set with what they actually did. Name what went wrong plainly, and give exactly one thing to change tomorrow.` : mode === "planreview" ? `The trader is about to lock the plan shown under TODAY'S PLAN, and asked for your honest opinion of it before the session starts. Read it against their recent results AND today's live sector read. Say what holds up, what is thin, and whether the recorded bias sits comfortably or one-sided against today's breadth. Judge the written plan only \u2014 never tell them to take, size or skip trades, and never predict where anything goes next. If the market read or the plan is missing something you need, say exactly that instead of guessing.` : mode === "planfield" ? `The trader is stuck on one field of today's plan and asked you to draft it. Write the text for that field only, in their voice, shaped by their own risk parameters, recent results and repeated mistakes, and by the live levels when you have them. It is a draft they will edit.` : mode === "planbuild" ? `The trader asked for a whole draft plan for today, in one go. Read their style from the journal \u2014 instruments, sessions, setups, typical size, their risk limit and the mistakes they actually repeat \u2014 then use the LIVE READ to make your own call: which side, where you would enter, where the stop and target sit, and how many contracts keep that risk inside the planned loss limit AND inside the room left in RISK CAPACITY. Fill the plan fields too. State plainly that this is your opinion and can be wrong.` : mode === "scalein" ? `The trader already has a position on and is considering adding to it. Give your own opinion on whether to add, where, how much, and where the stop belongs after the add. Work from the position's real numbers and the live read, keep the total risk inside the planned loss limit, and remember that adding to a loser is usually how a small loss becomes the day's loss.` : mode === "entrycall" ? `The trader has just recorded an entry and asked for your own call at that same moment. Say which side you would be on right now, at what level, with what stop and target, from the live read. Do not anchor to their direction: make your own read, and be willing to be on the other side of them.` : mode === "chartread" ? `The trader is looking at a chart of ${"{instrument}"} right now and asked for your read of it. You have been given the same recent daily bars the chart shows, under DAILY CHART DATA, plus a live quote under LIVE READ. Describe what the series actually shows \u2014 direction of the closes, where price sits inside the series range, any streak the data states \u2014 naming only levels that are numbers you were handed. Then say what YOU would do looking at it, or that you would stand aside. Read the journal digest the same way you always do: if the trade you would consider repeats one of this trader's documented leaks, say so under fitsTheirTrading. Then draft today's plan for THIS instrument alone: the bias you would record, a size that keeps entry-to-stop risk inside the planned loss limit and inside the room left in RISK CAPACITY, what you would wait for, what would keep you out, and which of the trader's own playbook setups fit this chart. The trader is charting one symbol at a time, so the plan is for that symbol only \u2014 do not plan for any other market, and do not assume they will trade several today.` : `Critique the single trade described below. Judge the decision and the execution separately. Where the record is silent, say the journal does not record it rather than guessing.`;
+  const task = mode === "brief" ? `Write today's brief for this trader. Cover what happened most recently, what is working, and the one thing to focus on today. If they have not logged today's plan, say so and tell them to plan before trading.` : mode === "weekly" ? `Write this trader's review of their recent performance. Find what the numbers actually show, including anything uncomfortable. One change only.` : mode === "prep" ? `Prepare this trader for today's session. Their plan and their recent behaviour are both here. Tell them how to approach the session given both, what specifically to watch out for based on mistakes they have actually repeated, and what is still missing from today's plan.` : mode === "postclose" ? `Review the session that has just finished. Compare the plan they set with what they actually did. Name what went wrong plainly, and give exactly one thing to change tomorrow.` : mode === "planreview" ? `The trader is about to lock the plan shown under TODAY'S PLAN, and asked for your honest opinion of it before the session starts. Read it against their recent results AND today's live sector read. Say what holds up, what is thin, and whether the recorded bias sits comfortably or one-sided against today's breadth. Judge the written plan only \u2014 never tell them to take, size or skip trades, and never predict where anything goes next. If the market read or the plan is missing something you need, say exactly that instead of guessing.` : mode === "planfield" ? `The trader is stuck on one field of today's plan and asked you to draft it. Write the text for that field only, in their voice, shaped by their own risk parameters, recent results and repeated mistakes, and by the live levels when you have them. It is a draft they will edit.` : mode === "planbuild" ? `The trader asked for a whole draft plan for today, in one go. Read their style from the journal \u2014 instruments, sessions, setups, typical size, their risk limit and the mistakes they actually repeat \u2014 then use the LIVE READ to make your own call: which side, where you would enter, where the stop and target sit, and how many contracts keep that risk inside the planned loss limit AND inside the room left in RISK CAPACITY. Fill the plan fields too. State plainly that this is your opinion and can be wrong.` : mode === "scalein" ? `The trader already has a position on and is considering adding to it. Give your own opinion on whether to add, where, how much, and where the stop belongs after the add. Work from the position's real numbers and the live read, keep the total risk inside the planned loss limit, and remember that adding to a loser is usually how a small loss becomes the day's loss.` : mode === "entrycall" ? `The trader has just recorded an entry and asked for your own call at that same moment. Say which side you would be on right now, at what level, with what stop and target, from the live read. Do not anchor to their direction: make your own read, and be willing to be on the other side of them.` : mode === "chartread" ? `The trader is looking at a chart of ${"{instrument}"} right now and asked for your read of it. You have been given the same recent daily bars the chart shows, under DAILY CHART DATA, plus a live quote under LIVE READ. Describe what the series actually shows \u2014 direction of the closes, where price sits inside the series range, any streak the data states \u2014 naming only levels that are numbers you were handed. Then say what YOU would do looking at it, or that you would stand aside. Read the journal digest the same way you always do: if the trade you would consider repeats one of this trader's documented leaks, say so under fitsTheirTrading. Then draft today's plan for THIS instrument alone: the bias you would record, a size that keeps entry-to-stop risk inside the planned loss limit and inside the room left in RISK CAPACITY, what you would wait for, what would keep you out, and which of the trader's own playbook setups fit this chart. The trader is charting one symbol at a time, so the plan is for that symbol only \u2014 do not plan for any other market, and do not assume they will trade several today.` : mode === "form" ? `Read this trader's RECENT FORM: the most recent window of closed trades against the window immediately before it. Say which way they are heading and quote the figures from BOTH windows. Point at what changed and what did not. This is not another performance summary \u2014 the trader wants the trend, so anything true of the whole record rather than of the change between the two windows does not belong here. If the windows are too thin to compare, say so plainly and ask for more logged trades instead of naming a direction.` : `Critique the single trade described below. Judge the decision and the execution separately. Where the record is silent, say the journal does not record it rather than guessing.`;
   const tradeBlock = mode === "trade" && trade ? `
 
 === THE TRADE TO CRITIQUE ===
@@ -1180,6 +1201,17 @@ function parseCoachResponse(mode, raw, extras) {
       riskRead: asText(obj.riskRead, "riskRead"),
       biggestLeak: asText(obj.biggestLeak, "biggestLeak"),
       oneChange: asText(obj.oneChange, "oneChange"),
+      motivation: asText(obj.motivation, "motivation")
+    };
+  }
+  if (mode === "form") {
+    return {
+      headline: asText(obj.headline, "headline"),
+      trendRead: asText(obj.trendRead, "trendRead"),
+      improved: asTextList(obj.improved, "improved"),
+      declined: asTextList(obj.declined, "declined"),
+      holding: asTextList(obj.holding, "holding"),
+      nextStep: asText(obj.nextStep, "nextStep"),
       motivation: asText(obj.motivation, "motivation")
     };
   }
@@ -1310,7 +1342,7 @@ function parseCoachResponse(mode, raw, extras) {
 }
 
 // src/api/coach.ts
-var ENDPOINT_VERSION = 7;
+var ENDPOINT_VERSION = 8;
 var REQUEST_BUDGET_MS = 45e3;
 var DEFAULT_MODEL_CHAIN = [
   "gemini-flash-lite-latest",
@@ -1757,7 +1789,7 @@ async function handler(req, res) {
   const digest = body?.digest;
   if (!isCoachMode(mode)) {
     res.status(400).json({
-      error: "Unknown coach mode. Expected brief, weekly, trade, prep, postclose, planreview, planfield, planbuild, scalein, entrycall or chartread."
+      error: "Unknown coach mode. Expected brief, weekly, form, trade, prep, postclose, planreview, planfield, planbuild, scalein, entrycall or chartread."
     });
     return;
   }

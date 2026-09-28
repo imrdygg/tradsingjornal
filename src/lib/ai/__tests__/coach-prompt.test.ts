@@ -375,6 +375,7 @@ describe('buildCoachPrompt', () => {
   it('asks for the JSON shape that matches the mode', () => {
     expect(buildCoachPrompt('brief', digestFor()).userPrompt).toContain('"todayFocus"');
     expect(buildCoachPrompt('weekly', digestFor()).userPrompt).toContain('"biggestLeak"');
+    expect(buildCoachPrompt('form', digestFor()).userPrompt).toContain('"trendRead"');
     expect(buildCoachPrompt('trade', digestFor()).userPrompt).toContain('"grade"');
   });
 
@@ -463,6 +464,87 @@ describe('formatTradeForPrompt', () => {
     const text = formatTradeForPrompt({ ...facts, positionLegs: 3, positionAvgEntry: 17990, positionTotalContracts: 6 });
     expect(text).toContain('3-leg position');
     expect(text).toContain('17990');
+  });
+});
+
+/**
+ * The recent-form read answers "am I getting better or worse lately". Its whole risk is
+ * that the model invents a turnaround from a handful of trades, so the prompt is tested
+ * for the thin-sample instruction as carefully as for the happy path.
+ */
+describe('form mode', () => {
+  const formJson = {
+    headline: 'Two good weeks after a flat month',
+    trendRead: 'The last 10 trades averaged 0.6R against -0.1R in the 10 before them.',
+    improved: ['Average R is up 0.7R'],
+    declined: [],
+    holding: ['Still trading the same three setups'],
+    nextStep: 'Keep the size at two contracts until the 20-trade window turns positive.',
+    motivation: 'You logged every trade in both windows, which is why this can be measured.',
+  };
+
+  it('asks for the trend between the two windows, not another summary', () => {
+    const { userPrompt } = buildCoachPrompt('form', digestFor());
+    expect(userPrompt).toContain("Read this trader's RECENT FORM");
+    expect(userPrompt).toContain('quote the figures');
+    expect(userPrompt).toContain('not another performance summary');
+  });
+
+  it('keeps the core guardrails, since a form read is still not a market call', () => {
+    const { systemInstruction } = buildCoachPrompt('form', digestFor());
+    expect(systemInstruction).toBe(COACH_GUARDRAILS);
+    expect(allowsMarketOpinion('form')).toBe(false);
+  });
+
+  it('tells the model not to name a direction when the windows are thin', () => {
+    expect(COACH_RESPONSE_SHAPES.form).toContain('too thin to compare');
+
+    // An empty journal is the thinnest case there is, and the prompt must say so.
+    const { userPrompt } = buildCoachPrompt('form', digestFor());
+    expect(userPrompt).toContain('=== RECENT FORM');
+    expect(userPrompt).toContain('Do NOT call a change in form');
+  });
+
+  it('carries both windows into the prompt with the digest own reading', () => {
+    const tradingDays = Array.from({ length: 20 }, (_, i) =>
+      makeDay({ id: `fd${i}`, tradeDate: `2026-08-${String(i + 1).padStart(2, '0')}` })
+    );
+    const trades = tradingDays.map((day, i) =>
+      makeTrade({
+        id: `ft${i}`,
+        tradingDayId: day.id,
+        netPnL: i < 10 ? -50 : 50,
+        rMultiple: i < 10 ? -0.5 : 0.5,
+        entryTime: `${day.tradeDate}T13:30:00.000Z`,
+        exitTime: `${day.tradeDate}T14:00:00.000Z`,
+      })
+    );
+
+    const { userPrompt } = buildCoachPrompt('form', digestFor({ trades, tradingDays }));
+
+    expect(userPrompt).toContain('Form is improving');
+    expect(userPrompt).toContain('0.5R average');
+    expect(userPrompt).toContain('-0.5R average');
+    // With a real sample the thin-data warning must stay out of the way.
+    expect(userPrompt).not.toContain('Do NOT call a change in form');
+  });
+
+  it('parses a valid form read, and defaults absent lists to empty', () => {
+    const result = parseCoachResponse('form', {
+      ...formJson,
+      improved: undefined,
+      declined: undefined,
+      holding: undefined,
+    }) as { improved: string[]; declined: string[]; holding: string[] };
+
+    expect(result.improved).toEqual([]);
+    expect(result.declined).toEqual([]);
+    expect(result.holding).toEqual([]);
+  });
+
+  it('rejects a form read with no trend in it', () => {
+    const { trendRead, ...rest } = formJson;
+    expect(() => parseCoachResponse('form', rest)).toThrow(/trendRead/);
   });
 });
 

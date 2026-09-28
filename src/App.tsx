@@ -18,6 +18,7 @@ import { TradeDetailModal } from './components/trades/TradeDetailModal';
 import { DailyReviewModal } from './components/review/DailyReviewModal';
 import { PlanLockPreviewModal } from './components/today/PlanLockPreviewModal';
 import { CoachCheckpointCard } from './components/today/CoachCheckpointCard';
+import { AskCoachCard } from './components/coach/AskCoachCard';
 import { CoachEntryComparison } from './components/today/CoachEntryComparison';
 import { askEntryCall, buildCoachPlanPatch, type PlanCoachContext } from './lib/ai/plan-coach';
 import type { CoachPlanFields, EntryCallResponse } from './lib/ai/coach-types';
@@ -1333,6 +1334,35 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               persistKey="coach-checkpoint"
             >
               <CoachCheckpointCard
+                trades={trades}
+                tradingDays={tradingDays}
+                reviews={reviews}
+                setups={setups}
+                instruments={instruments}
+                todayTradeDate={todayTradingDay.tradeDate}
+                timezone={profile.timezone}
+                maxDrawdown={profile.maxDrawdown ?? null}
+              />
+            </CollapsibleSection>
+
+            {/*
+              A question can be asked from here as well as from the Coach tab, so it does
+              not cost a tab switch mid-session — the trade form and the box are on the same
+              page. Same shared card, same records, and the question it sends is fenced and
+              answered under the coach's strict no-market guardrails either way.
+            */}
+            <CollapsibleSection
+              id="section-coach-ask"
+              title="Ask the coach"
+              meta={
+                <span className="font-mono text-[11px] text-zinc-500">
+                  about your own trading
+                </span>
+              }
+              persistKey="coach-ask"
+            >
+              <AskCoachCard
+                scope="today"
                 trades={trades}
                 tradingDays={tradingDays}
                 reviews={reviews}

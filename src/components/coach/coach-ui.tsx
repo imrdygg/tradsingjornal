@@ -108,6 +108,32 @@ export const CoachCard: React.FC<{
   </div>
 );
 
+/**
+ * The button that asks the coach for something.
+ *
+ * Shared so the ask box reads and behaves identically on both tabs it appears on. It owns
+ * the disabled state for the whole click, not just the label: a second press while the
+ * first request is in flight is the one way to spend two answers on one question.
+ */
+export const CoachGenerateButton: React.FC<{
+  id: string;
+  label: string;
+  loadingLabel: string;
+  loading: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}> = ({ id, label, loadingLabel, loading, disabled, onClick }) => (
+  <button
+    id={id}
+    onClick={onClick}
+    disabled={loading || disabled}
+    className="flex items-center gap-2 rounded-xl bg-amber-500/90 hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed text-zinc-950 px-4 py-2 text-xs font-bold shadow-sm transition-all hover:scale-[1.02] active:scale-[0.98]"
+  >
+    <Sparkles className={`w-4 h-4 ${loading ? 'ai-button-spark' : ''}`} />
+    {loading ? loadingLabel : label}
+  </button>
+);
+
 export const CoachBullets: React.FC<{
   items: string[];
   tone: 'good' | 'bad' | 'neutral';

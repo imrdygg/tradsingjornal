@@ -224,6 +224,41 @@ test.describe('Ask about my trading', () => {
 });
 
 /**
+ * The same card is also on Today, so a question can be asked without leaving the day's
+ * trades behind. It is the same component, which is the point — these assert it is really
+ * there and really disabled while empty, not that it renders a second way.
+ */
+test.describe('Ask box on Today', () => {
+  test('is reachable without leaving the day, and asks nothing until it is filled in', async ({
+    page,
+  }) => {
+    await expandTodayAdvanced(page);
+
+    const input = page.locator('#today-ask-input');
+    await expect(input).toBeVisible();
+    await expect(page.locator('#today-ask-generate')).toBeDisabled();
+
+    await input.fill('Am I sizing too big after a win?');
+    await expect(page.locator('#today-ask-generate')).toBeEnabled();
+
+    await expect(page.locator('#today-ask-result')).toHaveCount(0);
+    await expect(page.locator('#coach-error-today-ask')).toHaveCount(0);
+  });
+
+  test('reports honestly when the coach service is not reachable', async ({ page }) => {
+    await expandTodayAdvanced(page);
+
+    await page.locator('#today-ask-input').fill('Am I sizing too big after a win?');
+    await page.locator('#today-ask-generate').click();
+
+    const error = page.locator('#coach-error-today-ask');
+    await expect(error).toBeVisible();
+    await expect(error).toContainText(/Coach not available here/i);
+    await expect(page.locator('#today-ask-result')).toHaveCount(0);
+  });
+});
+
+/**
  * The behavioural facts come from the trader's own timestamps, so they are computed and
  * displayed entirely locally: no AI service, no market data, no network. These specs
  * fix the two things that would make the card dishonest — reporting a pattern from a

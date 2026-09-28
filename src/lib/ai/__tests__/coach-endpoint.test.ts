@@ -72,6 +72,7 @@ describe('mode coverage', () => {
         'scalein',
         'entrycall',
         'chartread',
+        'ask',
       ].sort()
     );
   });

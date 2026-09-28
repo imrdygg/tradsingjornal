@@ -34,7 +34,12 @@ export type CoachMode =
    */
   | 'entrycall'
   /** A read of an instrument's recent daily bars: what the data shows and what it would do. */
-  | 'chartread';
+  | 'chartread'
+  /**
+   * An answer to a question the trader typed about their OWN trading, e.g. "why do I keep
+   * giving back the morning?" — journal data only, no market opinion.
+   */
+  | 'ask';
 
 /** The plan fields the coach will draft text for, one at a time. */
 export type PlanFieldName = 'waitingFor' | 'stayOutIf';
@@ -82,6 +87,14 @@ export interface CoachExtras {
   field?: PlanFieldName;
   position?: CoachPositionFacts;
   entry?: CoachEntryFacts;
+  /**
+   * The trader's own words for the `ask` mode.
+   *
+   * Bounded by the endpoint before it reaches a prompt, and framed there as a question
+   * rather than as an instruction, because it is the one piece of coach input the trader
+   * types freely.
+   */
+  question?: string;
 }
 
 /** Text drafted for one plan field. Never written to the plan without the trader's say. */
@@ -217,6 +230,29 @@ export interface WeeklyResponse {
 }
 
 /**
+ * An answer to a question the trader typed about their own trading.
+ *
+ * The question is free text, so the answer is prose — but held to the same standard as
+ * every other mode: it may only claim what the journal records, it has to name the figures
+ * it is standing on, and it has to say plainly what the question needed and the journal
+ * does not hold.
+ */
+export interface AskResponse {
+  headline: string;
+  /** The answer itself: 3-6 sentences, quoting the trader's own figures. */
+  answer: string;
+  /** The journal facts and numbers the answer rests on, one per item, so it can be checked. */
+  evidence: string[];
+  /**
+   * What the question needed that the journal does not record, in the trader's language.
+   * Empty string when the journal covered the question.
+   */
+  notInJournal: string;
+  /** One concrete, checkable thing to do differently, or empty when the question did not call for one. */
+  nextStep: string;
+}
+
+/**
  * Where the trader is heading right now, from the two windows in the digest's recent form.
  *
  * Deliberately narrower than the weekly review: this is not another summary of the record,
@@ -290,6 +326,7 @@ export type CoachResponse =
   | BriefResponse
   | WeeklyResponse
   | FormResponse
+  | AskResponse
   | TradeCritiqueResponse
   | PrepResponse
   | PostCloseResponse

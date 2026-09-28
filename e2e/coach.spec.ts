@@ -190,6 +190,40 @@ test.describe('Recent form', () => {
 });
 
 /**
+ * The ask box is the one coach surface the trader types into. Two things matter on screen:
+ * nothing is sent until they ask, and an empty question cannot be sent at all — the button
+ * is the guard, so the endpoint's own rejection is never what the trader sees.
+ */
+test.describe('Ask about my trading', () => {
+  test('will not ask an empty question, and asks nothing until it is filled in', async ({ page }) => {
+    await gotoTab(page, 'coach', /Coach/i);
+
+    const input = page.locator('#coach-ask-input');
+    await expect(input).toBeVisible();
+    await expect(page.locator('#coach-ask-generate')).toBeDisabled();
+
+    await input.fill('Why do I keep giving back the morning?');
+    await expect(page.locator('#coach-ask-generate')).toBeEnabled();
+
+    // Still nothing requested: the answer only exists once the button is pressed.
+    await expect(page.locator('#coach-ask-result')).toHaveCount(0);
+    await expect(page.locator('#coach-error-ask')).toHaveCount(0);
+  });
+
+  test('reports honestly when the coach service is not reachable', async ({ page }) => {
+    await gotoTab(page, 'coach', /Coach/i);
+
+    await page.locator('#coach-ask-input').fill('Why do I keep giving back the morning?');
+    await page.locator('#coach-ask-generate').click();
+
+    const error = page.locator('#coach-error-ask');
+    await expect(error).toBeVisible();
+    await expect(error).toContainText(/Coach not available here/i);
+    await expect(page.locator('#coach-ask-result')).toHaveCount(0);
+  });
+});
+
+/**
  * The behavioural facts come from the trader's own timestamps, so they are computed and
  * displayed entirely locally: no AI service, no market data, no network. These specs
  * fix the two things that would make the card dishonest — reporting a pattern from a

@@ -1,5 +1,13 @@
 import React, { useMemo, useState } from 'react';
-import { Sparkles, AlertTriangle, TrendingUp, BookOpenCheck, Target, Activity } from 'lucide-react';
+import {
+  Sparkles,
+  AlertTriangle,
+  TrendingUp,
+  BookOpenCheck,
+  Target,
+  Activity,
+  MessageSquare,
+} from 'lucide-react';
 import {
   DailyReview,
   Instrument,
@@ -9,7 +17,9 @@ import {
 } from '../../types';
 import { buildJournalDigest } from '../../lib/ai/journal-digest';
 import type {
+  AskResponse,
   BriefResponse,
+  CoachExtras,
   CoachMode,
   FormResponse,
   TradeCritiqueResponse,
@@ -129,6 +139,10 @@ export const CoachView: React.FC<CoachViewProps> = ({
   const [weeklyState, setWeeklyState] = useState<RequestState>(IDLE);
   const [tradeState, setTradeState] = useState<RequestState>(IDLE);
   const [formState, setFormState] = useState<RequestState>(IDLE);
+  const [askState, setAskState] = useState<RequestState>(IDLE);
+  // Kept as the trader typed it. It is deliberately not cleared when an answer lands:
+  // the usual next move is to sharpen the question, not to start from a blank box.
+  const [askQuestion, setAskQuestion] = useState('');
 
   // Closed trades, newest first, for the critique picker.
   const criticableTrades = useMemo(
@@ -151,7 +165,8 @@ export const CoachView: React.FC<CoachViewProps> = ({
   async function run(
     mode: CoachMode,
     setState: React.Dispatch<React.SetStateAction<RequestState>>,
-    trade?: Trade
+    trade?: Trade,
+    extras?: CoachExtras
   ) {
     setState((prev) => ({ ...prev, loading: true, failure: null }));
     const day = trade ? tradingDays.find((d) => d.id === trade.tradingDayId) : undefined;
@@ -159,7 +174,7 @@ export const CoachView: React.FC<CoachViewProps> = ({
       trade && mode === 'trade'
         ? buildTradeFacts(trade, { instruments, day, allTrades: trades })
         : undefined;
-    const result = await requestCoach(mode, digest, facts);
+    const result = await requestCoach(mode, digest, facts, extras);
 
     if (result.ok) {
       setState((prev) => ({
@@ -337,6 +352,119 @@ export const CoachView: React.FC<CoachViewProps> = ({
               text={(formState.result.data as FormResponse).nextStep}
             />
             <CoachMotivation text={(formState.result.data as FormResponse).motivation} />
+          </CoachResultPanel>
+        )}
+      </CoachCard>
+
+      {/* ------------------------------------------------------------------ */}
+      {/* Ask about my own trading                                            */}
+      {/* ------------------------------------------------------------------ */}
+      {/*
+        The one coach surface the trader drives. It is still the same coach and the
+        same records: the question text is fenced into the prompt as a question rather
+        than an instruction, and the guardrails are untouched, so asking about the
+        market gets an honest "I cannot see it" instead of a price.
+      */}
+      <CoachCard className="space-y-3.5">
+        <SectionHeader
+          icon={<MessageSquare className="w-4 h-4 text-amber-400" />}
+          title="Ask about my trading"
+          description="Put your own question to the coach. It answers from your records — your figures, or nothing."
+        />
+
+        <label htmlFor="coach-ask-input" className="sr-only">
+          Your question about your trading
+        </label>
+        <textarea
+          id="coach-ask-input"
+          value={askQuestion}
+          onChange={(e) => setAskQuestion(e.target.value)}
+          rows={3}
+          // Matches the ceiling the endpoint applies, so the box cannot hold text the
+          // coach would never be shown.
+          maxLength={800}
+          placeholder="e.g. Why do I keep giving back the morning?"
+          className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 placeholder:text-zinc-600 focus:border-zinc-500 focus:outline-none resize-y"
+        />
+
+        {!askState.result && (
+          <GenerateButton
+            id="coach-ask-generate"
+            label={askState.failure ? 'Try again' : 'Ask the coach'}
+            loadingLabel="Answering your question…"
+            loading={askState.loading}
+            disabled={!askQuestion.trim()}
+            onClick={() => run('ask', setAskState, undefined, { question: askQuestion.trim() })}
+          />
+        )}
+
+        {askState.loading && (
+          <CoachLoading
+            label="Searching your own records for the answer…"
+            steps={COACH_WAIT_STEPS('trades you asked about')}
+          />
+        )}
+
+        {askState.failure && (
+          <CoachErrorPanel
+            code={askState.failure.code}
+            message={askState.failure.message}
+            idSuffix="ask"
+          />
+        )}
+
+        {askState.result?.ok && (
+          <CoachResultPanel
+            id="coach-ask-result"
+            heading="Answer"
+            meta={
+              askState.writtenAt
+                ? `written ${formatTimestamp(askState.writtenAt, timezone)}`
+                : undefined
+            }
+            resultKey={askState.writtenAt}
+            busy={askState.loading}
+            // Reads the box as it stands right now, so editing the question and asking
+            // again asks the edited one rather than repeating the first.
+            onRegenerate={() =>
+              run('ask', setAskState, undefined, { question: askQuestion.trim() })
+            }
+            regenerateLabel="Ask again"
+          >
+            <p className="text-sm font-semibold text-zinc-100 leading-snug">
+              {(askState.result.data as AskResponse).headline}
+            </p>
+            <p className="text-xs text-zinc-300 leading-relaxed">
+              {(askState.result.data as AskResponse).answer}
+            </p>
+            <div>
+              <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
+                What it leaned on
+              </span>
+              <div className="mt-1.5">
+                <CoachBullets
+                  items={(askState.result.data as AskResponse).evidence}
+                  tone="neutral"
+                  emptyLabel="It answered without citing a single figure, so treat it with suspicion."
+                />
+              </div>
+            </div>
+            {(askState.result.data as AskResponse).notInJournal && (
+              <div className="rounded-xl border border-zinc-700 bg-zinc-800/40 px-3.5 py-3">
+                <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
+                  Not in your journal
+                </span>
+                <p className="mt-1 text-xs text-zinc-300 leading-relaxed">
+                  {(askState.result.data as AskResponse).notInJournal}
+                </p>
+              </div>
+            )}
+            {(askState.result.data as AskResponse).nextStep && (
+              <CoachAction
+                label="Next step"
+                text={(askState.result.data as AskResponse).nextStep}
+              />
+            )}
           </CoachResultPanel>
         )}
       </CoachCard>

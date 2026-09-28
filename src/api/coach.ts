@@ -65,7 +65,7 @@ interface ApiResponse {
 }
 
 
-const ENDPOINT_VERSION = 8;
+const ENDPOINT_VERSION = 9;
 
 /** Total time to spend trying models before returning what we have. */
 const REQUEST_BUDGET_MS = 45_000;
@@ -819,7 +819,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     res.status(400).json({
       error:
         'Unknown coach mode. Expected brief, weekly, form, trade, prep, postclose, ' +
-        'planreview, planfield, planbuild, scalein, entrycall or chartread.',
+        'planreview, planfield, planbuild, scalein, entrycall, chartread or ask.',
     });
     return;
   }
@@ -877,6 +877,18 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       return;
     }
     extras.entry = entry;
+  }
+
+  if (mode === 'ask') {
+    const question = typeof extrasRaw.question === 'string' ? extrasRaw.question.trim() : '';
+    if (!question) {
+      res.status(400).json({ error: 'Ask mode needs the question the trader wants answered.' });
+      return;
+    }
+    // Bounded, because this text is pasted straight into the prompt. Long enough for a
+    // real question with the context that makes it answerable, short enough that the
+    // prompt stays about their journal rather than about a paragraph they wrote.
+    extras.question = question.slice(0, 800);
   }
 
   if (mode === 'chartread') {

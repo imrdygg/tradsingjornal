@@ -1,4 +1,5 @@
 import type { DailyReview, Trade, TradingDay } from '../../types';
+import { realizedPnL } from './realized-pnl';
 
 /**
  * The end-of-day review as a line, day by day.
@@ -53,15 +54,6 @@ function mean(values: number[]): number | null {
   return round(values.reduce((sum, value) => sum + value, 0) / values.length);
 }
 
-/** Net P&L when the journal has it, else gross — the same reading the coach digest uses. */
-function realized(trade: Trade): number {
-  const value =
-    typeof trade.netPnL === 'number' && Number.isFinite(trade.netPnL)
-      ? trade.netPnL
-      : trade.grossPnL ?? 0;
-  return Number.isFinite(value) ? value : 0;
-}
-
 /**
  * Builds the trend from the reviews the trader has completed.
  *
@@ -80,7 +72,7 @@ export function buildReviewTrend(input: {
     const date = dateByDayId.get(trade.tradingDayId);
     if (!date) continue;
     const existing = byDay.get(date) ?? { pnl: 0, trades: 0 };
-    existing.pnl = round(existing.pnl + realized(trade));
+    existing.pnl = round(existing.pnl + realizedPnL(trade));
     existing.trades += 1;
     byDay.set(date, existing);
   }

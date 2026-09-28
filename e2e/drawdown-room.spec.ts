@@ -46,6 +46,38 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/');
 });
 
+/**
+ * A closed trade the way an import leaves one: gross P&L with the fees already taken off it.
+ * Written straight into storage, because the record form has no fee field to fill in — which
+ * is exactly the case where the net and gross readings differ.
+ */
+const FEE_BEARING_TRADE = {
+  id: 'trade-imported-1',
+  userId: 'solo-trader-01',
+  tradingDayId: 'day-imported-1',
+  instrumentId: 'mes',
+  source: 'tradovate_csv',
+  direction: 'long',
+  contracts: 1,
+  entryPrice: 7730,
+  initialStop: 7710,
+  exitPrice: 7750,
+  entryTime: '2026-09-24T14:00:00.000Z',
+  exitTime: '2026-09-24T14:20:00.000Z',
+  session: 'Regular Session',
+  setupName: 'Engulfing',
+  initialRisk: 100,
+  grossPnL: 200,
+  netPnL: 150,
+  fees: 50,
+  pointsPnL: 20,
+  rMultiple: 2,
+  status: 'closed',
+  riskSource: 'recorded',
+  createdAt: '2026-09-24T14:20:00.000Z',
+  updatedAt: '2026-09-24T14:20:00.000Z',
+};
+
 test.describe('The drawdown room follows the journal', () => {
   test('a winning trade adds room above the agreed drawdown', async ({ page }) => {
     await expandTodayAdvanced(page);
@@ -60,6 +92,41 @@ test.describe('The drawdown room follows the journal', () => {
     await expect(strip).toContainText('$1,100.00 room left');
     await expect(strip).toContainText('$100.00 of profit on top of $1,000.00');
     await expect(strip).toContainText('11 more losing days');
+  });
+
+  test('the chart behind the number waits for the first closed trade', async ({ page }) => {
+    await expandTodayAdvanced(page);
+
+    const chart = page.locator('#drawdown-room-chart');
+    await expect(chart).toContainText('No closed trade yet');
+    await expect(chart.locator('[data-testid="room-chart"]')).toHaveCount(0);
+
+    await recordClosedTrade(page, 7730, 7740);
+    await expandTodayAdvanced(page);
+
+    // The line appears, and reads the same $1,100.00 the strip does.
+    await expect(chart.locator('[data-testid="room-chart"]')).toBeVisible();
+    await expect(chart).toContainText('1 closed trade');
+    // The card's own money reader drops the cents on whole dollars, like the coach panels.
+    await expect(chart).toContainText('Room now$1,100');
+    await expect(chart).toContainText('agreed $1,000');
+  });
+
+  test('reads the room net of fees, the way the coach reads the account', async ({ page }) => {
+    // $200 gross, $150 after fees: the room is the money that reached the account. Written
+    // as a load script rather than before the reload, because the journal is cleared of
+    // `ptj_` keys on every document — this one runs after that and survives.
+    await page.addInitScript(
+      (trade) => localStorage.setItem('ptj_trades_v1', JSON.stringify([trade])),
+      FEE_BEARING_TRADE
+    );
+    await page.reload();
+    await expandTodayAdvanced(page);
+
+    const strip = page.locator('#drawdown-room');
+    await expect(strip).toContainText('$1,150.00 room left');
+    await expect(strip).not.toContainText('$1,200.00');
+    await expect(page.locator('#drawdown-room-chart')).toContainText('Room now$1,150');
   });
 
   test('a losing trade takes the room back down and reports what it spent', async ({ page }) => {

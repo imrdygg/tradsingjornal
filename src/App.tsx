@@ -6,6 +6,8 @@ import {
 } from './components/layout/AppShell';
 import { YesterdayFocusBanner } from './components/today/YesterdayFocusBanner';
 import { DrawdownRoomStrip } from './components/today/DrawdownRoomStrip';
+import { DrawdownRoomChart } from './components/today/DrawdownRoomChart';
+import { realizedPnL } from './lib/analytics/realized-pnl';
 import { TodaySummary } from './components/today/TodaySummary';
 import { DailyPlanForm } from './components/today/DailyPlanForm';
 import { GlobalSearch } from './components/common/GlobalSearch';
@@ -496,8 +498,10 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   /**
    * The account's remaining drawdown room, from the whole closed record.
    *
-   * Computed here as well as on Analytics from the same function, so the line beside today's
-   * plan and the panel that explains it can never disagree about the same account.
+   * Computed from the same function the Analytics panel uses, so the line beside today's plan
+   * and the panel that explains it can never disagree about the same account. Read net of
+   * fees, like the coach and the review trend: the limit is enforced in the money that
+   * actually reached the account, so the room it leaves has to be counted the same way.
    */
   const riskCapacity = useMemo(
     () =>
@@ -505,6 +509,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
         trades: trades.filter((t) => t.status === 'closed'),
         maxDrawdown: profile.maxDrawdown ?? null,
         dailyLossLimit: todayTradingDay.plannedLossLimit || profile.defaultDailyLossLimit,
+        pnlOf: realizedPnL,
       }),
     [trades, profile.maxDrawdown, profile.defaultDailyLossLimit, todayTradingDay.plannedLossLimit]
   );
@@ -1435,6 +1440,13 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               plannedSize={plannedSizeRisk}
               onOpenRisk={() => setActiveTab('analytics')}
             />
+
+            {/*
+              The strip says what is left today; this says how it got there. Kept beside it
+              rather than on Analytics, where the limit is set, because the reading the chart
+              explains is the one on this screen.
+            */}
+            <DrawdownRoomChart trades={trades} maxDrawdown={profile.maxDrawdown ?? null} />
 
             {/* Morning Plan & Guardrails Form */}
             <CollapsibleSection

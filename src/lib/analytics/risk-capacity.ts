@@ -356,6 +356,51 @@ export function buildEquityCurve(
   });
 }
 
+/** One point of the room series: how much drawdown room was left after a trade. */
+export interface RoomPoint {
+  /** The trade this point belongs to. */
+  tradeId: string;
+  /** 1-based trade number. */
+  index: number;
+  /** Short label for the axis, e.g. `09-18 (4)`. */
+  label: string;
+  /** This trade's own P&L, so a step in the line can be read against what caused it. */
+  pnl: number;
+  /** Dollars of room left once this trade had booked: the account's equity above the floor. */
+  room: number;
+}
+
+/**
+ * The room left after every trade, in the order the money landed.
+ *
+ * The figure on the Today strip is a reading; this is the record behind it. The line moves
+ * for the same two reasons that figure does — a win lifts it and a loss takes it back — and
+ * where it sits against the agreed drawdown says whether the account is trading on room it
+ * earned or room it was given.
+ *
+ * Only a named limit can be charted: there is no floor to measure a line against until one
+ * is set, so an unset limit returns an empty series rather than a line invented at zero.
+ */
+export function buildRoomCurve(
+  trades: Trade[],
+  maxDrawdown: number | null | undefined,
+  pnlOf?: (trade: Trade) => number
+): RoomPoint[] {
+  const points: RoomPoint[] = [];
+  for (const point of buildEquityCurve(trades, maxDrawdown, pnlOf)) {
+    // A null floor is the same statement as no limit: nothing to measure room from.
+    if (point.floor === null) continue;
+    points.push({
+      tradeId: point.tradeId,
+      index: point.index,
+      label: point.label,
+      pnl: point.pnl,
+      room: round(point.cumulative - point.floor),
+    });
+  }
+  return points;
+}
+
 /**
  * The current position against the agreed drawdown.
  *

@@ -33,6 +33,7 @@ import { Trade, TradingDay, DailyReview, Setup, Instrument } from '../../types';
 import { calculateProfitFactor } from '../../lib/analytics/profit-factor';
 import { calculateExpectancy } from '../../lib/analytics/expectancy';
 import { calculateMaxDrawdown } from '../../lib/analytics/drawdown';
+import { realizedPnL } from '../../lib/analytics/realized-pnl';
 import {
   calculateSessionBreakdown,
   calculateSetupBreakdown,
@@ -563,7 +564,15 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
    * the curve.
    */
   const capacity = useMemo(
-    () => assessRiskCapacity({ trades: closedTrades, maxDrawdown, dailyLossLimit }),
+    () =>
+      assessRiskCapacity({
+        trades: closedTrades,
+        maxDrawdown,
+        dailyLossLimit,
+        // Net of fees, so this panel and the room on Today cannot report two different
+        // accounts: a limit is enforced in the money that actually landed.
+        pnlOf: realizedPnL,
+      }),
     [closedTrades, maxDrawdown, dailyLossLimit]
   );
 
@@ -1114,8 +1123,8 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
             <p className="mt-1 text-[10px] text-zinc-500 leading-relaxed max-w-xl">
               Measured from a floor fixed at your agreed drawdown below the point the record
               started: a new high adds room dollar for dollar, and a loss takes it back the
-              same way. Read from the whole journal, not from the filters above — the limit
-              belongs to the account.
+              same way. Read from the whole journal, not from the filters above, and net of
+              fees like the coach — the limit belongs to the account.
             </p>
           </div>
 

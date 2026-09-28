@@ -5,6 +5,7 @@ import { instrumentSymbol } from '../trading/instruments';
 import { hasAssumedRisk } from '../trading/risk-fixup';
 import { HIGH_DISCIPLINE_SCORE } from '../analytics/review-trend';
 import { assessRiskCapacity, type RiskCapacity } from '../analytics/risk-capacity';
+import { realizedPnL } from '../analytics/realized-pnl';
 
 /**
  * The journal digest is the *only* factual basis the AI coach is allowed to use.
@@ -234,12 +235,6 @@ function round(value: number, dp = 2): number {
   return Math.round(value * factor) / factor;
 }
 
-/** Net P&L when present, otherwise gross. Never invents a number for a missing value. */
-function realized(trade: Trade): number {
-  if (typeof trade.netPnL === 'number' && Number.isFinite(trade.netPnL)) return trade.netPnL;
-  return Number.isFinite(trade.grossPnL) ? trade.grossPnL : 0;
-}
-
 function rMultiple(trade: Trade): number {
   return Number.isFinite(trade.rMultiple) ? trade.rMultiple : 0;
 }
@@ -267,9 +262,9 @@ function collectWords(values: Array<string | undefined>, limit = MAX_OWN_WORDS):
 }
 
 function statLine(label: string, trades: Trade[]): DigestStatLine {
-  const netPnL = trades.reduce((sum, t) => sum + realized(t), 0);
+  const netPnL = trades.reduce((sum, t) => sum + realizedPnL(t), 0);
   const totalR = trades.reduce((sum, t) => sum + rMultiple(t), 0);
-  const wins = trades.filter((t) => realized(t) > 0).length;
+  const wins = trades.filter((t) => realizedPnL(t) > 0).length;
   return {
     label,
     trades: trades.length,
@@ -513,11 +508,11 @@ export function buildJournalDigest(input: {
   const open = trades.filter((t) => !isClosed(t));
 
   // ---- Overall performance -------------------------------------------------
-  const wins = closed.filter((t) => realized(t) > 0);
-  const losses = closed.filter((t) => realized(t) < 0);
+  const wins = closed.filter((t) => realizedPnL(t) > 0);
+  const losses = closed.filter((t) => realizedPnL(t) < 0);
   const scratches = closed.length - wins.length - losses.length;
 
-  const netPnL = closed.reduce((sum, t) => sum + realized(t), 0);
+  const netPnL = closed.reduce((sum, t) => sum + realizedPnL(t), 0);
   const totalR = closed.reduce((sum, t) => sum + rMultiple(t), 0);
   const avgR = closed.length ? totalR / closed.length : 0;
   const winRate = closed.length ? wins.length / closed.length : 0;
@@ -533,7 +528,7 @@ export function buildJournalDigest(input: {
   // they executed well against days they did not.
   const dayPnLById = new Map<string, number>();
   for (const trade of closed) {
-    dayPnLById.set(trade.tradingDayId, (dayPnLById.get(trade.tradingDayId) ?? 0) + realized(trade));
+    dayPnLById.set(trade.tradingDayId, (dayPnLById.get(trade.tradingDayId) ?? 0) + realizedPnL(trade));
   }
   const highScores: number[] = [];
   const lowScores: number[] = [];
@@ -661,7 +656,7 @@ export function buildJournalDigest(input: {
       const review = day ? reviewByDayId.get(day.id) : undefined;
       return {
         date: day?.tradeDate ?? (trade.entryTime ? trade.entryTime.slice(0, 10) : ''),
-        netPnL: realized(trade),
+        netPnL: realizedPnL(trade),
         r: rMultiple(trade),
         disciplineScore: review ? review.disciplineScore : null,
       };
@@ -738,8 +733,8 @@ export function buildJournalDigest(input: {
       scratches,
       avgWinR: round(avgWinR),
       avgLossR: round(avgLossR),
-      largestWin: round(closed.reduce((m, t) => Math.max(m, realized(t)), 0)),
-      largestLoss: round(closed.reduce((m, t) => Math.min(m, realized(t)), 0)),
+      largestWin: round(closed.reduce((m, t) => Math.max(m, realizedPnL(t)), 0)),
+      largestLoss: round(closed.reduce((m, t) => Math.min(m, realizedPnL(t)), 0)),
     },
     byInstrument: group(closed, (t) => instrumentSymbol(instruments, t.instrumentId)),
     bySetup: group(closed, (t) => {
@@ -788,7 +783,7 @@ export function buildJournalDigest(input: {
       trades,
       maxDrawdown: input.maxDrawdown ?? null,
       dailyLossLimit: today?.plannedLossLimit ?? null,
-      pnlOf: realized,
+      pnlOf: realizedPnL,
     }),
     recentDays,
     recentForm,
@@ -820,7 +815,7 @@ export function buildJournalDigest(input: {
       stayOutIf: today?.stayOutIf ?? '',
       notes: today?.notes ?? '',
       tradesTaken: todayTrades.length,
-      netPnL: round(todayTrades.reduce((sum, t) => sum + realized(t), 0)),
+      netPnL: round(todayTrades.reduce((sum, t) => sum + realizedPnL(t), 0)),
       openTrades: todayTrades.filter((t) => !isClosed(t)).length,
     },
   };

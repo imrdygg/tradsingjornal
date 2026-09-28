@@ -4,6 +4,7 @@ import {
   assessPlannedSize,
   assessRiskCapacity,
   buildEquityCurve,
+  buildRoomCurve,
   drawdownShortfall,
 } from '../risk-capacity';
 
@@ -139,6 +140,32 @@ describe('buildEquityCurve', () => {
 
   it('leaves the floor unset when no limit is named', () => {
     expect(buildEquityCurve(series([100]), null).every((point) => point.floor === null)).toBe(true);
+  });
+});
+
+describe('buildRoomCurve', () => {
+  it('steps the room up on a win and back down on a loss', () => {
+    const rooms = buildRoomCurve(series([100, -300, 50]), 1000).map((point) => point.room);
+
+    expect(rooms).toEqual([1100, 800, 850]);
+  });
+
+  it('carries the trade P&L so a step can be read against its cause', () => {
+    const [first, second] = buildRoomCurve(series([100, -300]), 1000);
+
+    expect(first.pnl).toBe(100);
+    expect(second.pnl).toBe(-300);
+    expect(second.index).toBe(2);
+    expect(second.label).toContain('(2)');
+  });
+
+  it('charts nothing at all without a limit to measure room against', () => {
+    expect(buildRoomCurve(series([100]), null)).toEqual([]);
+    expect(buildRoomCurve(series([100]), 0)).toEqual([]);
+  });
+
+  it('charts nothing before the first closed trade', () => {
+    expect(buildRoomCurve([], 1000)).toEqual([]);
   });
 });
 

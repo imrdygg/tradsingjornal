@@ -258,8 +258,8 @@ export function formatDigestForPrompt(digest: JournalDigest): string {
 
   // ---- Risk capacity ------------------------------------------------------
   // The size question is answered here rather than inferred from how the last few trades
-  // went, because a trailing limit moves with the peak: a curve at a new high can still be
-  // one ordinary losing day from the floor.
+  // went, because the floor is fixed while the P&L curve moves: a profitable account can
+  // still be one ordinary losing day from it.
   lines.push('');
   lines.push('=== RISK CAPACITY (the account drawdown the trader agreed to) ===');
   const rc = digest.riskCapacity;
@@ -270,9 +270,11 @@ export function formatDigestForPrompt(digest: JournalDigest): string {
     );
   } else {
     lines.push(
-      `Agreed drawdown ${money(rc.maxDrawdown)}, measured from the equity high-water mark ` +
-        `(currently ${money(rc.peak)}). Used so far ${money(rc.drawdownUsed)} ` +
-        `(${rc.usedPct ?? 0}% of the limit, ${money(rc.headroom ?? 0)} left).`
+      `Agreed drawdown ${money(rc.maxDrawdown)}, measured from a fixed floor that far ` +
+        `below where the record started. Used so far ${money(rc.drawdownUsed)} ` +
+        `(${rc.usedPct ?? 0}% of the limit). Room left ${money(rc.headroom ?? 0)} ` +
+        `(${rc.headroomPct ?? 0}% of the limit). Current P&L ${money(rc.current)}, ` +
+        `high-water mark ${money(rc.peak)}.`
     );
     lines.push(`Largest drawdown in the whole record so far ${money(rc.largestHistorical)}.`);
   }
@@ -283,7 +285,7 @@ export function formatDigestForPrompt(digest: JournalDigest): string {
           ? ''
           : ` The remaining room equals ${rc.daysOfHeadroom} full losing day(s) at that limit.`) +
         (rc.dailyLimitFits === false
-          ? ' ONE MORE DAY AT THIS LIMIT WOULD BREACH THE ACCOUNT DRAWDOWN.'
+          ? ' ONE MORE DAY AT THIS LIMIT WOULD USE UP THE ROOM LEFT BEFORE THE FLOOR.'
           : '')
     );
   }

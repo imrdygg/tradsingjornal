@@ -50,6 +50,10 @@ const money = (n: number) =>
  * afford it. They are different questions and the second one is invisible from the Today
  * tab — the plan's loss limit can look unchanged while the room behind it is nearly gone.
  *
+ * Room is read against a fixed floor, so it moves with the journal: profit lifts it, a loss
+ * takes it back. That is the point of putting it here rather than on Analytics — the number
+ * a trader checks before sizing should change when the record behind it changes.
+ *
  * Deliberately one line, and deliberately read-only: it is a reminder on the screen the
  * trader already opens every morning, and editing the limit belongs where the numbers that
  * explain it are.
@@ -61,6 +65,7 @@ export const DrawdownRoomStrip: React.FC<DrawdownRoomStripProps> = ({
 }) => {
   const {
     maxDrawdown,
+    current,
     headroom,
     headroomPct,
     daysOfHeadroom,
@@ -113,13 +118,25 @@ export const DrawdownRoomStrip: React.FC<DrawdownRoomStripProps> = ({
 
         <span className="text-zinc-100">
           <span className="font-bold text-sky-300">{money(headroom ?? 0)}</span>
-          <span className="text-zinc-500"> left of {money(maxDrawdown)}</span>
+          <span className="text-zinc-500"> room left</span>
         </span>
 
-        <span className="text-zinc-400">
-          used {money(drawdownUsed)}
-          {headroomPct === null ? '' : ` (${headroomPct}% left)`}
-        </span>
+        {/*
+          Above the starting point the interesting figure is the profit that grew the room,
+          not the zero the limit has been charged. Below it, the limit spent is the one that
+          matters.
+        */}
+        {current > 0 ? (
+          <span className="text-zinc-400">
+            <span className="font-bold text-emerald-300">{money(current)}</span> of profit on
+            top of {money(maxDrawdown)}
+          </span>
+        ) : (
+          <span className="text-zinc-400">
+            used {money(drawdownUsed)} of {money(maxDrawdown)}
+            {headroomPct === null ? '' : ` (${headroomPct}% left)`}
+          </span>
+        )}
 
         {daysOfHeadroom !== null && dailyLossLimit !== null && (
           <span className="text-zinc-400">
@@ -157,7 +174,7 @@ export const DrawdownRoomStrip: React.FC<DrawdownRoomStripProps> = ({
                   shortfall.headroom
                 )} of drawdown room is left. One full losing day at the plan would take the account ${money(
                   shortfall.over
-                )} through the agreed ${money(maxDrawdown)}.`}
+                )} past the floor.`}
           </span>
         </div>
       )}

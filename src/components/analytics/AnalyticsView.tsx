@@ -558,9 +558,9 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
   /**
    * Where the account stands against the agreed drawdown.
    *
-   * The limit is measured from the high-water mark, so the numbers move when a new peak is
-   * set as well as when money is given back — which is the whole reason this needs to be
-   * computed rather than eyeballed off the curve.
+   * The floor is fixed, so the numbers move with every dollar the record gains or gives
+   * back — which is the whole reason this needs to be computed rather than eyeballed off
+   * the curve.
    */
   const capacity = useMemo(
     () => assessRiskCapacity({ trades: closedTrades, maxDrawdown, dailyLossLimit }),
@@ -570,9 +570,8 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
   /**
    * Each trade's own drawdown floor, from the account-wide record.
    *
-   * Kept apart from the plotted curve so a filtered chart still draws the real floor: the
-   * peak that sets it may sit outside the range being shown, and pretending otherwise
-   * would make the room look larger exactly when it is being read most closely.
+   * Kept apart from the plotted curve so the floor is read from the account's own limit
+   * rather than from whatever slice the filters above happen to be showing.
    */
   const floorByTradeId = useMemo(() => {
     const map = new Map<string, number | null>();
@@ -593,7 +592,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
     setDrawdownDraft(maxDrawdown === null ? '' : String(maxDrawdown));
   }, [maxDrawdown]);
 
-  // Chart 1: Cumulative P&L Curve, with the drawdown floor that trails the peak.
+  // Chart 1: Cumulative P&L Curve, with the fixed drawdown floor.
   const cumulativeData = useMemo(
     () =>
       buildEquityCurve(filteredTrades, null).map((point) => ({
@@ -1099,8 +1098,8 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
 
         The P&L curve below shows what the account has done; this shows what it can still
         absorb. They answer different questions, and the second is the one that decides
-        whether today's risk is affordable — a rising curve with a trailing limit can still
-        be one bad day from the floor.
+        whether today's risk is affordable — a rising curve can still be one bad day from
+        the floor.
       */}
       <div
         id="risk-capacity"
@@ -1113,10 +1112,10 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
               Risk capacity — drawdown room
             </h3>
             <p className="mt-1 text-[10px] text-zinc-500 leading-relaxed max-w-xl">
-              Measured from the highest equity point, the way a funding firm measures a
-              trailing drawdown: a new high restores the room, and the floor never moves down.
-              Read from the whole journal, not from the filters above — the limit belongs to
-              the account.
+              Measured from a floor fixed at your agreed drawdown below the point the record
+              started: a new high adds room dollar for dollar, and a loss takes it back the
+              same way. Read from the whole journal, not from the filters above — the limit
+              belongs to the account.
             </p>
           </div>
 
@@ -1166,6 +1165,9 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
             <span className="text-lg font-bold font-mono text-zinc-100">
               {signedMoney(capacity.peak)}
             </span>
+            <span className="text-[10px] text-zinc-500 font-mono block">
+              {capacity.givenBack > 0 ? `-$${capacity.givenBack.toFixed(2)} off the high` : 'at the high'}
+            </span>
           </div>
 
           <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 space-y-0.5">
@@ -1177,10 +1179,10 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
                 capacity.drawdownUsed > 0 ? 'text-rose-300' : 'text-zinc-100'
               }`}
             >
-              -${capacity.drawdownUsed.toFixed(2)}
+              ${capacity.drawdownUsed.toFixed(2)}
             </span>
             <span className="text-[10px] text-zinc-500 font-mono block">
-              {capacity.usedPct === null ? 'no limit set' : `${capacity.usedPct}% of the limit`}
+              {capacity.usedPct === null ? 'no limit set' : `${capacity.usedPct}% of the limit spent`}
             </span>
           </div>
 
@@ -1192,7 +1194,9 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
               {capacity.headroom === null ? '—' : `$${capacity.headroom.toFixed(2)}`}
             </span>
             <span className="text-[10px] text-zinc-500 font-mono block">
-              {capacity.headroomPct === null ? 'set a max drawdown' : `${capacity.headroomPct}% left`}
+              {capacity.headroomPct === null
+                ? 'set a max drawdown'
+                : `${capacity.headroomPct}% of the limit`}
             </span>
           </div>
 
@@ -1903,9 +1907,9 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
                   fill="url(#pnlGrad)"
                 />
                 {/*
-                  The trailing floor: peak minus the agreed drawdown at every point. It
-                  rises with a new high and never falls, so the distance between the curve
-                  and this line is exactly the room left.
+                  The floor: a flat line the agreed drawdown below the point the record
+                  started, so the distance between the curve and this line is exactly the
+                  room left.
                 */}
                 {maxDrawdown !== null && (
                   <Line
@@ -1926,9 +1930,9 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
 
         {maxDrawdown !== null && cumulativeData.length > 0 && (
           <p className="text-[10px] text-zinc-500 leading-relaxed">
-            The dashed line is the drawdown floor: it trails the highest point reached so far
-            by ${maxDrawdown}, so the gap between the curve and that line is the room left
-            before the account hits it.
+            The dashed line is the drawdown floor: it sits a flat ${maxDrawdown} below where
+            your record started, so the gap between the curve and that line is the room left
+            before the account hits it. Profit widens that gap; a loss narrows it.
           </p>
         )}
       </div>

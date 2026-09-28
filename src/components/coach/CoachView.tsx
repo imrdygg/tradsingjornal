@@ -325,7 +325,7 @@ export const CoachView: React.FC<CoachViewProps> = ({
       {/* ------------------------------------------------------------------ */}
       {/* Ask about my own trading                                            */}
       {/* ------------------------------------------------------------------ */}
-      {/* The card is shared with the Today tab, so the box behaves the same on both. */}
+
       <AskCoachCard
         trades={trades}
         tradingDays={tradingDays}

@@ -317,10 +317,10 @@ export interface UserProfile {
   /**
    * The account-level drawdown the trader has committed to, in dollars.
    *
-   * It is measured from the equity high-water mark, the way a funding firm measures a
-   * trailing drawdown, rather than from a fixed starting balance. That is the shape that
-   * makes growing the number meaningful: a new high resets the room available, so risk can
-   * grow with the account without the floor ever moving down.
+   * The floor it describes is fixed: it sits this far below the point the journal started
+   * from, and it never moves. Profit therefore adds room dollar for dollar and a loss takes
+   * it back the same way, which is what makes the number worth reading — a good run lifts
+   * what is left above the agreed figure rather than leaving it parked on it.
    *
    * Optional because a profile saved before this existed has no number, and the app must
    * be able to say "no limit set" rather than invent one.

@@ -39,8 +39,9 @@ async function gotoTab(page: Page, tab: string, heading: RegExp) {
 }
 
 /**
- * The Today tab now opens on the day's trades alone: the morning plan, the risk summary,
- * the drawdown strip and the coach panels sit behind one folded section.
+ * The Today tab opens on the review, the trend, the search box and the day's trades: the
+ * morning plan, the risk summary, the drawdown strip and the coach panels sit behind one
+ * folded section.
  */
 async function expandTodayAdvanced(page: Page) {
   // Addressed by the body it controls, not by aria-expanded: the section holds other

@@ -11,8 +11,9 @@ import { expect, test, type Page } from '@playwright/test';
  */
 
 /**
- * The Today tab opens on the day's trades alone: the plan, the risk summary that carries
- * the cap flags, and the coach panels are behind one folded section.
+ * The Today tab opens on the review, the trend, the search box and the day's trades: the
+ * plan, the risk summary that carries the cap flags, and the coach panels are behind one
+ * folded section.
  */
 async function expandTodayAdvanced(page: Page) {
   // Addressed by the body it controls, not by aria-expanded: the section holds other

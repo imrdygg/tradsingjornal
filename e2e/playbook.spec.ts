@@ -16,8 +16,9 @@ const ENGULFING_SUMMARY =
   'A two-candle reversal pattern where one candle fully "swallows" the body of the previous one';
 
 /**
- * The Today tab opens on the day's trades alone; the morning plan — and the "Study in
- * Playbook" link that lives on it — is behind one folded section.
+ * The Today tab opens on the review, the trend, the search box and the day's trades; the
+ * morning plan — and the "Study in Playbook" link that lives on it — is behind one folded
+ * section.
  */
 async function expandTodayAdvanced(page: Page) {
   // Addressed by the body it controls, not by aria-expanded: the section holds other

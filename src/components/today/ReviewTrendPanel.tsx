@@ -23,10 +23,11 @@ interface ReviewTrendPanelProps {
 /**
  * The end-of-day review as a line, the way a price chart tracks a market.
  *
- * It only appears once the carried-forward lesson has been acknowledged, which is the
- * deliberate part: the lesson is what the trader promised to hold today, and the trend is
- * the evidence of how the last weeks actually went. Reading the second without accepting
- * the first is how a review becomes a diary nobody acts on.
+ * It was once held back until the carried-forward lesson had been acknowledged, on the
+ * theory that the trend only means something beside the lesson it produced. In practice
+ * that hid the trader's own record from them whenever the banner went unanswered, so the
+ * line is simply shown: the lesson comes from the same reviews, and reading one without
+ * the other was never the failure being guarded against.
  *
  * Only reviewed days are plotted. A gap in the line means no review was written, and
  * filling it in — with a repeat of the last score, or with a zero — would invent evidence.

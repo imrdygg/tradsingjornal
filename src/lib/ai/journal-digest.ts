@@ -175,8 +175,9 @@ export interface JournalDigest {
    *
    * Present so the coach can answer "can this account afford today's risk" from numbers
    * rather than from the size of the last few P&L figures. It is the balance-sheet half of
-   * the risk question, and it is the one thing a trader looking at a rising equity curve
-   * systematically misreads, because a trailing limit moves up with the peak.
+   * the risk question, and it is the one thing a trader looking at an equity curve
+   * systematically misreads, because the room left moves with every dollar gained or given
+   * back rather than sitting still.
    */
   riskCapacity: RiskCapacity;
   recentDays: DigestDay[];

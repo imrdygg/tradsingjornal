@@ -24,8 +24,8 @@ async function gotoTab(page: Page, tab: string, heading: RegExp) {
 }
 
 /**
- * The Today tab now opens on the day's trades alone: the coach checkpoints and the rest of
- * the plan sit behind one folded section.
+ * The Today tab opens on the review, the trend, the search box and the day's trades: the
+ * coach checkpoints and the rest of the plan sit behind one folded section.
  */
 async function expandTodayAdvanced(page: Page) {
   // Addressed by the body it controls, not by aria-expanded: the section holds other
@@ -224,37 +224,23 @@ test.describe('Ask about my trading', () => {
 });
 
 /**
- * The same card is also on Today, so a question can be asked without leaving the day's
- * trades behind. It is the same component, which is the point — these assert it is really
- * there and really disabled while empty, not that it renders a second way.
+ * The ask box lives on the Coach tab and nowhere else. It was briefly mirrored on Today so
+ * a question could be asked mid-record; that put a second box on the page the trade form is
+ * on, so an answer waiting to be read could be scrolled away from the trade being written.
  */
-test.describe('Ask box on Today', () => {
-  test('is reachable without leaving the day, and asks nothing until it is filled in', async ({
-    page,
-  }) => {
+test.describe('The ask box is not duplicated onto Today', () => {
+  test('never renders a second instance on the Today tab', async ({ page }) => {
+    // Unfolded as well as folded: the sections keep their body mounted, so an absence here
+    // is an absence from the page rather than from the visible slice of it.
     await expandTodayAdvanced(page);
 
-    const input = page.locator('#today-ask-input');
-    await expect(input).toBeVisible();
-    await expect(page.locator('#today-ask-generate')).toBeDisabled();
+    await expect(page.locator('#today-ask-input')).toHaveCount(0);
+    await expect(page.locator('#coach-ask-input')).toHaveCount(0);
 
-    await input.fill('Am I sizing too big after a win?');
-    await expect(page.locator('#today-ask-generate')).toBeEnabled();
-
-    await expect(page.locator('#today-ask-result')).toHaveCount(0);
-    await expect(page.locator('#coach-error-today-ask')).toHaveCount(0);
-  });
-
-  test('reports honestly when the coach service is not reachable', async ({ page }) => {
-    await expandTodayAdvanced(page);
-
-    await page.locator('#today-ask-input').fill('Am I sizing too big after a win?');
-    await page.locator('#today-ask-generate').click();
-
-    const error = page.locator('#coach-error-today-ask');
-    await expect(error).toBeVisible();
-    await expect(error).toContainText(/Coach not available here/i);
-    await expect(page.locator('#today-ask-result')).toHaveCount(0);
+    // And the Coach tab still has the box it was written for.
+    await gotoTab(page, 'coach', /Coach/i);
+    await expect(page.locator('#coach-ask-input')).toBeVisible();
+    await expect(page.locator('#today-ask-input')).toHaveCount(0);
   });
 });
 

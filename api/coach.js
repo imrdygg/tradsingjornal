@@ -614,13 +614,13 @@ function formatDigestForPrompt(digest) {
     );
   } else {
     lines.push(
-      `Agreed drawdown ${money(rc.maxDrawdown)}, measured from the equity high-water mark (currently ${money(rc.peak)}). Used so far ${money(rc.drawdownUsed)} (${rc.usedPct ?? 0}% of the limit, ${money(rc.headroom ?? 0)} left).`
+      `Agreed drawdown ${money(rc.maxDrawdown)}, measured from a fixed floor that far below where the record started. Used so far ${money(rc.drawdownUsed)} (${rc.usedPct ?? 0}% of the limit). Room left ${money(rc.headroom ?? 0)} (${rc.headroomPct ?? 0}% of the limit). Current P&L ${money(rc.current)}, high-water mark ${money(rc.peak)}.`
     );
     lines.push(`Largest drawdown in the whole record so far ${money(rc.largestHistorical)}.`);
   }
   if (rc.dailyLossLimit !== null) {
     lines.push(
-      `Today's planned loss limit ${money(rc.dailyLossLimit)}.` + (rc.daysOfHeadroom === null ? "" : ` The remaining room equals ${rc.daysOfHeadroom} full losing day(s) at that limit.`) + (rc.dailyLimitFits === false ? " ONE MORE DAY AT THIS LIMIT WOULD BREACH THE ACCOUNT DRAWDOWN." : "")
+      `Today's planned loss limit ${money(rc.dailyLossLimit)}.` + (rc.daysOfHeadroom === null ? "" : ` The remaining room equals ${rc.daysOfHeadroom} full losing day(s) at that limit.`) + (rc.dailyLimitFits === false ? " ONE MORE DAY AT THIS LIMIT WOULD USE UP THE ROOM LEFT BEFORE THE FLOOR." : "")
     );
   }
   lines.push(`Read: ${rc.note}`);

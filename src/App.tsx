@@ -18,7 +18,7 @@ import { TradeDetailModal } from './components/trades/TradeDetailModal';
 import { DailyReviewModal } from './components/review/DailyReviewModal';
 import { PlanLockPreviewModal } from './components/today/PlanLockPreviewModal';
 import { CoachCheckpointCard } from './components/today/CoachCheckpointCard';
-import { AskCoachCard } from './components/coach/AskCoachCard';
+import { LatestReviewCard } from './components/today/LatestReviewCard';
 import { CoachEntryComparison } from './components/today/CoachEntryComparison';
 import { askEntryCall, buildCoachPlanPatch, type PlanCoachContext } from './lib/ai/plan-coach';
 import type { CoachPlanFields, EntryCallResponse } from './lib/ai/coach-types';
@@ -1244,17 +1244,110 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             </div>
 
             {/*
+              The lesson, the review it came from, the trend behind it and the search box all
+              sit above the fold, on purpose.
+
+              These are the four things a trader reads or writes around a session rather than
+              during one, and the four that stop working the moment they are behind a click: a
+              lesson nobody can re-read, a review that disappears after it is saved, and a
+              search box nobody looks for are the same as not having them. The lesson banner
+              is not collapsible at all — it is the one thing the page must keep in view. The
+              coach panels, the risk summary, the drawdown strip and the whole morning plan
+              stay folded below, one click away.
+            */}
+            {yesterdayFocus && (
+              <YesterdayFocusBanner
+                yesterdayFocus={yesterdayFocus}
+                acknowledged={lessonAcknowledged}
+                acknowledgedAt={lessonAck?.acknowledgedAt ?? null}
+                onAcknowledge={handleAcknowledgeLesson}
+              />
+            )}
+
+            {/* The review the trader last wrote, so the focus they set is still in front of
+                them when they sit down to trade it. */}
+            <CollapsibleSection
+              id="section-eod-review"
+              title="End-of-day review"
+              meta={
+                <span className="font-mono text-[11px] text-zinc-400">
+                  {reviews.length} recorded
+                </span>
+              }
+              persistKey="eod-review"
+            >
+              <LatestReviewCard
+                reviews={reviews}
+                tradingDays={tradingDays}
+                todayTradeDate={todayTradingDay.tradeDate}
+                onOpenReview={() => setIsReviewModalOpen(true)}
+              />
+            </CollapsibleSection>
+
+            {/*
+              The trend is the evidence behind the review, and it is no longer held back until
+              the lesson is accepted: closing the line because a banner was not clicked hid the
+              trader's own record from them.
+            */}
+            <Suspense
+              fallback={
+                <div className="mb-4 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4 text-xs text-zinc-400">
+                  Loading your review trend…
+                </div>
+              }
+            >
+              <CollapsibleSection
+                id="section-review-trend"
+                title="End-of-day review trend"
+                meta={
+                  <span className="font-mono text-[11px] text-zinc-400">
+                    {reviews.length} reviewed
+                  </span>
+                }
+                persistKey="review-trend"
+              >
+                <ReviewTrendPanel reviews={reviews} tradingDays={tradingDays} trades={trades} />
+              </CollapsibleSection>
+            </Suspense>
+
+            {/* Journal-wide search: one box that finds trades by tags, setups, notes, P&L
+                and date/time. Kept out of the fold because finding a past record is the one
+                action that can start from any other. */}
+            <CollapsibleSection
+              id="section-search"
+              title="Search the journal"
+              meta={
+                <span className="font-mono text-[11px] text-zinc-500">
+                  trades, days, notes and tags
+                </span>
+              }
+              persistKey="search"
+            >
+              <GlobalSearch
+                trades={trades}
+                tradingDays={tradingDays}
+                reviews={reviews}
+                instruments={instruments}
+                timezone={profile.timezone}
+                onViewTrade={(trade) => setViewingTradeId(trade.id)}
+                onOpenDay={(dayId) => {
+                  setActiveTab('history');
+                  setHistoryFocusDayId(dayId);
+                }}
+              />
+            </CollapsibleSection>
+
+            {/*
               Everything else the app knows how to do, folded into one line.
 
-              The search box, the lesson, the review trend, the coach panels, the risk summary,
-              the drawdown strip and the whole morning plan all still render exactly as they
-              did — they just no longer stand between the trader and the day's trades. Folded
-              rather than deleted: the plan and the risk ladder are the reason the journal
-              exists, and they stay one click away.
+              The coach panels, the risk summary, the drawdown strip and the whole morning plan
+              all still render exactly as they did — they just no longer stand between the
+              trader and the day's trades. Folded rather than deleted: the plan and the risk
+              ladder are the reason the journal exists, and they stay one click away.
             */}
             <CollapsibleSection
               id="section-today-advanced"
-              title="Plan, risk, coach & search"
+              title="Plan, risk & coach"
               meta={
                 <span className="font-mono text-[11px] text-zinc-500">
                   {todayTradingDay.lockedAt ? 'plan locked' : 'plan not locked'}
@@ -1270,63 +1363,6 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               of this that actually did.
             */}
             <div className="space-y-6">
-            {/*
-              Journal-wide search: one box that finds trades by tags, setups, notes, P&L
-              and date/time. First at the top because finding a past record is the one
-              action that can start from any other.
-            */}
-            <GlobalSearch
-              trades={trades}
-              tradingDays={tradingDays}
-              reviews={reviews}
-              instruments={instruments}
-              timezone={profile.timezone}
-              onViewTrade={(trade) => setViewingTradeId(trade.id)}
-              onOpenDay={(dayId) => {
-                setActiveTab('history');
-                setHistoryFocusDayId(dayId);
-              }}
-            />
-
-            {/* Yesterday's Focus Lesson Banner — held for the day once acknowledged.
-                Deliberately NOT collapsible: the lesson is the one thing the page must
-                keep in view. */}
-            {yesterdayFocus && (
-              <YesterdayFocusBanner
-                yesterdayFocus={yesterdayFocus}
-                acknowledged={lessonAcknowledged}
-                acknowledgedAt={lessonAck?.acknowledgedAt ?? null}
-                onAcknowledge={handleAcknowledgeLesson}
-              />
-            )}
-
-            {/*
-              The review trend opens only after the lesson is accepted. It is the evidence
-              behind the lesson: what the last weeks of execution actually looked like.
-            */}
-            {lessonAcknowledged && (
-              <Suspense
-                fallback={
-                  <div className="mb-4 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4 text-xs text-zinc-400">
-                    Loading your review trend…
-                  </div>
-                }
-              >
-                <CollapsibleSection
-                  id="section-review-trend"
-                  title="End-of-day review trend"
-                  meta={
-                    <span className="font-mono text-[11px] text-zinc-400">
-                      {reviews.length} reviewed
-                    </span>
-                  }
-                  persistKey="review-trend"
-                >
-                  <ReviewTrendPanel reviews={reviews} tradingDays={tradingDays} trades={trades} />
-                </CollapsibleSection>
-              </Suspense>
-            )}
-
             {/* Coach checkpoint: morning prep before the close, review after it. */}
             <CollapsibleSection
               id="section-coach-checkpoint"
@@ -1334,35 +1370,6 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               persistKey="coach-checkpoint"
             >
               <CoachCheckpointCard
-                trades={trades}
-                tradingDays={tradingDays}
-                reviews={reviews}
-                setups={setups}
-                instruments={instruments}
-                todayTradeDate={todayTradingDay.tradeDate}
-                timezone={profile.timezone}
-                maxDrawdown={profile.maxDrawdown ?? null}
-              />
-            </CollapsibleSection>
-
-            {/*
-              A question can be asked from here as well as from the Coach tab, so it does
-              not cost a tab switch mid-session — the trade form and the box are on the same
-              page. Same shared card, same records, and the question it sends is fenced and
-              answered under the coach's strict no-market guardrails either way.
-            */}
-            <CollapsibleSection
-              id="section-coach-ask"
-              title="Ask the coach"
-              meta={
-                <span className="font-mono text-[11px] text-zinc-500">
-                  about your own trading
-                </span>
-              }
-              persistKey="coach-ask"
-            >
-              <AskCoachCard
-                scope="today"
                 trades={trades}
                 tradingDays={tradingDays}
                 reviews={reviews}

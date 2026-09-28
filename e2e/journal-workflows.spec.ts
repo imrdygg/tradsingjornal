@@ -28,8 +28,9 @@ async function openSettings(page: Page, heading: RegExp) {
 }
 
 /**
- * The Today tab opens on the day's trades alone. The morning plan, the risk summary and
- * the coach panels are one click below, in a single folded section.
+ * The Today tab opens on the review, the trend, the search box and the day's trades. The
+ * morning plan, the risk summary and the coach panels are one click below, in a single
+ * folded section.
  */
 async function expandTodayAdvanced(page: Page) {
   // Addressed by the body it controls, not by aria-expanded: the section holds other

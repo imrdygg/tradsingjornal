@@ -5,21 +5,21 @@ import type { Trade } from '../../types';
  *
  * This is the arithmetic behind the "can I afford today's risk" question, and it is the
  * one thing the trader cannot work out from a P&L chart by eye: a curve that looks fine
- * can still be sitting close to a trailing limit, because the limit moves up with the
- * high-water mark.
+ * can still be sitting close to a floor the money has since given back.
  *
  * Two deliberate choices:
  *
- * - The limit is measured from the PEAK, not from a starting balance. A trailing
- *   drawdown is what a funding firm enforces and what makes "the more I make, the more
- *   room I have" true: a new high resets the room, and the room never shrinks below the
- *   agreed figure.
+ * - The floor is FIXED, at the agreed figure below the point the record started from
+ *   (`-maxDrawdown`), rather than trailing the high-water mark. Profit adds room dollar
+ *   for dollar and a loss takes it back the same way, so "the more I make, the more room
+ *   I have" is literally true rather than true only at a new high: a good week lifts the
+ *   room above the agreed figure instead of leaving it parked on it.
  * - Nothing here is advice. It reports capacity — dollars and days — and says plainly when
- *   a normal losing day would breach the limit. What the trader then does with that room
+ *   a normal losing day would breach the floor. What the trader then does with that room
  *   is theirs.
  */
 
-/** One point of the equity curve, with the drawdown floor trailing the peak. */
+/** One point of the equity curve, with the account's fixed drawdown floor. */
 export interface EquityPoint {
   /** The trade this point belongs to, so a filtered view can still find its floor. */
   tradeId: string;
@@ -36,8 +36,10 @@ export interface EquityPoint {
   /** Peak to here. Zero while at the high-water mark. */
   drawdown: number;
   /**
-   * Where the account sits if the agreed drawdown is taken in full: `peak - maxDrawdown`.
-   * Null when no limit is set, because a floor cannot be drawn for a limit nobody named.
+   * Where the account sits if the agreed drawdown is taken in full, measured from the
+   * point the record started: `-maxDrawdown`. The same value at every point, because this
+   * floor is fixed and does not trail the peak. Null when no limit is set, because a floor
+   * cannot be drawn for a limit nobody named.
    */
   floor: number | null;
 }
@@ -58,15 +60,24 @@ export interface RiskCapacity {
   current: number;
   /** Highest cumulative P&L reached. */
   peak: number;
-  /** Peak to now: dollars given back. Zero at a new high. */
+  /**
+   * Dollars of the agreed limit spent: how far below the record's starting point the
+   * account has gone. Zero while it is above that point, whatever the distance from the
+   * peak. See `givenBack` for that reading.
+   */
   drawdownUsed: number;
+  /** Peak to now: dollars given back from the high-water mark. Zero at a new high. */
+  givenBack: number;
   /** Largest peak-to-trough drop in the whole record. */
   largestHistorical: number;
-  /** Dollars of drawdown left before the limit. Null without a limit. */
+  /**
+   * Dollars of drawdown left before the floor. Above the agreed limit once profit has added
+   * room to it. Null without a limit.
+   */
   headroom: number | null;
-  /** Headroom as a percentage of the limit. Null without a limit. */
+  /** Room as a percentage of the agreed limit. Above 100 once profit has added room. */
   headroomPct: number | null;
-  /** Drawdown used as a percentage of the limit. Null without a limit. */
+  /** Share of the agreed limit spent. Null without a limit. */
   usedPct: number | null;
   stance: RiskStance;
   /** The trader's daily loss plan, when one was supplied. */
@@ -302,7 +313,7 @@ function inOrder(trades: Trade[]): Trade[] {
 }
 
 /**
- * The equity curve with its trailing floor, one point per trade.
+ * The equity curve with its fixed drawdown floor, one point per trade.
  *
  * `pnlOf` defaults to gross P&L so the curve lines up with the cumulative P&L chart it is
  * drawn on. Callers that report net (the coach digest) pass their own reader in, because
@@ -340,13 +351,18 @@ export function buildEquityCurve(
       cumulative,
       peak,
       drawdown: round(peak - cumulative),
-      floor: limit === null ? null : round(peak - limit),
+      floor: limit === null ? null : round(-limit),
     };
   });
 }
 
 /**
  * The current position against the agreed drawdown.
+ *
+ * Room is read against a fixed floor, so profit raises it and a loss lowers it. The two
+ * sides are reported separately because they mean different things: `drawdownUsed` is the
+ * agreed limit being spent (real risk), while `givenBack` is money handed back from the
+ * high-water mark, which may be nothing more than profit leaving again.
  *
  * The note is generated here rather than in the component so the coach digest and the
  * panel say exactly the same thing about the same numbers.
@@ -364,7 +380,10 @@ export function assessRiskCapacity(input: {
   const last = curve[curve.length - 1];
   const current = last ? last.cumulative : 0;
   const peak = last ? last.peak : 0;
-  const drawdownUsed = round(peak - current);
+  const givenBack = round(peak - current);
+  // Only money below the record's starting point spends the agreed limit; profit sitting
+  // above it is room the account gained, not room it used up.
+  const drawdownUsed = round(Math.max(0, -current));
   const largestHistorical = curve.reduce((worst, point) => Math.max(worst, point.drawdown), 0);
 
   const limit =
@@ -387,6 +406,7 @@ export function assessRiskCapacity(input: {
       current,
       peak,
       drawdownUsed,
+      givenBack,
       largestHistorical,
       headroom: null,
       headroomPct: null,
@@ -401,9 +421,11 @@ export function assessRiskCapacity(input: {
     };
   }
 
-  const headroom = round(limit - drawdownUsed);
+  // The floor sits at `-limit`, so the room is whatever the account stands above it by:
+  // the agreed figure plus every dollar of profit, less every dollar lost.
+  const headroom = round(limit + current);
   const usedPct = Math.round((drawdownUsed / limit) * 100);
-  const headroomPct = Math.max(0, 100 - usedPct);
+  const headroomPct = Math.round((headroom / limit) * 100);
   const daysOfHeadroom =
     dailyLossLimit === null ? null : Math.floor(Math.max(0, headroom) / dailyLossLimit);
   const dailyLimitFits = dailyLossLimit === null ? null : dailyLossLimit <= headroom;
@@ -412,7 +434,7 @@ export function assessRiskCapacity(input: {
   // no longer fits inside what is left. A percentage alone would call 60% used "normal"
   // on an account whose daily risk is half of the remaining room.
   const stance: RiskStance =
-    drawdownUsed >= limit
+    headroom <= 0
       ? 'limit-reached'
       : dailyLimitFits === false || usedPct >= 60
       ? 'defensive'
@@ -424,17 +446,21 @@ export function assessRiskCapacity(input: {
     stance === 'limit-reached'
       ? `The agreed ${money(limit)} drawdown has been taken in full.`
       : dailyLimitFits === false && dailyLossLimit !== null
-      ? `One more day at your ${money(dailyLossLimit)} limit would breach the ${money(limit)} drawdown.`
+      ? `One more day at your ${money(dailyLossLimit)} limit would use up all ` +
+        `${money(Math.max(0, headroom))} of the room left before the floor.`
       : dailyLossLimit !== null && daysOfHeadroom !== null
       ? `Room left for ${daysOfHeadroom} more full ${money(dailyLossLimit)} losing ` +
         `day${daysOfHeadroom === 1 ? '' : 's'}.`
       : `Room left for ${money(headroom)} of drawdown.`;
+
+  const addedByProfit = current > 0 ? `, ${money(current)} of it added by profit` : '';
 
   return {
     maxDrawdown: limit,
     current,
     peak,
     drawdownUsed,
+    givenBack,
     largestHistorical,
     headroom,
     headroomPct,
@@ -444,7 +470,8 @@ export function assessRiskCapacity(input: {
     daysOfHeadroom,
     dailyLimitFits,
     note:
-      `${usedPct}% of the ${money(limit)} drawdown is used (${money(drawdownUsed)} from a ` +
-      `peak of ${money(peak)}). ${withinStance}`,
+      `${money(headroom)} of room against the ${money(limit)} drawdown` +
+      `${addedByProfit}${givenBack > 0 ? `, ${money(givenBack)} given back from the peak` : ''}. ` +
+      `${withinStance}`,
   };
 }

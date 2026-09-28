@@ -20,10 +20,10 @@ import { formatTimestamp } from '../../lib/storage/date-utils';
  * The one coach surface the trader drives: a box for their own question about their own
  * trading.
  *
- * Shared rather than duplicated, because it appears on two tabs — the Coach tab, and Today
- * so a question can be asked in the middle of recording without losing the trade form —
- * and two copies of a text box wired to a paid endpoint is exactly the kind of pair that
- * drifts apart.
+ * The one question box in the app, on the Coach tab. It was briefly mirrored on Today so a
+ * question could be asked mid-record, and that turned out to be a second copy of the trade
+ * form's own page for no gain: the Coach tab is a tab switch away, and answering is not
+ * something done between two price entries.
  *
  * It builds its own digest from the same records every other coach card takes, the pattern
  * the checkpoint card follows. The question itself is fenced into the prompt on the server
@@ -39,18 +39,9 @@ interface AskCoachCardProps {
   todayTradeDate: string;
   timezone: string;
   maxDrawdown?: number | null;
-  /**
-   * Heading and blurb above the box. Omitted where the caller already labels the card —
-   * on Today it sits inside a titled section, and a second heading would just repeat it.
-   */
+  /** Heading and blurb above the box, so the card can be labelled by its caller. */
   title?: string;
   description?: string;
-  /**
-   * Names this instance's element ids: `coach` gives `#coach-ask-input`,
-   * `#coach-error-ask` and so on. Two instances never share a page today, since the tabs
-   * render one at a time, but naming them apart keeps a selector honest rather than lucky.
-   */
-  scope?: string;
 }
 
 interface AskState {
@@ -77,15 +68,12 @@ export const AskCoachCard: React.FC<AskCoachCardProps> = ({
   maxDrawdown,
   title,
   description,
-  scope = 'coach',
 }) => {
   const ids = {
-    input: `${scope}-ask-input`,
-    generate: `${scope}-ask-generate`,
-    result: `${scope}-ask-result`,
-    // CoachErrorPanel builds its id as `coach-error-${suffix}`, so the suffix carries the
-    // scope only where it is not the Coach tab's own: `coach-error-ask`, `coach-error-today-ask`.
-    errorSuffix: scope === 'coach' ? 'ask' : `${scope}-ask`,
+    input: 'coach-ask-input',
+    generate: 'coach-ask-generate',
+    result: 'coach-ask-result',
+    errorSuffix: 'ask',
   };
   const digest = useMemo(
     () =>

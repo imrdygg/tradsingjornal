@@ -461,7 +461,7 @@ export const DailyPlanForm: React.FC<DailyPlanFormProps> = ({
                       )} more than the $${planShortfall.headroom.toFixed(
                         2
                       )} of drawdown room left — a full losing day at this plan would take the ` +
-                      `account through the agreed drawdown.`}
+                      `account past the floor.`}
                 </span>
               </p>
             )}

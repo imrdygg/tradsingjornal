@@ -14,9 +14,9 @@ import { expect, test, type Page } from '@playwright/test';
 const ANY_CHECKPOINT = /Pre-session prep|Post-session review/;
 
 /**
- * The Today tab opens on the day's trades alone. The coach checkpoints — the whole subject
- * of this file — live in the folded "Plan, risk, coach & search" section with the plan, so
- * every test here unfolds it before the card is reachable.
+ * The Today tab opens on the review, the trend, the search box and the day's trades. The
+ * coach checkpoints — the whole subject of this file — live in the folded "Plan, risk &
+ * coach" section with the plan, so every test here unfolds it before the card is reachable.
  */
 async function expandTodayAdvanced(page: Page) {
   // Addressed by the body it controls, not by aria-expanded: the section holds other

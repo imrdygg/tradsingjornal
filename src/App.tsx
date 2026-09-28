@@ -174,7 +174,11 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   const cloudEnabled = isSupabaseConfigured;
 
   const [profile, setProfile] = useState<UserProfile>(() => ({ ...storage.getProfile(), id: userId }));
-  const [instruments, setInstruments] = useState<Instrument[]>(() => storage.getInstruments());
+  // The catalog is merged on read, so a contract added since this journal was created
+  // arrives here instead of only on a fresh install.
+  const [instruments, setInstruments] = useState<Instrument[]>(() =>
+    storage.ensureInstrumentCatalog()
+  );
   // The catalog is merged on read, so built-in setups added since this journal was created
   // arrive here instead of only on a fresh install.
   const [setups, setSetups] = useState<Setup[]>(() => storage.ensureSetupCatalog());
@@ -289,7 +293,10 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     (next: StorageState) => {
       storage.importData(JSON.stringify(next));
       setProfile({ ...next.profile, id: userId });
-      setInstruments(next.instruments);
+      // Re-runs the catalog merge against the snapshot just adopted, for the same reason
+      // as the setups below: a copy taken before this release would otherwise reintroduce
+      // the same missing contract.
+      setInstruments(storage.ensureInstrumentCatalog());
       // Re-runs the catalog merge against the snapshot just adopted: a cloud copy taken
       // before this release would otherwise reintroduce the same missing setups.
       setSetups(storage.ensureSetupCatalog());
@@ -1097,7 +1104,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     const success = storage.importData(jsonStr);
     if (success) {
       setProfile(storage.getProfile());
-      setInstruments(storage.getInstruments());
+      setInstruments(storage.ensureInstrumentCatalog());
       setSetups(storage.ensureSetupCatalog());
       setTradingDays(storage.getTradingDays());
       setTrades(storage.getTrades());

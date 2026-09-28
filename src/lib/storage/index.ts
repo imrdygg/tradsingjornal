@@ -10,7 +10,7 @@ import {
   PlanSnapshot,
   PatternStudy,
 } from '../../types';
-import { DEFAULT_INSTRUMENTS } from '../trading/instruments';
+import { DEFAULT_INSTRUMENTS, INSTRUMENT_CATALOG_VERSION } from '../trading/instruments';
 import { DEFAULT_RISK_TIER_AMOUNTS } from '../trading/risk-tiers';
 import { clearCachedNotes } from '../ai/checkpoints';
 import { getCurrentTradingDate } from './date-utils';
@@ -122,6 +122,7 @@ export const DEFAULT_PROFILE: UserProfile = {
 const STORAGE_KEYS = {
   PROFILE: 'ptj_profile_v1',
   INSTRUMENTS: 'ptj_instruments_v1',
+  INSTRUMENT_CATALOG: 'ptj_instrument_catalog_v1',
   SETUPS: 'ptj_setups_v1',
   DAYS: 'ptj_trading_days_v1',
   TRADES: 'ptj_trades_v1',
@@ -363,6 +364,54 @@ export const storage = {
     }
     setItem(STORAGE_KEYS.INSTRUMENTS, updated);
     return updated;
+  },
+
+  /**
+   * Merges built-in instruments that arrived after this journal last looked.
+   *
+   * The same problem the setup catalog has, and the same answer: a stored instrument list
+   * wins over the defaults, so a contract added to `DEFAULT_INSTRUMENTS` would otherwise
+   * only ever appear on a fresh install. It adds strictly by version, so:
+   *
+   * - the trader's own contracts, and any edits they made to the built-ins, are untouched,
+   *   because nothing already in the list is rewritten, and
+   * - a built-in they removed on purpose stays removed: the version it arrived in has
+   *   already been recorded, so it is never offered a second time.
+   *
+   * A contract already in the list is never doubled — matched on symbol or id, since the
+   * two are kept in step for the built-ins but a hand-added contract may only have one.
+   *
+   * Returns the full catalog. On a journal that has never stored one, the defaults are
+   * returned and only the version marker is written — the list itself lands in storage the
+   * first time the trader actually changes it.
+   */
+  ensureInstrumentCatalog(): Instrument[] {
+    const stored = getItem<Instrument[] | null>(STORAGE_KEYS.INSTRUMENTS, null);
+    const current = getItem<number>(STORAGE_KEYS.INSTRUMENT_CATALOG, 1);
+    const version = Number.isFinite(current) && current > 0 ? current : 1;
+
+    if (!stored) {
+      setItem(STORAGE_KEYS.INSTRUMENT_CATALOG, INSTRUMENT_CATALOG_VERSION);
+      return DEFAULT_INSTRUMENTS;
+    }
+    if (version >= INSTRUMENT_CATALOG_VERSION) return stored;
+
+    const known = new Set<string>();
+    for (const instrument of stored) {
+      known.add(instrument.symbol.trim().toLowerCase());
+      known.add(instrument.id.trim().toLowerCase());
+    }
+    const arrivals = DEFAULT_INSTRUMENTS.filter(
+      (instrument) =>
+        (instrument.since ?? 1) > version &&
+        !known.has(instrument.symbol.trim().toLowerCase()) &&
+        !known.has(instrument.id.trim().toLowerCase())
+    );
+
+    const merged = arrivals.length ? [...stored, ...arrivals] : stored;
+    if (arrivals.length) setItem(STORAGE_KEYS.INSTRUMENTS, merged);
+    setItem(STORAGE_KEYS.INSTRUMENT_CATALOG, INSTRUMENT_CATALOG_VERSION);
+    return merged;
   },
 
   getSetups(): Setup[] {
@@ -987,6 +1036,7 @@ export const storage = {
     for (const key of [
       STORAGE_KEYS.PROFILE,
       STORAGE_KEYS.INSTRUMENTS,
+      STORAGE_KEYS.INSTRUMENT_CATALOG,
       STORAGE_KEYS.SETUPS,
       STORAGE_KEYS.DAYS,
       STORAGE_KEYS.TRADES,

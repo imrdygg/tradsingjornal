@@ -15,6 +15,13 @@ export interface Instrument {
   tickSize: number;   // e.g. 0.25 for MES
   tickValue: number;  // e.g. $1.25 for MES
   active: boolean;
+  /**
+   * Built-in catalog version this instrument arrived in.
+   *
+   * Absent means it has been in the catalog since before it was versioned (treated as 1),
+   * so a contract the trader removed on purpose is never resurrected by a later release.
+   */
+  since?: number;
 }
 
 export interface Setup {

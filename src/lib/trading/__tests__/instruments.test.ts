@@ -5,6 +5,15 @@ import {
   findInstrumentByContract,
   instrumentSymbol,
 } from '../instruments';
+import { futuresQuoteSymbol } from '../../ai/market-data';
+
+/**
+ * Natural gas: a contract a trader would plausibly name and this journal deliberately does
+ * not record. The unknown-instrument cases below need a root that is genuinely absent from
+ * the catalog — CL used to serve that purpose until full-size crude was added, at which
+ * point the test would have started asserting the opposite of what it means.
+ */
+const NOT_IN_THE_CATALOG = 'ng';
 
 describe('instrumentSymbol', () => {
   it('resolves a stored instrument id to its display symbol', () => {
@@ -19,12 +28,71 @@ describe('instrumentSymbol', () => {
 
   it('never falls back to MES for an unknown instrument', () => {
     // findInstrument would say MES here, which would mislabel the trade.
-    expect(findInstrument(DEFAULT_INSTRUMENTS, 'cl').symbol).toBe('MES');
-    expect(instrumentSymbol(DEFAULT_INSTRUMENTS, 'cl')).toBe('CL');
+    expect(findInstrument(DEFAULT_INSTRUMENTS, NOT_IN_THE_CATALOG).symbol).toBe('MES');
+    expect(instrumentSymbol(DEFAULT_INSTRUMENTS, NOT_IN_THE_CATALOG)).toBe('NG');
   });
 
   it('falls back to the first instrument when no id is given', () => {
     expect(instrumentSymbol(DEFAULT_INSTRUMENTS, undefined)).toBe('MES');
+  });
+});
+
+/**
+ * Every figure in the journal — risk, R multiples, P&L — is derived from a contract's four
+ * numbers, so a wrong one is quietly expensive rather than loudly broken. These are the
+ * invariants that catch a bad entry, and the spot checks are the values a trader would
+ * recognise well enough to object to.
+ */
+describe('the built-in catalog', () => {
+  it('has a tick worth exactly its point value times its tick size', () => {
+    for (const instrument of DEFAULT_INSTRUMENTS) {
+      expect(
+        `${instrument.symbol} ${instrument.pointValue * instrument.tickSize}`,
+        `${instrument.symbol}'s tick value disagrees with its point value and tick size`
+      ).toBe(`${instrument.symbol} ${instrument.tickValue}`);
+    }
+  });
+
+  it('values each micro contract at its real fraction of the full-size one', () => {
+    // micro, full size, and how many micros make one full contract.
+    const pairs: Array<[string, string, number]> = [
+      ['MES', 'ES', 10],
+      ['MNQ', 'NQ', 10],
+      ['MYM', 'YM', 10],
+      ['M2K', 'RTY', 10],
+      ['MGC', 'GC', 10],
+      // Silver is the odd one out: micro silver is 1,000oz against 5,000oz, so a fifth.
+      ['SIL', 'SI', 5],
+      ['MCL', 'CL', 10],
+    ];
+
+    for (const [micro, full, ratio] of pairs) {
+      expect(findInstrument(DEFAULT_INSTRUMENTS, micro).pointValue * ratio).toBe(
+        findInstrument(DEFAULT_INSTRUMENTS, full).pointValue
+      );
+    }
+  });
+
+  it('matches the dollar figures a trader would check by hand', () => {
+    const pointValue = (symbol: string) => findInstrument(DEFAULT_INSTRUMENTS, symbol).pointValue;
+
+    expect(pointValue('ES')).toBe(50);
+    expect(pointValue('GC')).toBe(100);
+    expect(pointValue('SI')).toBe(5000);
+    expect(pointValue('CL')).toBe(1000);
+    expect(pointValue('M2K')).toBe(5);
+  });
+
+  it('can quote every contract it records, so no instrument silently has no live read', () => {
+    // The live read fails loudly on an unmapped symbol, but loudly is still a dead end for
+    // the trader: an instrument in the catalog with no quote source would mean a plan or an
+    // entry call about it could never see the market.
+    for (const instrument of DEFAULT_INSTRUMENTS) {
+      expect(
+        futuresQuoteSymbol(instrument.symbol),
+        `${instrument.symbol} is in the catalog but has no live-quote source`
+      ).not.toBeNull();
+    }
   });
 });
 
@@ -33,6 +101,8 @@ describe('findInstrumentByContract', () => {
     expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'MESZ5')?.symbol).toBe('MES');
     expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'ESH4')?.symbol).toBe('ES');
     expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'MYMZ5')?.symbol).toBe('MYM');
+    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'GCZ5')?.symbol).toBe('GC');
+    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'M2KZ5')?.symbol).toBe('M2K');
   });
 
   it('prefers the longest matching symbol', () => {
@@ -42,9 +112,22 @@ describe('findInstrumentByContract', () => {
     expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'MESZ5')?.symbol).toBe('MES');
   });
 
+  it('keeps each micro on its own side of the micro/full-size split', () => {
+    // Every one of these pairs shares a root with its full-size sibling, so reading "CLZ5"
+    // as MCL — or "MCLZ5" as CL — would put a trade on a contract ten times the size.
+    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'MCLZ5')?.symbol).toBe('MCL');
+    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'CLZ5')?.symbol).toBe('CL');
+    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'MGCZ5')?.symbol).toBe('MGC');
+    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'GCZ5')?.symbol).toBe('GC');
+    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'SILZ5')?.symbol).toBe('SIL');
+    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'SIZ5')?.symbol).toBe('SI');
+    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'YMZ5')?.symbol).toBe('YM');
+    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'RTYZ5')?.symbol).toBe('RTY');
+  });
+
   it('is case insensitive and returns undefined for unknown contracts', () => {
     expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'mnqu6')?.symbol).toBe('MNQ');
-    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'CLZ5')).toBeUndefined();
+    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'NGZ5')).toBeUndefined();
     expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, '')).toBeUndefined();
   });
 });

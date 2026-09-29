@@ -23,10 +23,24 @@ import { realizedPnL } from './realized-pnl';
  *
  * Every rate carries the count it came from, and a setup without enough of either half says
  * so rather than being ranked on noise. Nothing here is a forecast.
+ *
+ * The same reading is then taken over several consecutive weeks, because one week of a
+ * two-setup journal is a handful of trades and a single number cannot tell a setup that is
+ * finding its footing from one that is coming apart. The series is what shows direction, and
+ * the direction is computed here from the trader's own figures like the verdict is — a
+ * judgement the model explains rather than makes.
  */
 
 /** How many days the rolling window covers, counting back from today. */
 export const SETUP_WEEK_DAYS = 7;
+
+/**
+ * How many consecutive weeks the trend covers, the current one included.
+ *
+ * Four is one trading month: enough for a shape to show at a trade or two a day, and few
+ * enough that the oldest window is still a market the trader remembers trading.
+ */
+export const SETUP_TREND_WEEKS = 4;
 
 /**
  * Closed trades a setup needs in the window before any verdict may be named.
@@ -54,6 +68,19 @@ export function setupWeekDates(to: string, days = SETUP_WEEK_DAYS): string[] {
     dates.push(new Date(end - offset * 86_400_000).toISOString().slice(0, 10));
   }
   return dates;
+}
+
+/**
+ * A trade date shifted by whole days, in UTC.
+ *
+ * The trend's older windows are built by moving the end date back a week at a time, and that
+ * arithmetic has to be the same day-count arithmetic the window itself uses or a series can
+ * skip or repeat a day at a month boundary.
+ */
+function shiftTradeDate(date: string, days: number): string {
+  const at = Date.parse(`${date}T00:00:00Z`);
+  if (!Number.isFinite(at)) return date;
+  return new Date(at - days * 86_400_000).toISOString().slice(0, 10);
 }
 
 /**
@@ -85,13 +112,49 @@ export type SetupVerdict =
   /** Too few closed trades to say anything about it yet. */
   | 'too-thin';
 
-/** One setup's week: what its trades did, and what its levels did. */
+/** One setup's outcome in one week of the trend. */
+export interface SetupWeekPoint {
+  /** First trade date in the week, inclusive. */
+  from: string;
+  /** Last trade date in the week, inclusive. */
+  to: string;
+  /** True for the week the rest of the read is about — the last seven days. */
+  current: boolean;
+  /** The verdict this one week supports on its own, by the same threshold as the read. */
+  verdict: SetupVerdict;
+  trades: number;
+  wins: number;
+  losses: number;
+  netPnL: number;
+  totalR: number;
+  avgR: number | null;
+  hasOutcome: boolean;
+}
+
+/**
+ * Which way a setup's own weeks say it is heading. Computed here, never inferred by the model.
+ *
+ * The comparison is between the two most recent weeks that could be judged at all, not
+ * necessarily the current one and the one before it: a week too thin to judge carries no
+ * information, and skipping it is the honest reading of the weeks either side of it.
+ */
+export type SetupDirection =
+  /** The latest judged week paid more than the one before it. */
+  | 'improving'
+  /** The latest judged week paid less than the one before it. */
+  | 'deteriorating'
+  /** The latest judged week paid the same as the one before it. */
+  | 'steady'
+  /** Fewer than two judged weeks in the trend — there is no line to read a slope from. */
+  | 'too-thin';
+
+/** One setup's week: what its trades did, what its levels did, and where the line is going. */
 export interface SetupWeekRow {
   /** The setup's name, as the playbook spells it. */
   name: string;
   /** The level kind its touches are read from, or null when the name is not a level setup. */
   kind: LevelKind | null;
-  /** Closed trades taken under this setup in the window. */
+  /** Closed trades taken under this setup in the current window. */
   trades: number;
   wins: number;
   losses: number;
@@ -105,22 +168,33 @@ export interface SetupWeekRow {
   /** The verdict the outcome supports; see {@link MIN_SETUP_WEEK_TRADES}. */
   verdict: SetupVerdict;
   /**
-   * The touch record for this setup's levels over the same window, or null when the setup
+   * The touch record for this setup's levels over the current window, or null when the setup
    * has no level kind to read them from.
    */
   touchRecord: LevelEdgeStats | null;
+  /**
+   * The last {@link SETUP_TREND_WEEKS} weeks for this setup, oldest first. The last entry is
+   * the current window, and carries the same figures as the fields above.
+   */
+  trend: SetupWeekPoint[];
+  /** The direction the two most recent judged weeks point in; see {@link SetupDirection}. */
+  direction: SetupDirection;
+  /** Weeks in the trend with enough closed trades to be judged at all. */
+  judgedWeeks: number;
 }
 
 export interface SetupWeek {
-  /** First trade date in the window, inclusive. */
+  /** First trade date in the current window, inclusive. */
   from: string;
-  /** Last trade date in the window — today, when a caller asks for one ending today. */
+  /** Last trade date in the current window — today, when a caller asks for one ending today. */
   to: string;
-  /** How many days the window covers. */
+  /** How many days the current window covers. */
   days: number;
+  /** How many consecutive weeks the trend covers, the current one included. */
+  trendWeeks: number;
   /** One row per setup asked for, in the order asked. */
   rows: SetupWeekRow[];
-  /** True once any setup has a closed trade in the window. */
+  /** True once any setup has a closed trade in the current window. */
   hasOutcome: boolean;
   /** Decided trades a setup needs before a verdict may be read. */
   minTrades: number;
@@ -169,7 +243,7 @@ export function buildSetupWeek(input: {
   trades: Trade[];
   tradingDays: TradingDay[];
   touches: LevelTouch[];
-  /** The trade date the window ends on — today, in the trader's own calendar. */
+  /** The trade date the current window ends on — today, in the trader's own calendar. */
   todayTradeDate: string;
   /**
    * The setups always reported, in the order the trader ordered them in their own playbook.
@@ -182,6 +256,8 @@ export function buildSetupWeek(input: {
   days?: number;
   minTrades?: number;
   minDecided?: number;
+  /** How many consecutive weeks the trend covers; one disables the series entirely. */
+  weeks?: number;
 }): SetupWeek {
   const {
     trades,
@@ -192,20 +268,38 @@ export function buildSetupWeek(input: {
     days = SETUP_WEEK_DAYS,
     minTrades = MIN_SETUP_WEEK_TRADES,
     minDecided = MIN_DECIDED,
+    weeks = SETUP_TREND_WEEKS,
   } = input;
 
-  const dates = setupWeekDates(todayTradeDate, days);
-  const inWindow = new Set(dates);
+  const windowCount = Number.isInteger(weeks) && weeks > 0 ? weeks : 1;
+
+  // Oldest window first and the current seven days last, so a row's series reads left to
+  // right the way the trader remembers the month.
+  const windows = Array.from({ length: windowCount }, (_, index) => {
+    const weeksBack = windowCount - 1 - index;
+    const end = shiftTradeDate(todayTradeDate, weeksBack * days);
+    const dates = setupWeekDates(end, days);
+    return {
+      from: dates[0] ?? end,
+      to: dates[dates.length - 1] ?? end,
+      current: weeksBack === 0,
+      dates: new Set(dates),
+    };
+  });
+  const current = windows[windows.length - 1];
+
   const dayById = new Map(tradingDays.map((day) => [day.id, day]));
+  const closedTrades = trades.filter((trade) => trade.status === 'closed');
+  const dateOf = (trade: Trade) => tradeDate(trade, dayById) ?? '';
 
-  const closedThisWeek = trades.filter(
-    (trade) => trade.status === 'closed' && inWindow.has(tradeDate(trade, dayById) ?? '')
-  );
-  const touchesThisWeek = touches.filter((touch) => inWindow.has(touch.tradeDate));
+  const closedThisWeek = closedTrades.filter((trade) => current.dates.has(dateOf(trade)));
+  const touchesThisWeek = touches.filter((touch) => current.dates.has(touch.tradeDate));
 
-  // Setups the week's own trades were labelled with that are not in the playbook any more —
-  // a renamed or deleted setup. Their trades are real and the window must not quietly drop
-  // them, so they are reported after the playbook's own, most traded first.
+  // Setups the current week's own trades were labelled with that are not in the playbook any
+  // more — a renamed or deleted setup. Their trades are real and the week must not quietly
+  // drop them, so they are reported after the playbook's own, most traded first. Only this
+  // week's names are considered: the row list is the current week's subject, and a name that
+  // only traded a month ago is not part of it.
   const extraCounts = new Map<string, number>();
   for (const trade of closedThisWeek) {
     const name = trade.setupName?.trim();
@@ -217,12 +311,48 @@ export function buildSetupWeek(input: {
     .map(([name]) => name);
 
   const rows: SetupWeekRow[] = [...focusSetupNames, ...extraNames].map((name) => {
-    const mine = closedThisWeek.filter((trade) => (trade.setupName ?? '') === name);
-    const netPnL = mine.reduce((sum, trade) => sum + realizedPnL(trade), 0);
-    const totalR = mine.reduce((sum, trade) => sum + (trade.rMultiple || 0), 0);
-    const wins = mine.filter((trade) => realizedPnL(trade) > 0).length;
-    const losses = mine.filter((trade) => realizedPnL(trade) < 0).length;
-    const enoughTrades = mine.length >= minTrades;
+    // The same setup, read once per week of the trend. Each week carries its own verdict so
+    // the series can be compared like with like: four figures from the same rule, rather
+    // than four figures chosen to flatter a conclusion.
+    const trend: SetupWeekPoint[] = windows.map((window) => {
+      const mine = closedTrades.filter(
+        (trade) => (trade.setupName ?? '') === name && window.dates.has(dateOf(trade))
+      );
+      const netPnL = mine.reduce((sum, trade) => sum + realizedPnL(trade), 0);
+      const totalR = mine.reduce((sum, trade) => sum + (trade.rMultiple || 0), 0);
+
+      return {
+        from: window.from,
+        to: window.to,
+        current: window.current,
+        trades: mine.length,
+        wins: mine.filter((trade) => realizedPnL(trade) > 0).length,
+        losses: mine.filter((trade) => realizedPnL(trade) < 0).length,
+        netPnL: round(netPnL),
+        totalR: round(totalR),
+        avgR: mine.length ? round(totalR / mine.length) : null,
+        hasOutcome: mine.length > 0,
+        verdict: mine.length < minTrades ? 'too-thin' : netPnL > 0 ? 'working' : 'not-working',
+      };
+    });
+
+    // The current window is the last point; everything the row reports above the strip comes
+    // from it, so the header figures and the rightmost chip can never disagree.
+    const latest = trend[trend.length - 1];
+
+    const judged = trend.filter((point) => point.verdict !== 'too-thin');
+    const latestJudged = judged[judged.length - 1];
+    const previousJudged = judged[judged.length - 2];
+    // Two judged weeks are the least a slope can be read from, and thin weeks are skipped
+    // rather than treated as zeroes: a week with nothing in it is not a week that broke even.
+    const direction: SetupDirection =
+      !latestJudged || !previousJudged
+        ? 'too-thin'
+        : latestJudged.netPnL > previousJudged.netPnL
+        ? 'improving'
+        : latestJudged.netPnL < previousJudged.netPnL
+        ? 'deteriorating'
+        : 'steady';
 
     // A row reports a touch record when it has one to read — it is one of the two level
     // setups, or the log carries touches named after it. A setup with neither shows no
@@ -238,25 +368,29 @@ export function buildSetupWeek(input: {
     return {
       name,
       kind,
-      trades: mine.length,
-      wins,
-      losses,
-      netPnL: round(netPnL),
-      totalR: round(totalR),
-      avgR: mine.length ? round(totalR / mine.length) : null,
-      hasOutcome: mine.length > 0,
+      trades: latest.trades,
+      wins: latest.wins,
+      losses: latest.losses,
+      netPnL: latest.netPnL,
+      totalR: latest.totalR,
+      avgR: latest.avgR,
+      hasOutcome: latest.hasOutcome,
       // A flat week is read as not working, not as working: a setup that spent a week of
       // screen time and returned nothing has to earn the next one, and calling that a
       // success would be the generous reading the trader cannot spend.
-      verdict: !enoughTrades ? 'too-thin' : netPnL > 0 ? 'working' : 'not-working',
+      verdict: latest.verdict,
       touchRecord,
+      trend,
+      direction,
+      judgedWeeks: judged.length,
     };
   });
 
   return {
-    from: dates[0] ?? todayTradeDate,
-    to: dates[dates.length - 1] ?? todayTradeDate,
+    from: current.from,
+    to: current.to,
     days,
+    trendWeeks: windowCount,
     rows,
     hasOutcome: rows.some((row) => row.hasOutcome),
     minTrades,

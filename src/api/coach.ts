@@ -66,7 +66,7 @@ interface ApiResponse {
 }
 
 
-const ENDPOINT_VERSION = 12;
+const ENDPOINT_VERSION = 13;
 
 /** Total time to spend trying models before returning what we have. */
 const REQUEST_BUDGET_MS = 45_000;

@@ -212,7 +212,7 @@ export const CoachView: React.FC<CoachViewProps> = ({
         <SectionHeader
           icon={<CalendarRange className="w-4 h-4 text-amber-400" />}
           title="Weekly setup read"
-          description="Which of your setups earned its place this week — and the level record sitting behind each one."
+          description="Which of your setups earned its place this week, which way its last few weeks point, and the level record sitting behind each one."
         />
 
         {!setupsState.result && (

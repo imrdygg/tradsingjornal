@@ -2,6 +2,7 @@ import React from 'react';
 import { CalendarRange } from 'lucide-react';
 import {
   MIN_SETUP_WEEK_TRADES,
+  type SetupDirection,
   type SetupVerdict,
   type SetupWeek,
   type SetupWeekRow,
@@ -9,12 +10,17 @@ import {
 import { CoachCard, CoachFact, money } from './coach-ui';
 
 /**
- * The last seven days, one setup at a time.
+ * The last seven days, one setup at a time — and the weeks behind them, so the direction is
+ * visible.
  *
  * All-time figures blend a setup's good month with its bad one; this is the window a trader
- * can still act on. It is deliberately arithmetic only — no AI call, no network — so the
- * numbers the coach writes about are on screen before it writes anything, and the verdict on
- * each setup is the journal's own conclusion from the trader's own trades rather than the
+ * can still act on. One week of a two-setup journal is a handful of trades, though, so the
+ * row also carries the same reading over the last few weeks: a single working week and a
+ * setup finding its footing look identical in one number, and only the line tells them apart.
+ *
+ * It is deliberately arithmetic only — no AI call, no network — so the numbers the coach
+ * writes about are on screen before it writes anything, and both the verdict and the
+ * direction are the journal's own conclusions from the trader's own trades rather than the
  * model's.
  *
  * The two halves of each row are shown apart because they answer different questions. The
@@ -24,20 +30,55 @@ import { CoachCard, CoachFact, money } from './coach-ui';
  */
 
 /** The verdict, said in words, with the tone the rest of the tab uses for good and bad. */
-const VERDICT: Record<SetupVerdict, { label: string; chip: string }> = {
+const VERDICT: Record<SetupVerdict, { label: string; mark: string; chip: string }> = {
   working: {
     label: 'Working',
+    mark: 'W',
     chip: 'border-emerald-800 bg-emerald-950/80 text-emerald-300',
   },
   'not-working': {
     label: 'Not working',
+    mark: 'N',
     chip: 'border-rose-800/80 bg-rose-950/70 text-rose-300',
   },
   'too-thin': {
     label: `Fewer than ${MIN_SETUP_WEEK_TRADES} trades`,
+    mark: '·',
     chip: 'border-zinc-700 bg-zinc-800 text-zinc-400',
   },
 };
+
+/**
+ * The direction, said in words.
+ *
+ * `Steady` is the honest word for two judged weeks that paid the same — including two flat
+ * ones, which is a setup going nowhere quietly rather than a setup improving.
+ */
+const DIRECTION: Record<SetupDirection, { label: string; chip: string }> = {
+  improving: {
+    label: 'Improving',
+    chip: 'border-emerald-800 bg-emerald-950/80 text-emerald-300',
+  },
+  deteriorating: {
+    label: 'Deteriorating',
+    chip: 'border-rose-800/80 bg-rose-950/70 text-rose-300',
+  },
+  steady: {
+    label: 'Steady',
+    chip: 'border-zinc-700 bg-zinc-800 text-zinc-400',
+  },
+  'too-thin': {
+    label: 'No direction yet',
+    chip: 'border-zinc-800 bg-zinc-900 text-zinc-500',
+  },
+};
+
+/** `2026-09-15` as `9/15`, short enough to sit under a week chip. */
+function weekLabel(from: string): string {
+  const parts = from.split('-');
+  if (parts.length < 3) return from;
+  return `${Number(parts[1])}/${Number(parts[2])}`;
+}
 
 /** The level-touch half of a row: counts first, and a rate only where one may be read. */
 function touchLine(row: SetupWeekRow): string {
@@ -50,6 +91,11 @@ function touchLine(row: SetupWeekRow): string {
     `${touch.neverReturned} held, ${touch.returned} came back`;
   if (!touch.enoughData) return `${counts} · too thin to rate`;
   return `${counts} · ${touch.holdRate}% held`;
+}
+
+/** What one week of the strip is worth hovering: the window, its verdict and its P&L. */
+function weekTitle(verdict: SetupVerdict, from: string, to: string, outcome: string): string {
+  return `${from} → ${to} · ${VERDICT[verdict].label}${outcome ? ` · ${outcome}` : ''}`;
 }
 
 export const SetupWeekCard: React.FC<{ week: SetupWeek }> = ({ week }) => {
@@ -68,15 +114,21 @@ export const SetupWeekCard: React.FC<{ week: SetupWeek }> = ({ week }) => {
           </h2>
           <p className="text-xs text-zinc-400 mt-0.5">
             Your last seven days, one setup at a time: what its own trades paid, and whether
-            its levels held behind them. Counted here, so the read below can be checked
-            against it.
+            its levels held behind them.
+            {week.trendWeeks > 1
+              ? ` The strip under each one is the same reading over the previous ${
+                  week.trendWeeks - 1
+                } weeks, so one good week can be told from a setup on the way up.`
+              : ''}{' '}
+            Counted here, so the read below can be checked against it.
           </p>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
         <CoachFact label="Window" value={`${week.from} → ${week.to}`} />
         <CoachFact label="Days" value={`${week.days}`} />
+        <CoachFact label="Weeks compared" value={`${week.trendWeeks}`} />
         <CoachFact label="Setups judged" value={`${judged.length} of ${week.rows.length}`} />
         <CoachFact label="Working" value={`${workingCount}`} />
       </div>
@@ -92,6 +144,7 @@ export const SetupWeekCard: React.FC<{ week: SetupWeek }> = ({ week }) => {
               key={row.name}
               id={`coach-setup-week-${row.name.toLowerCase().replace(/\s+/g, '-')}`}
               data-verdict={row.verdict}
+              data-direction={row.direction}
               className="rounded-xl border border-zinc-800 bg-zinc-900/60 px-3 py-2"
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -110,6 +163,52 @@ export const SetupWeekCard: React.FC<{ week: SetupWeek }> = ({ week }) => {
                   : 'No closed trade in the window'}
               </p>
               <p className="mt-0.5 font-mono text-[11px] text-zinc-500">{touchLine(row)}</p>
+
+              {/*
+                The trend, oldest week on the left and the window the read is about on the
+                right, each chip coloured by the same verdict rule the row above uses. The
+                direction is only shown when two weeks could be judged, because a slope drawn
+                through one point is not a slope.
+              */}
+              <div id={`coach-setup-week-${row.name.toLowerCase().replace(/\s+/g, '-')}-trend`}
+                className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-zinc-800/80 pt-2"
+              >
+                <span className="text-[10px] font-mono uppercase font-bold text-zinc-500">
+                  Trend
+                </span>
+                {row.trend.map((point) => (
+                  <span
+                    key={point.from}
+                    title={weekTitle(
+                      point.verdict,
+                      point.from,
+                      point.to,
+                      point.hasOutcome
+                        ? `${point.trades} closed · ${money(point.netPnL)}`
+                        : 'no closed trade'
+                    )}
+                    className={`rounded border px-1.5 py-0.5 font-mono text-[9px] font-bold ${
+                      VERDICT[point.verdict].chip
+                    } ${point.current ? 'ring-1 ring-zinc-600' : ''}`}
+                  >
+                    {weekLabel(point.from)} {VERDICT[point.verdict].mark}
+                  </span>
+                ))}
+                <span
+                  className={`ml-auto rounded border px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase ${
+                    DIRECTION[row.direction].chip
+                  }`}
+                >
+                  {DIRECTION[row.direction].label}
+                </span>
+              </div>
+              {row.direction === 'too-thin' && row.judgedWeeks < 2 && row.hasOutcome && (
+                <p className="mt-1 text-[10px] leading-relaxed text-zinc-500">
+                  {row.judgedWeeks === 0
+                    ? `No week in this stretch reached ${week.minTrades} closed trades, so there is no line to read yet.`
+                    : 'Only one week in this stretch could be judged, so there is no direction to compare it to yet.'}
+                </p>
+              )}
             </li>
           ))}
         </ul>

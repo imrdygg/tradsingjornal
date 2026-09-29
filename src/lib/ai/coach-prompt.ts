@@ -9,7 +9,7 @@ import type {
   JournalDigest,
   LevelEdge,
 } from './journal-digest';
-import type { SetupVerdict, SetupWeek } from '../analytics/setup-week';
+import type { SetupDirection, SetupVerdict, SetupWeek } from '../analytics/setup-week';
 import type { BehaviorBucket as DigestBehaviorBucket } from '../analytics/behavior';
 import type {
   CoachExtras,
@@ -400,6 +400,11 @@ function formatLevelEdgeForPrompt(edge: LevelEdge | undefined): string[] {
  * trend is: it is computed from the recorded trades, so the writing and the numbers the
  * trader can see cannot disagree about which setup is working. The model's job is to explain
  * the verdict and point at the touch record behind it — never to overrule either.
+ *
+ * The trend is given the same treatment. Each setup carries its last few weeks and a direction
+ * computed from the two most recent that could be judged, so "improving" on screen and
+ * "improving" in the writing are the same word from the same arithmetic, and a single good
+ * week cannot be sold as a setup turning around.
  */
 function formatSetupWeekForPrompt(week: SetupWeek | undefined): string[] {
   const lines: string[] = [];
@@ -409,6 +414,12 @@ function formatSetupWeekForPrompt(week: SetupWeek | undefined): string[] {
     working: 'WORKING',
     'not-working': 'NOT WORKING',
     'too-thin': 'TOO THIN TO JUDGE',
+  };
+  const directionWord: Record<SetupDirection, string> = {
+    improving: 'IMPROVING',
+    deteriorating: 'DETERIORATING',
+    steady: 'STEADY',
+    'too-thin': 'NO DIRECTION YET',
   };
   const money = (n: number) => `${n < 0 ? '-' : ''}$${Math.abs(n).toLocaleString('en-US')}`;
 
@@ -420,6 +431,16 @@ function formatSetupWeekForPrompt(week: SetupWeek | undefined): string[] {
       `touch line under each setup is the explanation, not the verdict: a hold means price ` +
       `never came back to the level, and a hold is not a profit.`
   );
+  if (week.trendWeeks > 1 && week.rows.some((row) => row.trend.length > 1)) {
+    lines.push(
+      `Each setup also carries its last ${week.trendWeeks} weeks and a DIRECTION computed from ` +
+        `the two most recent weeks that could be judged — the direction is the digest's ` +
+        `conclusion too, so quote it and never re-derive it from the weekly figures. A week ` +
+        `too thin to judge is skipped rather than counted as flat. One good week is not a ` +
+        `direction: never describe a setup as improving or deteriorating unless the direction ` +
+        `line says so.`
+    );
+  }
 
   for (const row of week.rows) {
     const outcome = row.hasOutcome
@@ -439,6 +460,23 @@ function formatSetupWeekForPrompt(week: SetupWeek | undefined): string[] {
       );
     } else if (touch) {
       lines.push('  Levels for this setup: no touches logged in this window');
+    }
+
+    if (row.trend.length > 1) {
+      const series = row.trend
+        .map(
+          (point) =>
+            `${point.from}..${point.to} ${verdictWord[point.verdict]} (${
+              point.hasOutcome
+                ? `${point.trades} closed, ${money(point.netPnL)}, ${point.totalR}R`
+                : 'no closed trade'
+            })`
+        )
+        .join(' | ');
+      lines.push(
+        `  Week by week, oldest first: ${series} — DIRECTION ${directionWord[row.direction]} ` +
+          `from ${row.judgedWeeks} judged week(s).`
+      );
     }
   }
 
@@ -1130,7 +1168,7 @@ Rank only conditions with a readable hold rate. Never quote a rate for a conditi
   setups: `Return exactly this JSON:
 {
   "headline": "one sentence, under 16 words, on which setup the week's own numbers say is working",
-  "weekRead": "2-3 sentences on the week, quoting each judged setup's trades, net P&L and R from THE WEEK",
+  "weekRead": "2-3 sentences on the week, quoting each judged setup's trades, net P&L and R from THE WEEK, and its computed DIRECTION where it has one",
   "working": ["what is working, each tied to a setup and the figure behind it. Empty array when no setup was judged working"],
   "notWorking": ["what is not, each tied to a setup and the figure behind it. Empty array when no setup was judged not working"],
   "levelsRead": "1-2 sentences on whether the setups' levels held, reporting the decided counts before any hold rate. When a setup's touches are too thin, give the counts and say no rate can be read",
@@ -1139,7 +1177,7 @@ Rank only conditions with a readable hold rate. Never quote a rate for a conditi
   "nextWeek": "one concrete, checkable thing to do differently next week, matched to what the week actually showed",
   "motivation": "2 sentences. Specific to this trader and earned by their data. No slogans."
 }
-The bracketed verdict on each setup in THE WEEK is the digest's conclusion from the trader's own recorded trades. Never contradict it, never re-rank a setup marked TOO THIN TO JUDGE, and never attach a hold rate to a setup whose touches are too thin to carry one.`,
+The bracketed verdict on each setup in THE WEEK is the digest's conclusion from the trader's own recorded trades. Never contradict it, never re-rank a setup marked TOO THIN TO JUDGE, and never attach a hold rate to a setup whose touches are too thin to carry one. The DIRECTION on each setup is computed the same way — quote it as given, never re-derive it from the weekly figures, and never claim a setup is improving or deteriorating when its direction says STEADY or NO DIRECTION YET.`,
   learn: `Return exactly this JSON:
 {
   "headline": "one sentence, under 16 words, on what you found in their own trades",
@@ -1387,11 +1425,13 @@ export function buildCoachPrompt(
         `trades paid in the last seven days, and whether its levels held behind that. Every ` +
         `setup is marked WORKING, NOT WORKING or TOO THIN TO JUDGE — that verdict is computed ` +
         `from the recorded figures and is not yours to change: explain it with the numbers ` +
-        `behind it, and never rank a setup the digest refused to judge. Say which one the ` +
-        `week says to lean on and which to shelve only when the week judged them, quote the ` +
-        `decided counts before any hold rate, and say what has happened rather than what will. ` +
-        `When the window is too thin to rank anything, say exactly that and make the step for ` +
-        `next week about logging.`
+        `behind it, and never rank a setup the digest refused to judge. Each setup also carries ` +
+        `a computed DIRECTION across the recent weeks; quote it rather than working it out ` +
+        `yourself, and let it decide whether the week reads as a turning point or as one good ` +
+        `week inside a losing stretch. Say which one the week says to lean on and which to ` +
+        `shelve only when the week judged them, quote the decided counts before any hold rate, ` +
+        `and say what has happened rather than what will. When the window is too thin to rank ` +
+        `anything, say exactly that and make the step for next week about logging.`
       : mode === 'learn'
       ? `Find the setups this trader actually repeats, from their own logged trades and the ` +
         `entry charts they attached. Group the TRADE SAMPLES by what they really did — ` +

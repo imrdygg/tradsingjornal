@@ -15,6 +15,7 @@ import {
   ClipboardCheck,
 } from 'lucide-react';
 import { TradingDay, Trade, DailyReview, Setup, Instrument } from '../../types';
+import { instrumentSymbol } from '../../lib/trading/instruments';
 import { formatTradingDate, formatTimestamp } from '../../lib/storage/date-utils';
 import { dayHasRecordedActivity } from '../../lib/history/day-activity';
 import { TradeCard } from '../trades/TradeCard';
@@ -45,6 +46,13 @@ interface HistoryViewProps {
   onConsumeFocusDay?: () => void;
   /** Deletes a complete historical day, including its trades and review. */
   onDeleteTradingDay: (dayId: string) => void;
+  /**
+   * Opens one trade in full, which is where a missing execution review is written.
+   *
+   * Without it the archive could only say a review was owed; the trader then had to find the
+   * trade in the log by hand to act on it. Handing the open action in closes that loop.
+   */
+  onViewTrade?: (trade: Trade) => void;
 }
 
 export const HistoryView: React.FC<HistoryViewProps> = ({
@@ -56,6 +64,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
   focusDayId = null,
   onConsumeFocusDay,
   onDeleteTradingDay,
+  onViewTrade,
 }) => {
   const [selectedDayId, setSelectedDayId] = useState<string | null>(null);
 
@@ -167,6 +176,25 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
     () => [...pendingReviews.values()].reduce((sum, count) => sum + count, 0),
     [pendingReviews]
   );
+
+  /**
+   * The trades themselves that are waiting on a review, newest first.
+   *
+   * The day list can only ever say how many a day owes. A trader who wants to sit down and
+   * clear the backlog wants the trades in front of them, with the day each one belongs to, so
+   * the filtered view lists them directly rather than making them a day-opening exercise.
+   */
+  const pendingTrades = useMemo(() => {
+    const dateById = new Map(tradingDays.map((day) => [day.id, day.tradeDate]));
+    return trades
+      .filter((trade) => trade.status === 'closed' && !trade.executionReview)
+      .map((trade) => ({ trade, date: dateById.get(trade.tradingDayId) ?? '' }))
+      .sort(
+        (a, b) =>
+          b.date.localeCompare(a.date) ||
+          (b.trade.entryTime ?? '').localeCompare(a.trade.entryTime ?? '')
+      );
+  }, [trades, tradingDays]);
 
   const availableLevelTags = useMemo(() => {
     const tags = new Set<string>();
@@ -478,6 +506,86 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
       </div>
 
       {/* Days List */}
+      {/*
+        The backlog itself, when the filter is asking for it.
+
+        Listed as trades rather than as days because that is the unit of the task: a review is
+        written about one trade, and "three days owe reviews" is a worse to-do list than the
+        three trades. Each row opens the trade, which is where the review is completed.
+      */}
+      {filterReview === 'needs' && pendingTrades.length > 0 && (
+        <section id="history-pending-reviews" className="space-y-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="flex items-center gap-1.5 font-mono text-xs font-bold uppercase tracking-wider text-amber-300">
+              <ClipboardCheck className="h-4 w-4" />
+              Trades waiting on a review ({pendingTrades.length})
+            </span>
+            <span className="font-mono text-[10px] text-zinc-500">newest first</span>
+          </div>
+
+          <ul className="divide-y divide-zinc-800/80 overflow-hidden rounded-2xl border border-amber-900/50 bg-zinc-900/50">
+            {pendingTrades.map(({ trade, date }) => {
+              const pnl = trade.grossPnL;
+              const long = trade.direction === 'long';
+              return (
+                <li
+                  key={trade.id}
+                  id={`pending-review-${trade.id}`}
+                  className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2"
+                >
+                  <span className="font-mono text-[11px] text-zinc-400">
+                    {date ? formatTradingDate(date) : 'date not recorded'}
+                  </span>
+                  <span className="rounded border border-zinc-700 bg-zinc-800 px-1.5 py-0.5 font-mono text-[10px] text-zinc-300">
+                    {trade.setupName || 'no setup'}
+                  </span>
+                  <span
+                    className={`flex items-center gap-1 font-mono text-[10px] uppercase tracking-wider ${
+                      long ? 'text-emerald-400' : 'text-rose-400'
+                    }`}
+                  >
+                    {long ? (
+                      <TrendingUp className="h-3 w-3" />
+                    ) : (
+                      <TrendingDown className="h-3 w-3" />
+                    )}
+                    {trade.direction}
+                  </span>
+                  <span className="font-mono text-[11px] text-zinc-400">
+                    {trade.contracts}x {instrumentSymbol(instruments, trade.instrumentId)}
+                  </span>
+                  <span className="font-mono text-[11px] text-zinc-300">
+                    {trade.entryPrice.toFixed(2)}
+                    {trade.exitPrice !== undefined ? ` → ${trade.exitPrice.toFixed(2)}` : ''}
+                  </span>
+                  <span
+                    className={`font-mono text-xs font-bold ${
+                      pnl > 0 ? 'text-emerald-400' : pnl < 0 ? 'text-rose-400' : 'text-zinc-400'
+                    }`}
+                  >
+                    {pnl > 0 ? '+' : ''}${pnl.toFixed(2)}
+                  </span>
+                  <span className="font-mono text-[11px] text-zinc-400">
+                    {(trade.rMultiple || 0).toFixed(2)}R
+                  </span>
+
+                  {onViewTrade && (
+                    <button
+                      type="button"
+                      id={`review-trade-${trade.id}`}
+                      onClick={() => onViewTrade(trade)}
+                      className="ml-auto shrink-0 rounded-lg border border-amber-800/80 bg-amber-950/40 px-2.5 py-1 font-mono text-[10px] font-bold uppercase tracking-wider text-amber-200 transition-colors hover:bg-amber-900/50 hover:text-amber-100"
+                    >
+                      Review
+                    </button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
+
       {filteredDays.length === 0 ? (
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900/30 p-8 text-center text-zinc-400 text-xs">
           {daysWithActivity.length === 0
@@ -788,6 +896,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                       key={t.id}
                       trade={t}
                       instruments={instruments}
+                      onView={onViewTrade}
                     />
                   ))}
                 </div>

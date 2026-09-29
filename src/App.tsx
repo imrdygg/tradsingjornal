@@ -1564,6 +1564,9 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             focusDayId={historyFocusDayId}
             onConsumeFocusDay={() => setHistoryFocusDayId(null)}
             onDeleteTradingDay={handleDeleteTradingDay}
+            // The archive can list the trades still owing an execution review; opening one
+            // here is where that review is written.
+            onViewTrade={(t) => setViewingTradeId(t.id)}
           />
         );
 

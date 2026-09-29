@@ -3,10 +3,12 @@ import {
   Activity,
   AlertTriangle,
   BarChart3,
+  CalendarRange,
   CheckCircle2,
   Info,
   Lightbulb,
   Target,
+  TrendingUp,
 } from 'lucide-react';
 import { Trade, TradingDay } from '../../types';
 import {
@@ -22,15 +24,24 @@ import {
 } from '../../lib/analytics/aggregations';
 import { summariseTargetExits } from '../../lib/analytics/target-exits';
 import {
+  DailyPnlChart,
   DivergingBars,
   LabelledBar,
   ModeTile,
+  RDistributionChart,
+  ResultTape,
   ShareRing,
   signedMoney,
   moneyTone,
   StatTile,
-  type SegmentRow,
 } from './insights-charts';
+import {
+  buildDailyPnLSeries,
+  buildRDistribution,
+  buildResultTape,
+  buildWeekdayBreakdown,
+  type SegmentRow,
+} from '../../lib/analytics/insights-series';
 
 interface InsightsViewProps {
   trades: Trade[];
@@ -164,17 +175,28 @@ export const InsightsView: React.FC<InsightsViewProps> = ({ trades, tradingDays 
       sessions: byMoney(sessions),
       setups: byMoney(setups),
       sides: byMoney(sides),
+      // Monday first, unlike the other groups: a trading week is read in weekday order, not
+      // reordered by which day happened to make the most money.
+      weekdays: buildWeekdayBreakdown(closed, tradingDays),
+      daily: buildDailyPnLSeries(closed, tradingDays),
+      rDistribution: buildRDistribution(closed),
+      tape: buildResultTape(closed, tradingDays),
       riskModes: calculateRiskModeComparison(closed, tradingDays, []),
       targets: summariseTargetExits(closed),
     };
   }, [trades, tradingDays]);
 
   const {
+    closed,
     core,
     grossTotal,
     sessions,
     setups,
     sides,
+    weekdays,
+    daily,
+    rDistribution,
+    tape,
     riskModes,
     targets,
   } = data;
@@ -212,6 +234,27 @@ export const InsightsView: React.FC<InsightsViewProps> = ({ trades, tradingDays 
     }
     return map;
   }, [sessions, setups, sides, riskModes, targets]);
+
+  /** Best and worst single trade by R, and what a win and a loss are worth on average. */
+  const rStats = useMemo(() => {
+    const withR = closed.filter((trade) => Number.isFinite(trade.rMultiple));
+    const winners = withR.filter((trade) => trade.rMultiple > 0);
+    const losers = withR.filter((trade) => trade.rMultiple < 0);
+    return {
+      best: withR.reduce<number | null>(
+        (top, trade) => (top === null || trade.rMultiple > top ? trade.rMultiple : top),
+        null
+      ),
+      worst: withR.reduce<number | null>(
+        (low, trade) => (low === null || trade.rMultiple < low ? trade.rMultiple : low),
+        null
+      ),
+      avgWin: meanR(winners),
+      avgLoss: meanR(losers),
+      winners: winners.length,
+      losers: losers.length,
+    };
+  }, [closed]);
 
   const modesShown = (['normal', 'expanded'] as const)
     .map((mode) => ({ mode, stats: riskModes[mode] }))
@@ -311,6 +354,38 @@ export const InsightsView: React.FC<InsightsViewProps> = ({ trades, tradingDays 
       </section>
 
       {/*
+        Every day as a column, with the running total drawn over it.
+
+        This is the tab's hero because it is the one picture that answers both of a trader's
+        first questions at once: how each day went, and what the days added up to.
+      */}
+      {daily.length > 0 && (
+        <section id="insights-daily" className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <CalendarRange className="h-4 w-4 text-emerald-400" />
+              <h2 className="font-mono text-xs font-bold uppercase tracking-wider text-zinc-300">
+                Every trading day
+              </h2>
+            </div>
+            <span className="font-mono text-[10px] text-zinc-500">
+              {daily.length} day{daily.length === 1 ? '' : 's'} · columns left, running total
+              right
+            </span>
+          </div>
+
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-3.5">
+            <DailyPnlChart points={daily} />
+            <p className="mt-2 text-[10px] leading-relaxed text-zinc-500">
+              Each column is one day's whole result; the line is the running total across the
+              days shown, starting at zero on the left. A red column inside a rising line is
+              what a good month normally looks like.
+            </p>
+          </div>
+        </section>
+      )}
+
+      {/*
         Where the money came from.
 
         Three groups rather than one list, because they are three different questions: which
@@ -325,7 +400,7 @@ export const InsightsView: React.FC<InsightsViewProps> = ({ trades, tradingDays 
           </h2>
         </div>
 
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           {sessions.length > 0 && (
             <SegmentGroup
               title="By session"
@@ -350,6 +425,14 @@ export const InsightsView: React.FC<InsightsViewProps> = ({ trades, tradingDays 
               id="insights-sides"
             />
           )}
+          {weekdays.length > 0 && (
+            <SegmentGroup
+              title="By weekday"
+              note="Which day of the week the money was made on. Monday first, the way a week is read."
+              rows={weekdays}
+              id="insights-weekdays"
+            />
+          )}
         </div>
 
         <p className="text-[10px] leading-relaxed text-zinc-500">
@@ -358,6 +441,75 @@ export const InsightsView: React.FC<InsightsViewProps> = ({ trades, tradingDays 
           between them.
         </p>
       </section>
+
+      {/*
+        The shape of the record rather than its total.
+
+        An average R hides the distribution behind it, and the sequence of results is the one
+        thing a P&L curve cannot show at all — so the histogram and the tape sit together,
+        with the best and worst trades beside them.
+      */}
+      {rDistribution.measured > 0 && (
+        <section id="insights-distribution" className="space-y-3">
+          <div className="flex items-center gap-2">
+            <TrendingUp className="h-4 w-4 text-sky-400" />
+            <h2 className="font-mono text-xs font-bold uppercase tracking-wider text-zinc-300">
+              How the trades ended
+            </h2>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1.35fr_1fr]">
+            <div className="space-y-2 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-3.5">
+              <h3 className="font-mono text-[11px] font-bold uppercase tracking-wider text-zinc-300">
+                R per trade
+              </h3>
+              <p className="text-[10px] leading-snug text-zinc-500">
+                How far each trade ran, in multiples of what it risked. The weight of the
+                record under the line is the thing to look at, not the average of it.
+              </p>
+              <RDistributionChart
+                buckets={rDistribution.buckets}
+                measured={rDistribution.measured}
+                excluded={rDistribution.excluded}
+              />
+            </div>
+
+            <div className="space-y-2.5">
+              <div className="grid grid-cols-2 gap-2.5">
+                <StatTile
+                  label="Best trade"
+                  value={`${rStats.best ?? 0}R`}
+                  valueClass="text-emerald-400"
+                />
+                <StatTile
+                  label="Worst trade"
+                  value={`${rStats.worst ?? 0}R`}
+                  valueClass="text-rose-400"
+                />
+                <StatTile
+                  label="Average win"
+                  value={`${rStats.avgWin}R`}
+                  valueClass="text-emerald-400"
+                  sub={`across ${rStats.winners} winning trade${rStats.winners === 1 ? '' : 's'}`}
+                />
+                <StatTile
+                  label="Average loss"
+                  value={`${rStats.avgLoss}R`}
+                  valueClass="text-rose-400"
+                  sub={`across ${rStats.losers} losing trade${rStats.losers === 1 ? '' : 's'}`}
+                />
+              </div>
+
+              <div className="space-y-2 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-3.5">
+                <h3 className="font-mono text-[11px] font-bold uppercase tracking-wider text-zinc-300">
+                  The tape
+                </h3>
+                <ResultTape entries={tape} />
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* ------------------------------------------------------------------ */}
       {/* Normal against expanded risk                                          */}

@@ -1,4 +1,24 @@
 import React from 'react';
+import { Info } from 'lucide-react';
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  ComposedChart,
+  Line,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
+import type {
+  DailyPnLPoint,
+  RDistributionBucket,
+  SegmentRow,
+  TapeEntry,
+} from '../../lib/analytics/insights-series';
 
 /**
  * The pictures the Insights tab is read through.
@@ -39,6 +59,18 @@ export function moneyBar(value: number): string {
 }
 
 const clamp = (pct: number) => Math.max(0, Math.min(100, Number.isFinite(pct) ? pct : 0));
+
+/** An axis tick as money, rounded: the axis gridlines are thousands, not cents. */
+const axisMoney = (n: number) => `${n < 0 ? '-' : ''}$${Math.abs(Math.round(n)).toLocaleString('en-US')}`;
+
+/** The axis/tooltip styling every chart here shares, so they read as one set. */
+const TOOLTIP_STYLE = {
+  backgroundColor: '#18181b',
+  borderColor: '#27272a',
+  borderRadius: '8px',
+  fontSize: '11px',
+  fontFamily: 'monospace',
+} as const;
 
 /**
  * One figure at the top of the tab, with the meter that makes it a picture.
@@ -88,22 +120,6 @@ export const StatTile: React.FC<{
     {sub && <span className="mt-1 block text-[10px] leading-snug text-zinc-500">{sub}</span>}
   </div>
 );
-
-/** One thing the record can be split by, reduced to the four figures worth comparing. */
-export interface SegmentRow {
-  /** Stable key: the same bucket keeps the same row across renders. */
-  key: string;
-  /** What the segment is, in the trader's words. */
-  label: string;
-  /** Closed trades in it. */
-  trades: number;
-  /** Wins as a share of those trades, 0–100. */
-  winRate: number;
-  /** Mean R across them. */
-  avgR: number;
-  /** Gross P&L across them. */
-  pnl: number;
-}
 
 /**
  * P&L per segment, drawn around a zero line.
@@ -305,3 +321,205 @@ export const ModeTile: React.FC<{
     </div>
   </div>
 );
+
+/**
+ * Every trading day as its own column, with the running total drawn over them.
+ *
+ * Two readings on one picture on purpose. The columns are how each day went — the question a
+ * trader asks about a day — and the line is what those days added up to, which no single
+ * column can answer. They sit on separate axes because a $400 day and a $400 total are the
+ * same number and completely different news.
+ *
+ * A column is coloured by its own sign rather than the window's, so a losing day inside a
+ * winning month still reads as a losing day.
+ */
+export const DailyPnlChart: React.FC<{ points: DailyPnLPoint[] }> = ({ points }) => (
+  <div id="insights-daily-chart" className="h-56 w-full">
+    <ResponsiveContainer width="100%" height="100%">
+      <ComposedChart data={points} margin={{ top: 8, right: 2, bottom: 0, left: -16 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+        <XAxis dataKey="label" stroke="#71717a" fontSize={10} tickLine={false} minTickGap={18} />
+        <YAxis
+          yAxisId="day"
+          stroke="#71717a"
+          fontSize={10}
+          tickLine={false}
+          width={58}
+          tickFormatter={(value) => axisMoney(Number(value))}
+        />
+        <YAxis
+          yAxisId="total"
+          orientation="right"
+          stroke="#38bdf8"
+          fontSize={10}
+          tickLine={false}
+          width={62}
+          tickFormatter={(value) => axisMoney(Number(value))}
+        />
+        <Tooltip
+          content={({ active, payload }) => {
+            if (!active || !payload || !payload.length) return null;
+            const point = payload[0]?.payload as DailyPnLPoint | undefined;
+            if (!point) return null;
+            return (
+              <div className="space-y-0.5 rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 py-2 font-mono text-[11px] text-zinc-200">
+                <div className="text-zinc-400">
+                  {point.date} · {point.trades} trade{point.trades === 1 ? '' : 's'}
+                </div>
+                <div className={moneyTone(point.pnl)}>{signedMoney(point.pnl)} that day</div>
+                <div className="text-sky-300">{signedMoney(point.cumulative)} running</div>
+              </div>
+            );
+          }}
+        />
+        <ReferenceLine yAxisId="day" y={0} stroke="#3f3f46" />
+        <Bar yAxisId="day" dataKey="pnl" radius={[3, 3, 0, 0]} maxBarSize={30}>
+          {points.map((point) => (
+            <Cell key={point.date} fill={point.pnl >= 0 ? '#10b981' : '#f43f5e'} />
+          ))}
+        </Bar>
+        <Line
+          yAxisId="total"
+          type="monotone"
+          dataKey="cumulative"
+          stroke="#38bdf8"
+          strokeWidth={2}
+          dot={false}
+          isAnimationActive={false}
+        />
+      </ComposedChart>
+    </ResponsiveContainer>
+  </div>
+);
+
+/**
+ * The shape of the record, as a histogram of R.
+ *
+ * An average R hides the distribution behind it: winning small and often and losing small and
+ * often while catching one big one are the same average and different businesses. The bars are
+ * rose below zero and emerald above it, so the first thing visible is which side of the record
+ * the weight of the trades sits on.
+ */
+export const RDistributionChart: React.FC<{
+  buckets: RDistributionBucket[];
+  measured: number;
+  excluded: number;
+}> = ({ buckets, measured, excluded }) => (
+  <div className="space-y-2">
+    <div id="insights-r-chart" className="h-52 w-full">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={buckets} margin={{ top: 8, right: 8, bottom: 0, left: -24 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+          <XAxis dataKey="label" stroke="#71717a" fontSize={9} tickLine={false} interval={0} />
+          <YAxis allowDecimals={false} stroke="#71717a" fontSize={10} tickLine={false} />
+          <Tooltip
+            content={({ active, payload }) => {
+              if (!active || !payload || !payload.length) return null;
+              const bucket = payload[0]?.payload as RDistributionBucket | undefined;
+              if (!bucket) return null;
+              const shareOfMeasured = measured > 0 ? Math.round((bucket.count / measured) * 100) : 0;
+              return (
+                <div className="space-y-0.5 rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 py-2 font-mono text-[11px] text-zinc-200">
+                  <div className="text-zinc-400">{bucket.label}</div>
+                  <div className={bucket.loss ? 'text-rose-300' : 'text-emerald-300'}>
+                    {bucket.count} trade{bucket.count === 1 ? '' : 's'}
+                  </div>
+                  <div className="text-zinc-500">
+                    {shareOfMeasured}% of {measured} measured
+                  </div>
+                </div>
+              );
+            }}
+          />
+          <Bar dataKey="count" radius={[3, 3, 0, 0]} maxBarSize={46}>
+            {buckets.map((bucket) => (
+              <Cell key={bucket.key} fill={bucket.loss ? '#f43f5e' : '#10b981'} />
+            ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+
+    {excluded > 0 && (
+      <p className="flex items-start gap-1.5 text-[10px] leading-relaxed text-zinc-500">
+        <Info className="mt-0.5 h-3 w-3 shrink-0" />
+        {excluded} closed trade{excluded === 1 ? '' : 's'} left out: their stop was never
+        recorded, so their risk — and therefore their R — is a placeholder rather than a fact.
+      </p>
+    )}
+  </div>
+);
+
+/** One square of the tape: the colour the result, nothing else. */
+const TAPE_CHIP: Record<TapeEntry['result'], string> = {
+  win: 'bg-emerald-500/80',
+  loss: 'bg-rose-500/80',
+  flat: 'bg-zinc-600',
+};
+
+/**
+ * The last few closed trades, as a row of results.
+ *
+ * The one thing a P&L curve cannot show is sequence: three losses in a row that end flat is a
+ * different month from three losses spread across it, and the difference only appears when
+ * the trades are laid beside each other in the order they happened. Oldest on the left, so
+ * the newest trade is always the last square — where the eye already is.
+ */
+export const ResultTape: React.FC<{ entries: TapeEntry[] }> = ({ entries }) => {
+  if (!entries.length) return null;
+
+  const latest = entries[entries.length - 1].result;
+  let run = 0;
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    if (entries[index].result !== latest) break;
+    run += 1;
+  }
+
+  const runLabel =
+    latest === 'win'
+      ? `${run} win${run === 1 ? '' : 's'} in a row`
+      : latest === 'loss'
+      ? `${run} loss${run === 1 ? '' : 'es'} in a row`
+      : `${run} flat in a row`;
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="font-mono text-[10px] uppercase tracking-wider text-zinc-500">
+          Oldest → newest
+        </span>
+        <span
+          className={`rounded border px-2 py-0.5 font-mono text-[10px] font-semibold ${
+            latest === 'win'
+              ? 'border-emerald-800 bg-emerald-950/70 text-emerald-300'
+              : latest === 'loss'
+              ? 'border-rose-800/80 bg-rose-950/70 text-rose-300'
+              : 'border-zinc-700 bg-zinc-800 text-zinc-400'
+          }`}
+        >
+          {runLabel}
+        </span>
+      </div>
+
+      <div id="insights-tape" className="flex flex-wrap gap-1">
+        {entries.map((entry) => (
+          <span
+            key={entry.id}
+            title={`${entry.label} · ${entry.r > 0 ? '+' : ''}${entry.r}R`}
+            className={`h-4 w-4 rounded-[3px] ${TAPE_CHIP[entry.result]}`}
+          />
+        ))}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[10px] text-zinc-500">
+        {(['win', 'loss', 'flat'] as const).map((result) => (
+          <span key={result} className="flex items-center gap-1.5">
+            <span className={`inline-block h-2.5 w-2.5 rounded-[2px] ${TAPE_CHIP[result]}`} />
+            {result}
+          </span>
+        ))}
+        <span className="text-zinc-600">{entries.length} most recent closed trades</span>
+      </div>
+    </div>
+  );
+};

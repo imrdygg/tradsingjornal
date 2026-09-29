@@ -944,6 +944,23 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   };
 
   /**
+   * Records a level touch, whether it is a brand new one or an outcome being decided later.
+   *
+   * Both paths are the same write on purpose: storage upserts by id, so marking a touch
+   * "never came back" a week later is the same call that created it, and the touch keeps its
+   * place in the list instead of jumping to the front as if it were fresh.
+   */
+  const handleSaveLevelTouch = (touch: LevelTouch) => {
+    storage.saveLevelTouch(touch);
+    setLevelTouches(storage.getLevelTouches());
+  };
+
+  const handleDeleteLevelTouch = (touchId: string) => {
+    storage.deleteLevelTouch(touchId);
+    setLevelTouches(storage.getLevelTouches());
+  };
+
+  /**
    * What the journal already records under each setup name.
    *
    * Read from the trades and days themselves rather than from a counter kept on the setup,
@@ -1679,6 +1696,14 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               timezone: profile.timezone,
               maxDrawdown: profile.maxDrawdown ?? null,
               levelTouches,
+            }}
+            levelTouchLog={{
+              touches: levelTouches,
+              todayTradingDay,
+              instruments,
+              timezone: profile.timezone,
+              onSave: handleSaveLevelTouch,
+              onDelete: handleDeleteLevelTouch,
             }}
           />
         );

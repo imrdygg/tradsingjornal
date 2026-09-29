@@ -37,6 +37,7 @@ import { SetupGuide, resolveSetupGuide } from './setup-guides';
 import { ChartPatternsView } from './ChartPatternsView';
 import { EdgeFinderCard } from './EdgeFinderCard';
 import { CoachSetupsCard } from './CoachSetupsCard';
+import { LevelTouchLog } from './LevelTouchLog';
 import { isFocusSetup, splitFocusSetups } from '../../lib/playbook/focus-setups';
 import { PATTERNS } from '../../lib/playbook/patterns';
 import { isVideoUrl } from '../../lib/media/media-utils';
@@ -96,6 +97,19 @@ interface PlaybookViewProps {
     maxDrawdown?: number | null;
     levelTouches?: LevelTouch[];
   };
+  /**
+   * Where a level touch is written down. This is the input side of the edge finder: without
+   * it the card above has nothing to read but whatever the journal already held. Omitted
+   * hides the log, the same way `edgeFinder` does.
+   */
+  levelTouchLog?: {
+    touches: LevelTouch[];
+    todayTradingDay: TradingDay;
+    instruments: Instrument[];
+    timezone: string;
+    onSave: (touch: LevelTouch) => void;
+    onDelete: (touchId: string) => void;
+  };
 }
 
 /** Small labelled block used inside each setup's guide container. */
@@ -136,6 +150,7 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
   onOpenPattern,
   edgeFinder,
   coachSetups,
+  levelTouchLog,
 }) => {
   const [newSetupName, setNewSetupName] = useState('');
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
@@ -406,6 +421,9 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
 
       {/* The coach's edge finder, fed by the level-touch journal. */}
       {edgeFinder && <EdgeFinderCard setups={setups} {...edgeFinder} />}
+
+      {/* Where the touches the edge finder reads are logged, and how they ended. */}
+      {levelTouchLog && <LevelTouchLog {...levelTouchLog} />}
 
       {/* The coach's own setups, learned from the trade history and its entry charts. */}
       {coachSetups && (

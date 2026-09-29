@@ -5,9 +5,12 @@ import {
   BarChart3,
   CalendarRange,
   CheckCircle2,
+  Clock,
+  Gauge,
   Info,
   Lightbulb,
   Target,
+  TrendingDown,
   TrendingUp,
 } from 'lucide-react';
 import { Trade, TradingDay } from '../../types';
@@ -26,19 +29,27 @@ import { summariseTargetExits } from '../../lib/analytics/target-exits';
 import {
   DailyPnlChart,
   DivergingBars,
+  HourHeatmap,
   LabelledBar,
   ModeTile,
   RDistributionChart,
   ResultTape,
   ShareRing,
+  TradeScatter,
+  UnderwaterChart,
   signedMoney,
   moneyTone,
   StatTile,
+  type ScatterPoint,
 } from './insights-charts';
 import {
   buildDailyPnLSeries,
+  buildHoldTime,
+  buildHourlyBreakdown,
   buildRDistribution,
   buildResultTape,
+  buildRiskVsResult,
+  buildUnderwaterCurve,
   buildWeekdayBreakdown,
   type SegmentRow,
 } from '../../lib/analytics/insights-series';
@@ -74,6 +85,16 @@ const share = (part: number, whole: number) =>
 const meanR = (list: Trade[]) =>
   list.length ? round2(list.reduce((sum, t) => sum + (t.rMultiple || 0), 0) / list.length) : 0;
 const grossOf = (list: Trade[]) => round2(list.reduce((sum, t) => sum + t.grossPnL, 0));
+
+/** A duration in minutes as `2h 14m` / `48m`, the way a hold is actually talked about. */
+const readableMinutes = (minutes: number | null): string => {
+  if (minutes === null) return '—';
+  const whole = Math.round(minutes);
+  if (whole < 60) return `${whole}m`;
+  const hours = Math.floor(whole / 60);
+  const rest = whole % 60;
+  return rest === 0 ? `${hours}h` : `${hours}h ${rest}m`;
+};
 
 /** The sample chip, in the same four tones the observation has always used. */
 const SAMPLE_CHIP: Record<DeterministicInsight['sampleVariant'], string> = {
@@ -179,8 +200,12 @@ export const InsightsView: React.FC<InsightsViewProps> = ({ trades, tradingDays 
       // reordered by which day happened to make the most money.
       weekdays: buildWeekdayBreakdown(closed, tradingDays),
       daily: buildDailyPnLSeries(closed, tradingDays),
+      underwater: buildUnderwaterCurve(closed, tradingDays),
+      hours: buildHourlyBreakdown(closed),
       rDistribution: buildRDistribution(closed),
       tape: buildResultTape(closed, tradingDays),
+      holdTime: buildHoldTime(closed, tradingDays),
+      riskVsResult: buildRiskVsResult(closed),
       riskModes: calculateRiskModeComparison(closed, tradingDays, []),
       targets: summariseTargetExits(closed),
     };
@@ -195,11 +220,36 @@ export const InsightsView: React.FC<InsightsViewProps> = ({ trades, tradingDays 
     sides,
     weekdays,
     daily,
+    underwater,
+    hours,
     rDistribution,
     tape,
+    holdTime,
+    riskVsResult,
     riskModes,
     targets,
   } = data;
+
+  const holdPoints: ScatterPoint[] = holdTime.points.map((point) => ({
+    id: point.id,
+    x: point.minutes,
+    y: point.r,
+    win: point.win,
+    label: point.label,
+  }));
+
+  const riskPoints: ScatterPoint[] = riskVsResult.points.map((point) => ({
+    id: point.id,
+    x: point.risk,
+    y: point.r,
+    win: point.win,
+    label: point.label,
+  }));
+
+  const worstDepth = underwater.reduce<number>(
+    (low, point) => Math.min(low, point.drawdown),
+    0
+  );
 
   /**
    * The meter under each observation.
@@ -386,6 +436,37 @@ export const InsightsView: React.FC<InsightsViewProps> = ({ trades, tradingDays 
       )}
 
       {/*
+        The ride, not the destination.
+
+        A record can double over a year and spend four months underwater, and both are true of
+        the same trades. The equity line above says where it ended; this says what holding it
+        cost, which is the half that decides whether a trader is still there at the bottom.
+      */}
+      {underwater.length > 1 && (
+        <section id="insights-underwater" className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <TrendingDown className="h-4 w-4 text-rose-400" />
+              <h2 className="font-mono text-xs font-bold uppercase tracking-wider text-zinc-300">
+                Behind its own peak
+              </h2>
+            </div>
+            <span className="font-mono text-[10px] text-zinc-500">
+              deepest {signedMoney(worstDepth, 0)}
+            </span>
+          </div>
+
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-3.5">
+            <UnderwaterChart points={underwater} />
+            <p className="mt-2 text-[10px] leading-relaxed text-zinc-500">
+              How far below its own best the record sat after each closed trade. Flat along the
+              top is a record at a new high; the depth of a valley is what holding it cost.
+            </p>
+          </div>
+        </section>
+      )}
+
+      {/*
         Where the money came from.
 
         Three groups rather than one list, because they are three different questions: which
@@ -441,6 +522,33 @@ export const InsightsView: React.FC<InsightsViewProps> = ({ trades, tradingDays 
           between them.
         </p>
       </section>
+
+      {/*
+        The hour, because three sessions cannot say this.
+
+        The money in a session is usually made in its first twenty minutes and given back over
+        the next two hours, and a session is one bucket wide. Each cell carries its figure as
+        well as its colour: the colour finds the hour, the number reads it.
+      */}
+      {hours.length > 1 && (
+        <section id="insights-hours-panel" className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Clock className="h-4 w-4 text-amber-400" />
+              <h2 className="font-mono text-xs font-bold uppercase tracking-wider text-zinc-300">
+                By hour of the day
+              </h2>
+            </div>
+            <span className="font-mono text-[10px] text-zinc-500">
+              {hours.length} hour{hours.length === 1 ? '' : 's'} traded · your own clock
+            </span>
+          </div>
+
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-3.5">
+            <HourHeatmap rows={hours} />
+          </div>
+        </section>
+      )}
 
       {/*
         The shape of the record rather than its total.
@@ -507,6 +615,92 @@ export const InsightsView: React.FC<InsightsViewProps> = ({ trades, tradingDays 
                 <ResultTape entries={tape} />
               </div>
             </div>
+          </div>
+        </section>
+      )}
+
+      {/*
+        Relationships, which nothing else on the tab can show.
+
+        Every other picture here ranks one thing; these two put two measures against each other
+        and let the trader see whether the clouds sit apart. Holding winners longer than losers
+        is the whole mechanic of a positive expectancy, and sizing up after a good run is
+        invisible in R because R is size-independent — both only appear once they are plotted.
+      */}
+      {(holdPoints.length > 1 || riskPoints.length > 1) && (
+        <section id="insights-scatter" className="space-y-3">
+          <div className="flex items-center gap-2">
+            <Gauge className="h-4 w-4 text-sky-400" />
+            <h2 className="font-mono text-xs font-bold uppercase tracking-wider text-zinc-300">
+              Size and time
+            </h2>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+            {holdPoints.length > 1 && (
+              <div className="space-y-2.5 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-3.5">
+                <h3 className="font-mono text-[11px] font-bold uppercase tracking-wider text-zinc-300">
+                  How long it was held
+                </h3>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <StatTile
+                    label="Median winner"
+                    value={readableMinutes(holdTime.winners.medianMinutes)}
+                    valueClass="text-emerald-400"
+                    sub={`${holdTime.winners.count} winning trade${
+                      holdTime.winners.count === 1 ? '' : 's'
+                    }`}
+                  />
+                  <StatTile
+                    label="Median loser"
+                    value={readableMinutes(holdTime.losers.medianMinutes)}
+                    valueClass="text-rose-400"
+                    sub={`${holdTime.losers.count} losing trade${
+                      holdTime.losers.count === 1 ? '' : 's'
+                    }`}
+                  />
+                </div>
+                <TradeScatter
+                  points={holdPoints}
+                  xLabel="Held"
+                  xUnit="minutes"
+                  xFormatter={(value) => readableMinutes(value)}
+                />
+                <p className="text-[10px] leading-relaxed text-zinc-500">
+                  Minutes held across the bottom, R returned up the side. The medians above are
+                  printed rather than the averages, because one trade held through a news event
+                  drags an average to a number that describes nothing.
+                  {holdTime.unreadable > 0 &&
+                    ` ${holdTime.unreadable} closed trade${
+                      holdTime.unreadable === 1 ? '' : 's'
+                    } had no usable pair of timestamps and ${holdTime.unreadable === 1 ? 'is' : 'are'} not plotted.`}
+                </p>
+              </div>
+            )}
+
+            {riskPoints.length > 1 && (
+              <div className="space-y-2.5 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-3.5">
+                <h3 className="font-mono text-[11px] font-bold uppercase tracking-wider text-zinc-300">
+                  What it risked
+                </h3>
+                <TradeScatter
+                  points={riskPoints}
+                  xLabel="Risk"
+                  xFormatter={(value) => `$${Math.round(value)}`}
+                />
+                <p className="text-[10px] leading-relaxed text-zinc-500">
+                  Dollars risked across the bottom, R returned up the side. This is where sizing
+                  up after a good run shows itself: in R a bigger position looks identical, so
+                  if the rose dots drift to the right as they sink, the size is the problem
+                  rather than the setup.
+                  {riskVsResult.excluded > 0 &&
+                    ` ${riskVsResult.excluded} closed trade${
+                      riskVsResult.excluded === 1 ? '' : 's'
+                    } left out: their stop was never recorded, so the number on this axis is a
+                    placeholder.`}
+                </p>
+              </div>
+            )}
           </div>
         </section>
       )}

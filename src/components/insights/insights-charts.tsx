@@ -1,6 +1,8 @@
 import React from 'react';
 import { Info } from 'lucide-react';
 import {
+  Area,
+  AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
@@ -9,15 +11,19 @@ import {
   Line,
   ReferenceLine,
   ResponsiveContainer,
+  Scatter,
+  ScatterChart,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts';
 import type {
   DailyPnLPoint,
+  HourlyRow,
   RDistributionBucket,
   SegmentRow,
   TapeEntry,
+  UnderwaterPoint,
 } from '../../lib/analytics/insights-series';
 
 /**
@@ -449,6 +455,211 @@ export const RDistributionChart: React.FC<{
     )}
   </div>
 );
+
+/**
+ * How far below its own best the record sat, trade by trade.
+ *
+ * The equity line goes up and to the right; this is what it cost to hold. A record can double
+ * over a year and spend four months underwater, and both statements are true of the same
+ * trades — one is the destination, the other is the ride, and a trader who only ever looks at
+ * the first is the one who quits at the bottom of the second.
+ *
+ * Drawn downward from zero because that is what the number is: the depth behind the
+ * high-water mark. The worst point is printed above it, since a shape without its scale is
+ * just a colour.
+ */
+export const UnderwaterChart: React.FC<{ points: UnderwaterPoint[] }> = ({ points }) => {
+  const worst = points.reduce<UnderwaterPoint | null>(
+    (low, point) => (!low || point.drawdown < low.drawdown ? point : low),
+    null
+  );
+  // A curve that never went underwater still needs a floor to be drawn against.
+  const floor = Math.min(-1, (worst?.drawdown ?? 0) * 1.15);
+
+  return (
+    <div id="insights-underwater-chart" className="h-48 w-full">
+      <ResponsiveContainer width="100%" height="100%">
+        <AreaChart data={points} margin={{ top: 8, right: 12, bottom: 0, left: -14 }}>
+          <defs>
+            <linearGradient id="underwaterGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#f43f5e" stopOpacity={0.05} />
+              <stop offset="100%" stopColor="#f43f5e" stopOpacity={0.45} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+          <XAxis dataKey="label" stroke="#71717a" fontSize={10} tickLine={false} minTickGap={28} />
+          <YAxis
+            domain={[floor, 0]}
+            stroke="#71717a"
+            fontSize={10}
+            tickLine={false}
+            width={62}
+            tickFormatter={(value) => axisMoney(Number(value))}
+          />
+          <Tooltip
+            content={({ active, payload }) => {
+              if (!active || !payload || !payload.length) return null;
+              const point = payload[0]?.payload as UnderwaterPoint | undefined;
+              if (!point) return null;
+              return (
+                <div className="space-y-0.5 rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 py-2 font-mono text-[11px] text-zinc-200">
+                  <div className="text-zinc-400">
+                    Trade {point.label} · {point.date}
+                  </div>
+                  <div className="text-rose-300">
+                    {signedMoney(point.drawdown)} behind the peak
+                  </div>
+                  <div className="text-zinc-500">
+                    This trade left you at {signedMoney(point.cumulative)}; your best was{' '}
+                    {signedMoney(point.peak)}.
+                  </div>
+                </div>
+              );
+            }}
+          />
+          <ReferenceLine y={0} stroke="#3f3f46" />
+          <Area
+            type="monotone"
+            dataKey="drawdown"
+            stroke="#f43f5e"
+            strokeWidth={2}
+            fill="url(#underwaterGrad)"
+            dot={false}
+            isAnimationActive={false}
+          />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  );
+};
+
+/** One trade as a dot: a horizontal measure against the R it returned. */
+export interface ScatterPoint {
+  id: string;
+  x: number;
+  y: number;
+  win: boolean;
+  label: string;
+}
+
+/**
+ * Trades as dots, split into the ones that made money and the ones that did not.
+ *
+ * A scatter is the only picture here that can show a relationship rather than a ranking: how
+ * long a trade was held against what it returned, or how big it was against what it returned.
+ * The two series are drawn separately — wins emerald, losses rose — because the question is
+ * almost always whether the two clouds sit in different places, and a single colour would hide
+ * exactly that.
+ *
+ * No line is fitted. A trend line through twenty trades invites the reader to trade the line,
+ * and this journal tells a trader what happened rather than what to do next.
+ */
+export const TradeScatter: React.FC<{
+  points: ScatterPoint[];
+  xLabel: string;
+  /** Written beside the value on the x axis, e.g. `min`. */
+  xUnit?: string;
+  xFormatter?: (value: number) => string;
+}> = ({ points, xLabel, xUnit = '', xFormatter }) => {
+  const wins = points.filter((point) => point.win);
+  const losses = points.filter((point) => !point.win);
+
+  const renderSeries = (data: ScatterPoint[], color: string, name: string) =>
+    data.length > 0 && (
+      <Scatter name={name} data={data} fill={color} fillOpacity={0.85}>
+        {data.map((point) => (
+          <Cell key={point.id} fill={color} />
+        ))}
+      </Scatter>
+    );
+
+  return (
+    <div className="h-56 w-full">
+      <ResponsiveContainer width="100%" height="100%">
+        <ScatterChart margin={{ top: 8, right: 12, bottom: 4, left: -18 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
+          <XAxis
+            type="number"
+            dataKey="x"
+            name={xLabel}
+            stroke="#71717a"
+            fontSize={10}
+            tickLine={false}
+            tickFormatter={(value) => (xFormatter ? xFormatter(Number(value)) : String(value))}
+          />
+          <YAxis
+            type="number"
+            dataKey="y"
+            name="R"
+            stroke="#71717a"
+            fontSize={10}
+            tickLine={false}
+            tickFormatter={(value) => `${Number(value)}R`}
+          />
+          <Tooltip
+            content={({ active, payload }) => {
+              if (!active || !payload || !payload.length) return null;
+              const point = payload[0]?.payload as ScatterPoint | undefined;
+              if (!point) return null;
+              return (
+                <div className="space-y-0.5 rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 py-2 font-mono text-[11px] text-zinc-200">
+                  <div className="text-zinc-400">{point.label}</div>
+                  <div className="text-zinc-300">
+                    {xFormatter ? xFormatter(point.x) : point.x}
+                    {xUnit ? ` ${xUnit}` : ''}
+                  </div>
+                  <div className={moneyTone(point.y)}>{point.y}R</div>
+                </div>
+              );
+            }}
+          />
+          <ReferenceLine y={0} stroke="#3f3f46" />
+          {renderSeries(wins, '#10b981', 'Made money')}
+          {renderSeries(losses, '#f43f5e', 'Lost money')}
+        </ScatterChart>
+      </ResponsiveContainer>
+    </div>
+  );
+};
+
+/**
+ * P&L by the hour the trade was entered, as a grid of cells.
+ *
+ * Three sessions cannot show that the money in a session is made in its first twenty minutes
+ * and given back over the next two hours. The hour can, and each cell carries its own figure
+ * as well as its colour — the colour is for finding the cell, the number is for reading it.
+ *
+ * Cell colour is the size of the result against the biggest hour in the window, so the shape
+ * of the day is visible at a glance; only hours that were traded appear, because an empty
+ * hour is not a flat one.
+ */
+export const HourHeatmap: React.FC<{ rows: HourlyRow[] }> = ({ rows }) => {
+  const max = Math.max(1, ...rows.map((row) => Math.abs(row.pnl)));
+
+  return (
+    <div id="insights-hours" className="grid grid-cols-2 gap-1.5 sm:grid-cols-4 lg:grid-cols-6">
+      {rows.map((row) => {
+        const intensity = 0.1 + (Math.abs(row.pnl) / max) * 0.5;
+        return (
+          <div
+            key={row.hour}
+            data-hour={row.label}
+            style={{ backgroundColor: `rgba(${row.pnl >= 0 ? '16, 185, 129' : '244, 63, 94'}, ${intensity})` }}
+            className="space-y-0.5 rounded-xl border border-zinc-800 p-2"
+          >
+            <span className="block font-mono text-[10px] text-zinc-300">{row.label}</span>
+            <span className={`block font-mono text-sm font-bold ${moneyTone(row.pnl)}`}>
+              {signedMoney(row.pnl, 0)}
+            </span>
+            <span className="block font-mono text-[9px] leading-tight text-zinc-400">
+              {row.trades} trade{row.trades === 1 ? '' : 's'} · {row.winRate}% win
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
 
 /** One square of the tape: the colour the result, nothing else. */
 const TAPE_CHIP: Record<TapeEntry['result'], string> = {

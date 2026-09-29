@@ -81,6 +81,59 @@ function datesByDayId(tradingDays: TradingDay[]): Map<string, string> {
 }
 
 /**
+ * The closed trades in the order they happened, each with the day it belongs to.
+ *
+ * Ordered by the day the trade was taken and then by its entry time, so a trade logged late
+ * still lands where it happened rather than where it was typed. Everything that reads the
+ * record as a sequence — the tape, the underwater curve — orders it here, so three pictures
+ * of the same month cannot disagree about what came first.
+ */
+function closedInOrder(
+  trades: Trade[],
+  tradingDays: TradingDay[]
+): Array<{ trade: Trade; date: string }> {
+  const dateById = datesByDayId(tradingDays);
+  return trades
+    .filter((trade) => trade.status === 'closed')
+    .map((trade) => ({
+      trade,
+      date: dateById.get(trade.tradingDayId) ?? trade.entryTime?.slice(0, 10) ?? '',
+    }))
+    .sort(
+      (a, b) =>
+        a.date.localeCompare(b.date) ||
+        (a.trade.entryTime ?? '').localeCompare(b.trade.entryTime ?? '')
+    );
+}
+
+/** The middle value of a list, or null when there is nothing to take the middle of. */
+function median(values: number[]): number | null {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? Math.round(((sorted[middle - 1] + sorted[middle]) / 2) * 10) / 10
+    : sorted[middle];
+}
+
+/**
+ * How long a trade was held, in minutes.
+ *
+ * Both stamps are wall-clock strings, so the difference is the trader's own local duration
+ * and needs no timezone conversion — the same reading the form and the trade card give it.
+ * A negative duration is a data-entry error rather than an instant hold, so it is refused
+ * instead of being drawn to the left of zero.
+ */
+function minutesHeld(trade: Trade): number | null {
+  if (!trade.entryTime || !trade.exitTime) return null;
+  const entry = Date.parse(trade.entryTime);
+  const exit = Date.parse(trade.exitTime);
+  if (!Number.isFinite(entry) || !Number.isFinite(exit)) return null;
+  const minutes = Math.round((exit - entry) / 60000);
+  return minutes >= 0 ? minutes : null;
+}
+
+/**
  * One column per trading day, with the running total over them.
  *
  * A day's figure is the whole day's, not a trade's, because the question this answers is how
@@ -190,19 +243,7 @@ export function buildResultTape(
   tradingDays: TradingDay[],
   limit = TAPE_LENGTH
 ): TapeEntry[] {
-  const dateById = datesByDayId(tradingDays);
-
-  const closed = trades
-    .filter((trade) => trade.status === 'closed')
-    .map((trade) => ({
-      trade,
-      date: dateById.get(trade.tradingDayId) ?? trade.entryTime?.slice(0, 10) ?? '',
-    }))
-    .sort(
-      (a, b) =>
-        a.date.localeCompare(b.date) || (a.trade.entryTime ?? '').localeCompare(b.trade.entryTime ?? '')
-    );
-
+  const closed = closedInOrder(trades, tradingDays);
   const window = limit > 0 ? closed.slice(-limit) : closed;
 
   return window.map(({ trade, date }) => ({
@@ -270,4 +311,215 @@ export function buildWeekdayBreakdown(
         pnl,
       };
     });
+}
+
+/** One step of the underwater curve: where the account stood against its own best. */
+export interface UnderwaterPoint {
+  /** 1-based position of the trade in the sequence. */
+  index: number;
+  date: string;
+  /** The axis label: `#12`. */
+  label: string;
+  /** Running gross P&L to this trade. */
+  cumulative: number;
+  /** The highest the running total had reached by this trade. */
+  peak: number;
+  /** How far below that peak this trade left the account. Never positive. */
+  drawdown: number;
+}
+
+/** How many trades the underwater curve plots; past this it is a smear rather than a shape. */
+export const UNDERWATER_LENGTH = 150;
+
+/**
+ * How far below its own best the record sat, trade by trade.
+ *
+ * The equity curve shows a line that goes up and to the right; this shows what it felt like
+ * to hold. A curve can double over a year while spending months underwater, and the two
+ * readings are the same record — one is the destination, the other is the ride. Drawn below
+ * zero because that is what it is: the depth by which the account was behind its high-water
+ * mark, never above it.
+ *
+ * The deepest point is the one to read, which is why the peak is carried into each point
+ * rather than only the running total: the depth cannot be recovered from the curve alone.
+ */
+export function buildUnderwaterCurve(
+  trades: Trade[],
+  tradingDays: TradingDay[],
+  maxTrades = UNDERWATER_LENGTH
+): UnderwaterPoint[] {
+  const closed = closedInOrder(trades, tradingDays);
+  const window = maxTrades > 0 ? closed.slice(-maxTrades) : closed;
+
+  let cumulative = 0;
+  let peak = 0;
+
+  return window.map(({ trade, date }, position) => {
+    cumulative += trade.grossPnL;
+    peak = Math.max(peak, cumulative);
+    return {
+      index: position + 1,
+      date,
+      label: `#${position + 1}`,
+      cumulative: round2(cumulative),
+      peak: round2(peak),
+      drawdown: round2(cumulative - peak),
+    };
+  });
+}
+
+/** One closed trade as a point: how long it was held, and what it returned. */
+export interface HoldTimePoint {
+  id: string;
+  /** Minutes between the entry and the exit, the trader's own wall clock. */
+  minutes: number;
+  r: number;
+  win: boolean;
+  label: string;
+}
+
+/** How long the winners and the losers were held, as a count and a middle value. */
+export interface HoldTimeRead {
+  points: HoldTimePoint[];
+  winners: { count: number; medianMinutes: number | null };
+  losers: { count: number; medianMinutes: number | null };
+  /** Closed trades with no usable pair of stamps, left out rather than guessed at. */
+  unreadable: number;
+}
+
+/**
+ * How long each trade was held, against what it returned.
+ *
+ * The medians are reported rather than the means because one trade held over a news event
+ * drags an average far enough to describe nothing; the middle of the list is what a trader's
+ * typical hold actually is. The comparison worth making is between the two sides: holding
+ * winners longer than losers is the whole mechanic of a positive expectancy, and its absence
+ * is invisible in every other reading on this tab.
+ */
+export function buildHoldTime(trades: Trade[], tradingDays: TradingDay[]): HoldTimeRead {
+  const closed = closedInOrder(trades, tradingDays);
+  const points: HoldTimePoint[] = [];
+  let unreadable = 0;
+
+  for (const { trade, date } of closed) {
+    const minutes = minutesHeld(trade);
+    if (minutes === null) {
+      unreadable += 1;
+      continue;
+    }
+    points.push({
+      id: trade.id,
+      minutes,
+      r: round2(trade.rMultiple || 0),
+      win: trade.grossPnL > 0,
+      label: `${shortDate(date)} · ${trade.setupName || 'no setup'}`,
+    });
+  }
+
+  const winners = points.filter((point) => point.win);
+  const losers = points.filter((point) => !point.win);
+
+  return {
+    points,
+    winners: {
+      count: winners.length,
+      medianMinutes: median(winners.map((point) => point.minutes)),
+    },
+    losers: {
+      count: losers.length,
+      medianMinutes: median(losers.map((point) => point.minutes)),
+    },
+    unreadable,
+  };
+}
+
+/** One hour of the day, as the heatmap cell it is drawn as. */
+export interface HourlyRow {
+  /** The hour on the trader's own clock, 0–23. */
+  hour: number;
+  /** The axis label: `14:00`. */
+  label: string;
+  trades: number;
+  pnl: number;
+  winRate: number;
+}
+
+/**
+ * P&L by the hour of the day the trade was entered.
+ *
+ * The session split is three buckets wide, and three buckets cannot show that the money in a
+ * session is made in its first twenty minutes and given back over the next two hours. Entry
+ * time is a wall-clock string throughout this app, so the hour is read off it directly — the
+ * trader's own hour, which is the one they can act on.
+ *
+ * Only hours that were actually traded appear. An empty hour is not a zero: no trade was
+ * taken then, and a cell of zeroes would read as "flat" rather than "not tried".
+ */
+export function buildHourlyBreakdown(trades: Trade[]): HourlyRow[] {
+  const groups = new Map<number, Trade[]>();
+
+  for (const trade of trades) {
+    if (trade.status !== 'closed') continue;
+    const hour = Number(trade.entryTime?.slice(11, 13));
+    if (!Number.isInteger(hour) || hour < 0 || hour > 23) continue;
+    groups.set(hour, [...(groups.get(hour) ?? []), trade]);
+  }
+
+  return [...groups.keys()]
+    .sort((a, b) => a - b)
+    .map((hour) => {
+      const list = groups.get(hour) ?? [];
+      const wins = list.filter((trade) => trade.grossPnL > 0).length;
+      return {
+        hour,
+        label: `${String(hour).padStart(2, '0')}:00`,
+        trades: list.length,
+        pnl: round2(list.reduce((sum, trade) => sum + trade.grossPnL, 0)),
+        winRate: list.length ? Math.round((wins / list.length) * 1000) / 10 : 0,
+      };
+    });
+}
+
+/** One closed trade as a point: what it risked, and what it returned. */
+export interface RiskResultPoint {
+  id: string;
+  /** The dollars the trade was risking at entry. */
+  risk: number;
+  r: number;
+  win: boolean;
+  label: string;
+}
+
+/**
+ * What was risked against what came back.
+ *
+ * Sizing up is the most common thing a trader does after a good run, and it is invisible in
+ * every other picture here: the R of a trade is size-independent, so a record with a rising R
+ * and a rising size looks fine until the positions are put back on one axis. Trades whose
+ * stop was never recorded are left out and counted, because their risk is a placeholder and
+ * the whole chart is about that number.
+ */
+export function buildRiskVsResult(trades: Trade[]): {
+  points: RiskResultPoint[];
+  excluded: number;
+} {
+  const closed = trades.filter((trade) => trade.status === 'closed');
+  const points: RiskResultPoint[] = [];
+  let excluded = 0;
+
+  for (const trade of closed) {
+    if (hasAssumedRisk(trade) || !Number.isFinite(trade.initialRisk) || trade.initialRisk <= 0) {
+      excluded += 1;
+      continue;
+    }
+    points.push({
+      id: trade.id,
+      risk: round2(trade.initialRisk),
+      r: round2(trade.rMultiple || 0),
+      win: trade.grossPnL > 0,
+      label: `${trade.entryTime?.slice(0, 10) ?? 'no date'} · risked ${round2(trade.initialRisk)}`,
+    });
+  }
+
+  return { points, excluded };
 }

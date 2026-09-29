@@ -1026,6 +1026,22 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   }, [todayTradingDay.watchedSetups]);
 
   /**
+   * Deep-link from the Insights tab: the log filtered to the exact trades an observation
+   * was counted from.
+   *
+   * Cleared on the next manual tab change, like the Playbook focus, so coming back later to
+   * the log starts on the whole record rather than on a filter the trader set an hour ago
+   * and has since forgotten about.
+   */
+  const [tradeFocus, setTradeFocus] = useState<{ label: string; tradeIds: string[] } | null>(
+    null
+  );
+  const handleOpenTrades = useCallback((label: string, tradeIds: string[]) => {
+    setTradeFocus({ label, tradeIds });
+    setActiveTab('trades');
+  }, []);
+
+  /**
    * The chart-pattern deep link, as `#chart-patterns/<patternId>`.
    *
    * The app has no router, so one hash makes a pattern linkable and bookmarkable without
@@ -1063,6 +1079,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   const handleSelectTab = useCallback(
     (tab: NavTab) => {
       setPlaybookFocusSetups(null);
+      setTradeFocus(null);
       setHistoryFocusDayId(null);
       setActiveTab(tab);
     },
@@ -1550,6 +1567,10 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               setIsCloseModalOpen(true);
             }}
             onDeleteTrade={handleDeleteTrade}
+            // Deep link from an Insights observation: the log opens narrowed to exactly the
+            // trades that observation was counted from.
+            focus={tradeFocus}
+            onClearFocus={() => setTradeFocus(null)}
           />
         );
 
@@ -1588,7 +1609,13 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
         );
 
       case 'insights':
-        return <InsightsView trades={trades} tradingDays={tradingDays} />;
+        return (
+          <InsightsView
+            trades={trades}
+            tradingDays={tradingDays}
+            onOpenTrades={handleOpenTrades}
+          />
+        );
 
       case 'coach':
         return (

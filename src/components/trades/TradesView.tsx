@@ -19,6 +19,8 @@ import {
 import { Trade, TradingDay, Setup, Instrument } from '../../types';
 import { TradeCard } from './TradeCard';
 import { CoachEntryCallBadge } from './CoachEntryCallBadge';
+import { SetupBoard } from './SetupBoard';
+import { calculateSetupBreakdown } from '../../lib/analytics/aggregations';
 import { calculateTradeRuleFollowing } from '../../lib/analytics/discipline';
 import { formatTimestamp } from '../../lib/storage/date-utils';
 import { ImageLightboxModal } from '../common/ImageLightboxModal';
@@ -37,6 +39,16 @@ interface TradesViewProps {
   onEditTrade: (trade: Trade) => void;
   onCloseTrade: (trade: Trade) => void;
   onDeleteTrade: (tradeId: string) => void;
+  /**
+   * A set of trades handed over from another tab, e.g. an observation on Insights.
+   *
+   * Held as ids rather than as a filter, so the log shows exactly the trades that were
+   * counted elsewhere: a session or a setup name would be a near-enough filter that could
+   * quietly include a trade the other tab left out.
+   */
+  focus?: { label: string; tradeIds: string[] } | null;
+  /** Drops the handed-over focus. */
+  onClearFocus?: () => void;
 }
 
 export const TradesView: React.FC<TradesViewProps> = ({
@@ -49,6 +61,8 @@ export const TradesView: React.FC<TradesViewProps> = ({
   onEditTrade,
   onCloseTrade,
   onDeleteTrade,
+  focus = null,
+  onClearFocus,
 }) => {
   // Filters state
   const [filterSession, setFilterSession] = useState<string>('all');
@@ -81,8 +95,25 @@ export const TradesView: React.FC<TradesViewProps> = ({
     return Array.from(names).sort((a, b) => a.localeCompare(b));
   }, [setups, trades]);
 
+  const focusIds = useMemo(() => new Set(focus?.tradeIds ?? []), [focus]);
+
+  /** Which setups are winning, as the board above the log renders them. */
+  const setupBoardRows = useMemo(
+    () =>
+      calculateSetupBreakdown(trades).map((setup) => ({
+        name: setup.setupName,
+        trades: setup.tradesCount,
+        winRate: setup.winRate,
+        avgR: setup.avgR,
+        pnl: setup.pnl,
+        profitFactor: setup.profitFactor,
+      })),
+    [trades]
+  );
+
   const filteredTrades = useMemo(() => {
     return trades.filter((t) => {
+      if (focus && !focusIds.has(t.id)) return false;
       if (filterSession !== 'all' && t.session !== filterSession) return false;
       if (filterDirection !== 'all' && t.direction !== filterDirection) return false;
       if (filterSetup !== 'all' && t.setupName !== filterSetup) return false;
@@ -99,6 +130,8 @@ export const TradesView: React.FC<TradesViewProps> = ({
     });
   }, [
     trades,
+    focus,
+    focusIds,
     filterSession,
     filterDirection,
     filterSetup,
@@ -198,7 +231,8 @@ export const TradesView: React.FC<TradesViewProps> = ({
     filterSetup !== 'all' ||
     filterOutcome !== 'all' ||
     filterInstrument !== 'all' ||
-    !!filterDate;
+    !!filterDate ||
+    focus !== null;
 
   const handleResetFilters = () => {
     setFilterSession('all');
@@ -207,6 +241,7 @@ export const TradesView: React.FC<TradesViewProps> = ({
     setFilterOutcome('all');
     setFilterInstrument('all');
     setFilterDate('');
+    onClearFocus?.();
   };
 
   const currentSetupPnL =
@@ -415,6 +450,51 @@ export const TradesView: React.FC<TradesViewProps> = ({
           </div>
         )}
       </div>
+
+      {/*
+        The setups, ranked by what they paid.
+
+        The summary header above reads one setup at a time; this is the comparison across all
+        of them, which is the question a log of two patterns actually raises. Picking a card
+        isolates it below, so the board and the log are always about the same trades.
+      */}
+      {setupBoardRows.length > 0 && (
+        <SetupBoard
+          rows={setupBoardRows}
+          activeSetup={filterSetup !== 'all' ? filterSetup : null}
+          onSelectSetup={(name) => setFilterSetup(filterSetup === name ? 'all' : name)}
+        />
+      )}
+
+      {/*
+        A set of trades handed over from another tab. Said plainly, and droppable in one
+        click, because a filtered log that does not announce itself reads as a log that has
+        lost most of its trades.
+      */}
+      {focus && (
+        <div
+          id="trades-focus-banner"
+          className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-sky-900/60 bg-sky-950/30 px-3.5 py-2.5"
+        >
+          <span className="min-w-0 text-xs text-sky-100">
+            Showing{' '}
+            <span className="font-mono font-bold text-sky-200">{focusIds.size}</span> trade
+            {focusIds.size === 1 ? '' : 's'} from{' '}
+            <span className="font-semibold text-sky-200">“{focus.label}”</span>{' '}
+            <span className="text-sky-300/80">— the exact trades that observation counted.</span>
+          </span>
+          {onClearFocus && (
+            <button
+              type="button"
+              id="trades-focus-clear"
+              onClick={onClearFocus}
+              className="shrink-0 rounded-lg border border-sky-800 bg-sky-950/60 px-2.5 py-1 font-mono text-[10px] font-bold uppercase tracking-wider text-sky-200 transition-colors hover:bg-sky-900/60"
+            >
+              Show all trades
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Filter Bar */}
       <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-3.5 space-y-3">

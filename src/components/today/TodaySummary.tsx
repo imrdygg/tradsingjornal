@@ -1,32 +1,29 @@
 import React from 'react';
-import {
-  TrendingUp,
-  TrendingDown,
-  Shield,
-  Lock,
-  Plus,
-  CheckCircle2,
-  AlertTriangle,
-} from 'lucide-react';
-import { DayStatus, RiskMode } from '../../types';
+import { TrendingUp, TrendingDown, Shield, Plus, CheckCircle2, AlertTriangle } from 'lucide-react';
 import type { TierCapStatus } from '../../lib/trading/risk-tiers';
 
+/**
+ * The day's own numbers, one row.
+ *
+ * Deliberately only what the trader's trades produced — P&L, how many, the record, and the
+ * limit they are measured against — plus the two things there is always something to do
+ * about. The plan's cells (risk mode, lock status) were removed with the plan: a value that
+ * can only ever read "planning" is worse than no value at all.
+ */
 interface TodaySummaryProps {
   realizedPnL: number;
   totalTrades: number;
   wins: number;
   losses: number;
   plannedMaxLoss: number;
-  riskMode: RiskMode;
-  planStatus: DayStatus;
   onOpenAddTrade: () => void;
   onOpenEndDay: () => void;
-  isPlanLocked: boolean;
   /**
-   * Slots whose cap today's trades have used up, when the plan set any.
+   * Slots whose cap today's trades have used up, when the day carries any.
    *
    * Computed by the caller from the same day and caps the trade form warns with, so the two
-   * can never disagree about the same slot.
+   * can never disagree about the same slot. No plan form sets these any more, but a day
+   * imported or saved with caps still reports them.
    */
   capStatuses?: TierCapStatus[];
 }
@@ -37,11 +34,8 @@ export const TodaySummary: React.FC<TodaySummaryProps> = ({
   wins,
   losses,
   plannedMaxLoss,
-  riskMode,
-  planStatus,
   onOpenAddTrade,
   onOpenEndDay,
-  isPlanLocked,
   capStatuses = [],
 }) => {
   const pnlColor =
@@ -118,9 +112,9 @@ export const TodaySummary: React.FC<TodaySummaryProps> = ({
         </div>
       ))}
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4 items-center">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 items-center">
         {/* Realized P&L */}
-        <div className="col-span-2 sm:col-span-1 rounded-xl bg-zinc-950/70 border border-zinc-800/80 p-3.5">
+        <div className="col-span-2 lg:col-span-1 rounded-xl bg-zinc-950/70 border border-zinc-800/80 p-3.5">
           <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-400 font-mono">
             Realized P&L
           </span>
@@ -171,50 +165,8 @@ export const TodaySummary: React.FC<TodaySummaryProps> = ({
           </div>
         </div>
 
-        {/* Risk Mode */}
-        <div className="rounded-xl bg-zinc-950/70 border border-zinc-800/80 p-3.5">
-          <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-400 font-mono">
-            Risk Mode
-          </span>
-          <div className="mt-1 flex items-center gap-1.5">
-            <span
-              className={`inline-block px-2 py-0.5 rounded text-xs font-semibold uppercase tracking-wider ${
-                riskMode === 'expanded'
-                  ? 'bg-amber-950/80 text-amber-300 border border-amber-800'
-                  : 'bg-zinc-800 text-zinc-200 border border-zinc-700'
-              }`}
-            >
-              {riskMode}
-            </span>
-          </div>
-          <div className="mt-1 text-[11px] text-zinc-400 truncate">
-            {riskMode === 'expanded' ? 'Written reason set' : 'Standard limits'}
-          </div>
-        </div>
-
-        {/* Plan Status */}
-        <div className="rounded-xl bg-zinc-950/70 border border-zinc-800/80 p-3.5">
-          <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-400 font-mono">
-            Plan Status
-          </span>
-          <div className="mt-1 flex items-center gap-1.5">
-            {isPlanLocked ? (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-emerald-950/70 text-emerald-300 border border-emerald-800">
-                <Lock className="w-3 h-3" /> Locked
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-zinc-800 text-zinc-300 border border-zinc-700">
-                Planning
-              </span>
-            )}
-          </div>
-          <div className="mt-1 text-[11px] text-zinc-400 capitalize">
-            Day: {planStatus}
-          </div>
-        </div>
-
-        {/* Actions: Add Trade & End Day */}
-        <div className="col-span-2 sm:col-span-1 lg:col-span-1 flex flex-col gap-2 justify-center">
+        {/* Actions: Add Trade & the day's review */}
+        <div className="col-span-2 lg:col-span-1 flex flex-col gap-2 justify-center">
           <button
             id="today-add-trade-btn"
             onClick={onOpenAddTrade}
@@ -226,14 +178,11 @@ export const TodaySummary: React.FC<TodaySummaryProps> = ({
           <button
             id="today-end-day-btn"
             onClick={onOpenEndDay}
-            className={`flex items-center justify-center gap-1.5 w-full py-2 px-3 rounded-xl text-xs font-medium border transition-all active:scale-[0.98] ${
-              planStatus === 'completed'
-                ? 'bg-emerald-950/40 border-emerald-800/70 text-emerald-300 hover:bg-emerald-950/60'
-                : 'bg-zinc-800 hover:bg-zinc-750 border-zinc-700 text-zinc-200'
-            }`}
+            title="Write or update the day's review"
+            className="flex items-center justify-center gap-1.5 w-full py-2 px-3 rounded-xl bg-zinc-800 hover:bg-zinc-750 border border-zinc-700 text-xs font-medium text-zinc-200 transition-all active:scale-[0.98]"
           >
             <CheckCircle2 className="w-3.5 h-3.5" />
-            {planStatus === 'completed' ? 'Review Saved' : 'End Trading Day'}
+            Daily Review
           </button>
         </div>
       </div>

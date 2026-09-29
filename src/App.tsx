@@ -1309,11 +1309,8 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
                 wins={todayWins}
                 losses={todayLosses}
                 plannedMaxLoss={todayTradingDay.plannedLossLimit}
-                riskMode={todayTradingDay.riskMode}
-                planStatus={todayTradingDay.status}
                 onOpenAddTrade={openAddTrade}
                 onOpenEndDay={() => setIsReviewModalOpen(true)}
-                isPlanLocked={!!todayTradingDay.lockedAt}
                 capStatuses={tierCapFlags}
               />
             </CollapsibleSection>

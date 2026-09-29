@@ -4,19 +4,21 @@ import { DEFAULT_SETUPS } from '../src/lib/storage';
 /**
  * Smoke tests for the Playbook tab.
  *
- * The app boots local-only (no Supabase in the test env), so a fresh journal gets the
- * whole built-in catalog (DEFAULT_SETUPS) and a trading day whose watchedSetups are the
- * two break-and-run setups the app is built around.
+ * The app boots local-only (no Supabase in the test env), so a fresh journal gets the whole
+ * built-in catalog — which is now exactly the trader's two level setups, Support and
+ * Resistance — and a trading day that watches those same two.
  *
- * The library opens trimmed to those two, so any test that needs one of the other
- * built-ins has to reveal the full catalog first — that is what `revealAllSetups` is for.
+ * Because the catalog and the focus pair are the same two setups, there is usually nothing
+ * hidden and no focus control on screen. It appears the moment anything sits outside the
+ * pair: a setup the trader adds, or a draft the coach wrote. `revealAllSetups` handles both
+ * cases, which is why it no longer insists the control exists.
  */
 
 /** One example chart, which draws its dashed level as a 4-3 line. */
 const DIAGRAM_WITH_LEVEL = 'svg[role="img"] line[stroke-dasharray="4 3"]';
 
-const ENGULFING_SUMMARY =
-  'A two-candle reversal pattern where one candle fully "swallows" the body of the previous one';
+const SUPPORT_SUMMARY =
+  'Buying a proven demand zone where price has repeatedly stopped falling and bounced';
 
 /**
  * The Today tab opens on the review, the trend, the search box and the day's trades; the
@@ -43,16 +45,21 @@ async function gotoPlaybook(page: Page) {
 }
 
 /**
- * The library opens on the two focus setups; most assertions here are about the rest of
- * the catalog, so they reveal it first. Safe to call twice, or on a page that is already
- * showing everything.
+ * Reveals anything sitting outside the focus pair.
+ *
+ * On a fresh journal the catalog *is* the pair, so the control is not rendered at all and
+ * there is nothing to do. It only shows up once a setup has been added or learned, which is
+ * exactly when a test needs it. Safe to call twice, or on a page already showing everything.
  */
 async function revealAllSetups(page: Page) {
   const toggle = page.locator('#playbook-focus-toggle');
-  // The control is present whenever any setup sits outside the focus pair. Waiting for it
-  // closes the gap after a reload, when the lazy-loaded tab has not painted yet.
-  await expect(toggle).toBeVisible();
+  if ((await toggle.count()) === 0) return;
   if ((await toggle.textContent())?.includes('Show all setups')) await toggle.click();
+}
+
+/** The card for one setup, found by the title on its name rather than by its text. */
+function setupCard(page: Page, name: string) {
+  return page.locator('div.rounded-2xl', { has: page.getByTitle(name, { exact: true }) }).first();
 }
 
 test.beforeEach(async ({ page }) => {
@@ -74,50 +81,42 @@ test.beforeEach(async ({ page }) => {
 });
 
 test.describe('Playbook tab', () => {
-  test('opens trimmed to the two break-and-run setups', async ({ page }) => {
+  test('opens on the two level setups the app is built around', async ({ page }) => {
     await gotoPlaybook(page);
 
-    // The app is built around the trader's two setups, so they lead the library...
-    for (const name of ['Overnight Break & Run', 'Session Break & Run']) {
+    for (const name of ['Support', 'Resistance']) {
       await expect(page.getByTitle(name, { exact: true })).toBeVisible();
     }
 
-    // ...and the rest of the catalog is behind the control rather than on screen. Addressed
-    // by title because a folded card keeps its guide in the DOM and the Support/Resistance
-    // diagrams label their level with the same word.
-    await expect(page.locator('#playbook-focus-bar')).toBeVisible();
+    // The catalog is exactly those two, so nothing is hidden and the focus bar is absent.
+    // Addressed by title because the diagrams label their level with the same word, so a
+    // text match would resolve to two elements.
+    await expect(page.locator('#playbook-focus-bar')).toHaveCount(0);
     await expect(page.getByTitle('Engulfing', { exact: true })).toHaveCount(0);
   });
 
-  test('the focus control reveals the whole built-in catalog', async ({ page }) => {
+  test('a setup added on top of the pair sits behind the focus control', async ({ page }) => {
     await gotoPlaybook(page);
-    await revealAllSetups(page);
+    await expect(page.locator('#playbook-focus-bar')).toHaveCount(0);
 
-    for (const name of [
-      'Engulfing',
-      'Support',
-      'Resistance',
-      'Breakout',
-      'Reversal',
-      'Trend Continuation',
-      'Other',
-    ]) {
-      // `exact` is required: a title match is a substring match, so plain 'Breakout'
-      // also resolves to 'Opening Range Breakout' and 'Failed Breakout'.
-      await expect(page.getByTitle(name, { exact: true })).toBeVisible();
-    }
-    // And the two focus setups are still there, now listed first.
-    await expect(page.getByTitle('Overnight Break & Run', { exact: true })).toBeVisible();
+    await page.getByPlaceholder(/Fair Value Gap/).fill('My Own Setup');
+    await page.getByRole('button', { name: 'Add', exact: true }).click();
+
+    // Adding reveals it immediately — the trader must not lose what they just typed.
+    await expect(page.getByTitle('My Own Setup', { exact: true })).toBeVisible();
+    await expect(page.locator('#playbook-focus-bar')).toContainText('Showing all 3 setups');
+
+    // Pressing the control trims back to the two the app is built around.
+    await page.locator('#playbook-focus-toggle').click();
+    await expect(page.locator('#playbook-focus-bar')).toContainText('Showing your 2 setup(s)');
+    await expect(page.getByTitle('My Own Setup', { exact: true })).toHaveCount(0);
+    await expect(page.getByTitle('Support', { exact: true })).toBeVisible();
   });
 
   test('the whole card toggles the study guide, not just its icon', async ({ page }) => {
     await gotoPlaybook(page);
-    await revealAllSetups(page);
 
-    // Breakout has no dashed-level label that could collide with its name.
-    const card = page
-      .locator('div.rounded-2xl', { has: page.getByTitle('Breakout', { exact: true }) })
-      .first();
+    const card = setupCard(page, 'Resistance');
     const guide = card.getByText('How this setup forms');
 
     // Folded to start with, and hidden rather than merely clipped.
@@ -125,7 +124,7 @@ test.describe('Playbook tab', () => {
     await expect(guide).toBeHidden();
 
     // Clicking the setup name — not a button, not an icon — unfolds the guide.
-    await card.getByTitle('Breakout', { exact: true }).click();
+    await card.getByTitle('Resistance', { exact: true }).click();
     await expect(card.getByTitle('Hide study guide')).toHaveAttribute('aria-expanded', 'true');
     await expect(guide).toBeVisible();
     await expect(card.locator('svg[role="img"]')).toHaveCount(2);
@@ -137,28 +136,26 @@ test.describe('Playbook tab', () => {
 
   test('expands a study guide with diagrams, formation and trading rules', async ({ page }) => {
     await gotoPlaybook(page);
-    await revealAllSetups(page);
 
     // Every setup card shows its always-visible summary line.
-    await expect(page.getByText(ENGULFING_SUMMARY, { exact: false })).toBeVisible();
+    await expect(page.getByText(SUPPORT_SUMMARY, { exact: false })).toBeVisible();
 
-    // Open the Engulfing study guide via its book (expand) button.
-    const engulfingCard = page.locator('div.rounded-2xl', { has: page.getByText('Engulfing', { exact: true }) }).first();
-    await engulfingCard.getByTitle('Show study guide').click();
+    const card = setupCard(page, 'Support');
+    await card.getByTitle('Show study guide').click();
 
-    await expect(engulfingCard.getByText('How this setup forms')).toBeVisible();
-    await expect(engulfingCard.getByText('How to trade it')).toBeVisible();
-    await expect(engulfingCard.getByText(/Invalidation/)).toBeVisible();
+    await expect(card.getByText('How this setup forms')).toBeVisible();
+    await expect(card.getByText('How to trade it')).toBeVisible();
+    await expect(card.getByText(/Invalidation/)).toBeVisible();
 
     // Green/red example diagrams render (bullish + bearish SVG charts).
-    const diagrams = engulfingCard.locator('svg[role="img"]');
+    const diagrams = card.locator('svg[role="img"]');
     await expect(diagrams).toHaveCount(2);
-    await expect(engulfingCard.getByText(/Green — bullish example/i)).toBeVisible();
-    await expect(engulfingCard.getByText(/Red — bearish example/i)).toBeVisible();
+    await expect(card.getByText(/Green — bullish example/i)).toBeVisible();
+    await expect(card.getByText(/Red — bearish example/i)).toBeVisible();
 
     // Collapse again.
-    await engulfingCard.getByTitle('Hide study guide').click();
-    await expect(engulfingCard.getByText('How this setup forms')).toBeHidden();
+    await card.getByTitle('Hide study guide').click();
+    await expect(card.getByText('How this setup forms')).toBeHidden();
   });
 
   test('every built-in setup draws both examples with its dashed level', async ({ page }) => {
@@ -169,9 +166,7 @@ test.describe('Playbook tab', () => {
     // later without a level line fails this test instead of shipping a chart that shows
     // candles moving without the price the setup is waiting on.
     for (const setup of DEFAULT_SETUPS) {
-      const card = page
-        .locator('div.rounded-2xl', { has: page.getByTitle(setup.name, { exact: true }) })
-        .first();
+      const card = setupCard(page, setup.name);
 
       // One bullish and one bearish example, each with its level.
       await expect(card.locator('svg[role="img"]')).toHaveCount(2);
@@ -179,23 +174,17 @@ test.describe('Playbook tab', () => {
     }
   });
 
-  test('the added setups bring their guide and label the level they wait on', async ({ page }) => {
+  test('the built-in setups name the level they wait on, not just draw it', async ({ page }) => {
     await gotoPlaybook(page);
-    await revealAllSetups(page);
 
-    const card = page
-      .locator('div.rounded-2xl', { has: page.getByTitle('Gap and Go', { exact: true }) })
-      .first();
+    const card = setupCard(page, 'Resistance');
     await card.getByTitle('Show study guide').click();
 
-    await expect(card.getByText('How this setup forms')).toBeVisible();
-    await expect(card.getByText('How to trade it')).toBeVisible();
-    await expect(card.getByText(/Invalidation/)).toBeVisible();
-
-    // The level is not just drawn, it is named: both examples label the gap edge.
+    // The level is not just a dashed line, it is labelled — that is what makes the example
+    // teach where the setup is entered rather than only which way it goes.
     await expect(card.locator('svg[role="img"] text')).toHaveCount(2);
-    await expect(card.locator('svg[role="img"] text').first()).toHaveText('Gap edge');
-    await expect(card.locator('svg[role="img"] text').last()).toHaveText('Gap edge');
+    await expect(card.locator('svg[role="img"] text').first()).toHaveText('Resistance');
+    await expect(card.locator('svg[role="img"] text').last()).toHaveText('Resistance');
   });
 
   test('a custom setup gets the generic examples rather than an empty space', async ({ page }) => {
@@ -204,9 +193,7 @@ test.describe('Playbook tab', () => {
     await page.getByPlaceholder(/Fair Value Gap/).fill('My Own Setup');
     await page.getByRole('button', { name: 'Add', exact: true }).click();
 
-    const card = page
-      .locator('div.rounded-2xl', { has: page.getByTitle('My Own Setup', { exact: true }) })
-      .first();
+    const card = setupCard(page, 'My Own Setup');
 
     // A setup the catalog has never heard of still shows a chart with a level, and says
     // plainly that the chart is generic so it is not read as a picture of their setup.
@@ -218,20 +205,52 @@ test.describe('Playbook tab', () => {
   test('default watched setups are highlighted with a clickable badge', async ({ page }) => {
     await gotoPlaybook(page);
 
-    // The seeded day watches the two break-and-run setups, which are the two shown.
-    for (const name of ['Overnight Break & Run', 'Session Break & Run']) {
-      const card = page.locator('div.rounded-2xl', { has: page.getByText(name, { exact: true }) }).first();
-      await expect(card.getByText('Watched today')).toBeVisible();
+    // The seeded day watches the two level setups, which are the two shown.
+    for (const name of ['Support', 'Resistance']) {
+      await expect(setupCard(page, name).getByText('Watched today')).toBeVisible();
     }
     // Unwatched setups must not show the badge.
     await expect(page.getByText('Watched today')).toHaveCount(2);
 
     // The badge is a button that opens the study guide.
-    const card = page
-      .locator('div.rounded-2xl', { has: page.getByText('Overnight Break & Run', { exact: true }) })
-      .first();
+    const card = setupCard(page, 'Support');
     await card.getByText('Watched today').click();
     await expect(card.getByText('How this setup forms')).toBeVisible();
+  });
+
+  test('a setup the coach wrote is badged as an AI draft, and yours are not', async ({ page }) => {
+    // Seeded after the fresh-journal clear: the catalog the coach writes into already holds
+    // the trader's own two, exactly as it would on a real journal.
+    await page.addInitScript(() => {
+      localStorage.setItem(
+        'ptj_setups_v1',
+        JSON.stringify([
+          { id: 'support', name: 'Support', active: true, createdAt: '2026-01-01T00:00:00Z' },
+          { id: 'resistance', name: 'Resistance', active: true, createdAt: '2026-01-01T00:00:00Z' },
+          {
+            id: 'setup-ai-1',
+            name: 'Failed open-range break',
+            active: true,
+            origin: 'ai',
+            description: 'Draft written by the coach from your last twelve trades.',
+            createdAt: '2026-09-29T00:00:00Z',
+          },
+        ])
+      );
+    });
+    await page.goto('/');
+    await gotoPlaybook(page);
+
+    // The trader's own two lead the library and carry no badge.
+    await expect(page.getByTitle('Support', { exact: true })).toBeVisible();
+    await expect(page.getByTitle('Resistance', { exact: true })).toBeVisible();
+    await expect(page.locator('[id^="setup-ai-badge-"]')).toHaveCount(0);
+
+    // The coach's draft is one click away, and says where it came from.
+    await revealAllSetups(page);
+    const aiCard = setupCard(page, 'Failed open-range break');
+    await expect(aiCard.locator('#setup-ai-badge-setup-ai-1')).toBeVisible();
+    await expect(aiCard.getByText('AI draft')).toBeVisible();
   });
 });
 
@@ -249,19 +268,17 @@ test.describe('Setup charts & video attachments', () => {
     'base64'
   );
 
-  async function openBreakoutEditor(page: Page) {
+  async function openResistanceEditor(page: Page) {
     await gotoPlaybook(page);
     await revealAllSetups(page);
-    const card = page
-      .locator('div.rounded-2xl', { has: page.getByTitle('Breakout', { exact: true }) })
-      .first();
+    const card = setupCard(page, 'Resistance');
     await card.getByTitle('Edit setup, rules, charts and video').click();
-    await expect(page.getByRole('heading', { name: /Edit Setup: Breakout/i })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /Edit Setup: Resistance/i })).toBeVisible();
     return card;
   }
 
   test('the setup editor accepts screenshots and video clips', async ({ page }) => {
-    await openBreakoutEditor(page);
+    await openResistanceEditor(page);
 
     // The file picker must offer both kinds, or a clip can never be chosen.
     await expect(page.locator('#setup-modal-images-file-input')).toHaveAttribute(
@@ -274,11 +291,11 @@ test.describe('Setup charts & video attachments', () => {
   });
 
   test('attaches a chart to a setup and shows it on the card, after a reload', async ({ page }) => {
-    const card = await openBreakoutEditor(page);
+    const card = await openResistanceEditor(page);
 
     await page
       .locator('#setup-modal-images-file-input')
-      .setInputFiles({ name: 'breakout-example.png', mimeType: 'image/png', buffer: PNG });
+      .setInputFiles({ name: 'resistance-example.png', mimeType: 'image/png', buffer: PNG });
 
     await expect(page.locator('#setup-modal-images-container')).toContainText('1 / 6 attached');
 
@@ -288,35 +305,30 @@ test.describe('Setup charts & video attachments', () => {
     await expect(card.getByText(/Playbook Charts & Video \(1\)/)).toBeVisible();
 
     // The real test: it is in the journal, not just React state. A reload lands back on
-    // the Today tab, so the Playbook has to be reopened — and its full catalog revealed —
-    // before the card exists again.
+    // the Today tab, so the Playbook has to be reopened before the card exists again.
     await page.reload();
     await gotoPlaybook(page);
-    await revealAllSetups(page);
-    const reloadedCard = page
-      .locator('div.rounded-2xl', { has: page.getByTitle('Breakout', { exact: true }) })
-      .first();
-    await expect(reloadedCard.getByText(/Playbook Charts & Video \(1\)/)).toBeVisible();
+    await expect(setupCard(page, 'Resistance').getByText(/Playbook Charts & Video \(1\)/)).toBeVisible();
   });
 
   test('opens the attached chart in the lightbox from the card', async ({ page }) => {
-    const card = await openBreakoutEditor(page);
+    const card = await openResistanceEditor(page);
 
     await page
       .locator('#setup-modal-images-file-input')
-      .setInputFiles({ name: 'breakout-example.png', mimeType: 'image/png', buffer: PNG });
+      .setInputFiles({ name: 'resistance-example.png', mimeType: 'image/png', buffer: PNG });
     await page.getByRole('button', { name: /Update Setup/i }).click();
 
     await card.getByTitle(/Click to view chart screenshot big/i).click();
 
     await expect(page.locator('#image-lightbox-overlay')).toBeVisible();
-    await expect(page.getByRole('heading', { name: /Breakout Setup Playbook/i })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /Resistance Setup Playbook/i })).toBeVisible();
     await page.locator('#lightbox-close-button').click();
     await expect(page.locator('#image-lightbox-overlay')).toHaveCount(0);
   });
 
   test('a setup can hold several charts and they all survive a save', async ({ page }) => {
-    const card = await openBreakoutEditor(page);
+    const card = await openResistanceEditor(page);
 
     await page.locator('#setup-modal-images-file-input').setInputFiles([
       { name: 'a.png', mimeType: 'image/png', buffer: PNG },
@@ -337,30 +349,27 @@ test.describe('Playbook deep-link', () => {
     await expandTodayAdvanced(page);
     await expect(page.getByRole('heading', { name: /Morning Plan/i })).toBeVisible();
 
-    // Watched setups are seeded as the two break-and-run setups; they are also the two the
-    // library shows, so the deep link focuses a card that is already on screen.
+    // Watched setups are seeded as the two level setups, so the deep link focuses cards
+    // that are already on screen.
     await page.getByRole('button', { name: /Study in Playbook/i }).click();
 
     await expect(page.getByRole('heading', { name: /Trading Setups & Playbook Library/i })).toBeVisible();
 
     // The focused cards are expanded to their study guides and highlighted.
-    const card = page
-      .locator('div.rounded-2xl', { has: page.getByText('Overnight Break & Run', { exact: true }) })
-      .first();
+    const card = setupCard(page, 'Support');
     await expect(card.getByText('How this setup forms')).toBeVisible();
     await expect(card.locator('svg[role="img"]')).toHaveCount(2);
   });
 
-  test('watched-setups changes on the plan are reflected in the Playbook badge', async ({ page }) => {
+  test('a setup taken off the plan loses its Playbook badge', async ({ page }) => {
     await expandTodayAdvanced(page);
     await expect(page.getByRole('heading', { name: /Morning Plan/i })).toBeVisible();
 
-    // Add Breakout to today's watch list from the plan form.
-    await page.getByRole('button', { name: 'Breakout', exact: true }).first().click();
+    // A fresh day watches both level setups; take one back off the watch list.
+    await page.getByRole('button', { name: 'Resistance', exact: true }).first().click();
     await page.getByRole('button', { name: /Study in Playbook/i }).click();
 
-    const breakoutCard = page.locator('div.rounded-2xl', { has: page.getByText('Breakout', { exact: true }) }).first();
-    await expect(breakoutCard.getByText('Watched today')).toBeVisible();
-    await expect(breakoutCard.getByText('How this setup forms')).toBeVisible();
+    await expect(setupCard(page, 'Support').getByText('Watched today')).toBeVisible();
+    await expect(setupCard(page, 'Resistance').getByText('Watched today')).toHaveCount(0);
   });
 });

@@ -22,6 +22,12 @@ export type CoachMode =
    * level-touch log says price did not come back to. Journal data only; no market opinion.
    */
   | 'edge'
+  /**
+   * The setup learner: reads the trader's own logged trades — including, when they were
+   * attached, the chart screenshots taken at entry — and proposes the setups they actually
+   * repeat. Journal data and those images only; no market opinion.
+   */
+  | 'learn'
   | 'trade'
   | 'prep'
   | 'postclose'
@@ -100,6 +106,28 @@ export interface CoachExtras {
    * types freely.
    */
   question?: string;
+  /**
+   * The chart screenshots the `learn` mode is asked to look at.
+   *
+   * Only ever attached to that one mode. The endpoint re-parses and re-validates each data
+   * URL, caps how many it will accept and drops anything malformed, because a request body
+   * is untrusted input no matter which client sent it.
+   */
+  images?: CoachImageInput[];
+}
+
+/**
+ * A chart image the coach is asked to look at.
+ *
+ * Held as a data URL because that is how the journal stores a compressed screenshot: the
+ * image never leaves the browser as a binary blob, and no upload or public URL is needed to
+ * let the coach see the trader's own entry.
+ */
+export interface CoachImageInput {
+  /** One line naming the trade it belongs to, so a picture can be tied to a record. */
+  label: string;
+  /** A `data:image/...;base64,...` URL, bounded and re-validated on the server. */
+  dataUrl: string;
 }
 
 /** Text drafted for one plan field. Never written to the plan without the trader's say. */
@@ -289,6 +317,41 @@ export interface EdgeResponse {
   motivation: string;
 }
 
+/** One setup the coach proposes, learned from the trader's own trades. */
+export interface LearnedSetup {
+  /** A short name in the trader's own terms, not a textbook pattern name. */
+  name: string;
+  /** 1-2 sentences on what they actually do, tied to the trades it was drawn from. */
+  description: string;
+  /** The entry conditions, one per item, as concrete as the record allows. */
+  entryRules: string[];
+  /** The trades and figures behind it, so the trader can check the claim. */
+  evidence: string;
+  /** How much the record actually supports it, stated rather than implied. */
+  confidence: 'low' | 'medium' | 'high';
+}
+
+/**
+ * The setups the coach read out of the trader's own trade history.
+ *
+ * Drafts, never pronouncements: they are written into the trader's playbook for them to
+ * edit, rename or delete, so the fields say what was observed and how strongly, and nothing
+ * here predicts that a setup will keep working. An empty `setups` list is a real answer — it
+ * is what a record too thin to show a repeated pattern deserves.
+ */
+export interface LearnResponse {
+  headline: string;
+  /** The proposed setups, best-supported first. Empty when the record is too thin. */
+  setups: LearnedSetup[];
+  /** What it grouped the trades on and what that showed, so the read can be checked. */
+  method: string;
+  /** What the journal does not hold that would have sharpened the read. */
+  notInJournal: string;
+  /** One concrete thing to log that would make the next read better. */
+  nextStep: string;
+  motivation: string;
+}
+
 /**
  * Where the trader is heading right now, from the two windows in the digest's recent form.
  *
@@ -364,6 +427,7 @@ export type CoachResponse =
   | WeeklyResponse
   | FormResponse
   | EdgeResponse
+  | LearnResponse
   | AskResponse
   | TradeCritiqueResponse
   | PrepResponse

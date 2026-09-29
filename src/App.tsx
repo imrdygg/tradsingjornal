@@ -91,6 +91,7 @@ import {
 } from './types';
 import type { SyncStatus } from './components/layout/SyncStatusBadge';
 import { storage, dismissStorageFailure, measureJournalBytes } from './lib/storage';
+import { FOCUS_SETUP_NAMES } from './lib/playbook/focus-setups';
 import type { StorageState } from './lib/storage';
 import { useStorageFailure } from './lib/storage/use-storage-failure';
 import { StorageWarningBanner } from './components/common/StorageWarningBanner';
@@ -745,7 +746,10 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       entryTime: tradeData.entryTime || now,
       exitTime: tradeData.exitTime,
       session: tradeData.session || 'Regular Session',
-      setupName: tradeData.setupName || 'Engulfing',
+      // A trade saved without a setup still has to carry a label, and the one the app is
+      // built around is the least presumptuous: it says "a level trade" rather than
+      // inventing a pattern the trader never picked.
+      setupName: tradeData.setupName || FOCUS_SETUP_NAMES[0],
       entryReason: tradeData.entryReason,
       targetPrice: tradeData.targetPrice,
       exitReason: tradeData.exitReason,
@@ -1657,6 +1661,16 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             focusPatternId={playbookFocusPattern}
             onOpenPattern={handleOpenPattern}
             edgeFinder={{
+              trades,
+              tradingDays,
+              reviews,
+              instruments,
+              todayTradeDate: todayTradingDay.tradeDate,
+              timezone: profile.timezone,
+              maxDrawdown: profile.maxDrawdown ?? null,
+              levelTouches,
+            }}
+            coachSetups={{
               trades,
               tradingDays,
               reviews,

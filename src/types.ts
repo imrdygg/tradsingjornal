@@ -41,11 +41,21 @@ export interface Setup {
    * The built-in name this setup came from, once it has been renamed.
    *
    * The study guide and the example charts are keyed by name, so without this a trader who
-   * renames "Engulfing" to their own words would lose the guide and the chart that go with
+   * renames "Support" to their own words would lose the guide and the chart that go with
    * it. Keeping the original name lets the renamed setup still find its teaching material,
    * and stops a later catalog release from adding the built-in back under its old name.
    */
   builtinName?: string;
+  /**
+   * Where this setup came from, when it was not the trader.
+   *
+   * `'ai'` marks a draft the coach wrote from their own trade history and entry charts, so
+   * it can be badged in the Playbook and never mistaken for one of the setups they trade.
+   * Absent means the trader's own — a built-in they kept, or one they typed by hand. A
+   * draft is an ordinary Setup everywhere else: the same edit, rename, disable and delete
+   * paths apply, and nothing treats it as read-only.
+   */
+  origin?: 'ai';
   createdAt: string;
 }
 

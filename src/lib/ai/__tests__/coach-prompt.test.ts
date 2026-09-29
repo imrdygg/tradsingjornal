@@ -11,7 +11,7 @@ import {
   isCoachMode,
   parseCoachResponse,
 } from '../coach-prompt';
-import type { ChartReadResponse, CoachTradeFacts } from '../coach-types';
+import type { ChartReadResponse, CoachTradeFacts, LearnedSetup } from '../coach-types';
 import { buildJournalDigest } from '../journal-digest';
 import type { DailyBars, MarketBrief } from '../market-data';
 import { DailyReview, DailyReviewQuestions, LevelTouch, Trade, TradingDay } from '../../../types';
@@ -682,6 +682,123 @@ describe('edge mode', () => {
   it('rejects an edge read with no next step', () => {
     const { nextStep, ...rest } = edgeJson;
     expect(() => parseCoachResponse('edge', rest)).toThrow(/nextStep/);
+  });
+});
+
+/**
+ * The learn mode is the one request that carries an image, which makes it the one place the
+ * model could describe a chart the trader never sent. So what is asserted here is the
+ * restraint: every named setup is tied to counts, a thin record is a complete answer, and
+ * the per-trade samples and the image labels reach this mode and no other.
+ */
+describe('learn mode', () => {
+  const learnJson = {
+    headline: 'You fade the same failed break twice a day',
+    setups: [
+      {
+        name: 'Failed open-range break, afternoon',
+        description:
+          'You fade the first push through the opening range and hold for the return inside it.',
+        entryRules: [
+          'Wait for the push through the opening range',
+          'Enter on the first close back inside the range',
+        ],
+        evidence: '4 trades, 3 of them in the afternoon, +2.1R average',
+        confidence: 'low',
+      },
+    ],
+    method: 'Grouped 12 closed trades by hour and by what the entry note said.',
+    notInJournal: 'The journal does not record what the level looked like before you entered.',
+    nextStep: 'Attach the chart to every trade taken in the first 30 minutes.',
+    motivation: 'Twelve trades with a note each is why any of this is visible at all.',
+  };
+
+  it('is not a market-opinion mode', () => {
+    expect(allowsMarketOpinion('learn')).toBe(false);
+  });
+
+  it('asks for setups tied to counts and forbids padding a thin record', () => {
+    const shape = COACH_RESPONSE_SHAPES.learn;
+    expect(shape).toContain('"setups"');
+    expect(shape).toContain('"confidence"');
+    expect(shape).toContain('an empty setups array');
+    expect(shape).toContain('never pad the list');
+
+    const { userPrompt } = buildCoachPrompt('learn', digestFor());
+    expect(userPrompt).toContain('Find the setups this trader actually repeats');
+  });
+
+  it('adds the learn guardrails for that mode and no other', () => {
+    const learn = buildCoachPrompt('learn', digestFor()).systemInstruction;
+    expect(learn).toContain('NO MARKET DATA');
+    expect(learn).toContain('AN IMAGE IS A SCREENSHOT OF ONE RECORDED TRADE');
+    expect(learn).toContain('THIN IS AN ANSWER');
+    expect(learn).toContain('THESE ARE DRAFTS FOR THEIR OWN PLAYBOOK');
+
+    expect(buildCoachPrompt('brief', digestFor()).systemInstruction).not.toContain(
+      'AN IMAGE IS A SCREENSHOT OF ONE RECORDED TRADE'
+    );
+  });
+
+  it('carries the per-trade samples for this mode and no other', () => {
+    const digest = digestFor({ trades: [makeTrade()], tradingDays: [makeDay()] });
+
+    const learn = buildCoachPrompt('learn', digest).userPrompt;
+    expect(learn).toContain('=== TRADE SAMPLES');
+    expect(learn).toContain('Reclaimed the opening range');
+
+    // Every other mode is better served by the grouped sections than by individual rows.
+    expect(buildCoachPrompt('brief', digest).userPrompt).not.toContain('=== TRADE SAMPLES');
+  });
+
+  it('lists the attached images in order, and says when none were attached', () => {
+    const withImages = buildCoachPrompt('learn', digestFor(), undefined, undefined, {
+      imageLabels: ['2026-09-18 MES LONG logged as Support, 1R'],
+    }).userPrompt;
+
+    expect(withImages).toContain('=== THE CHART IMAGES ATTACHED TO THIS REQUEST ===');
+    expect(withImages).toContain('- IMAGE 1: 2026-09-18 MES LONG logged as Support, 1R');
+    // The labels are text; the bytes are separate parts of the request, never in the prompt.
+    expect(withImages).not.toContain('base64');
+
+    expect(buildCoachPrompt('learn', digestFor()).userPrompt).toContain(
+      'No chart screenshot was attached'
+    );
+
+    expect(
+      buildCoachPrompt('brief', digestFor(), undefined, undefined, { imageLabels: ['anything'] })
+        .userPrompt
+    ).not.toContain('THE CHART IMAGES ATTACHED');
+  });
+
+  it('parses a learn read, dropping setups the trader could not use', () => {
+    const parsed = parseCoachResponse('learn', {
+      ...learnJson,
+      setups: [learnJson.setups[0], { name: 'No description' }, { description: 'No name' }, {}],
+      notInJournal: undefined,
+    }) as { setups: LearnedSetup[]; notInJournal: string };
+
+    expect(parsed.setups).toHaveLength(1);
+    expect(parsed.setups[0].name).toBe('Failed open-range break, afternoon');
+    expect(parsed.setups[0].entryRules).toHaveLength(2);
+    // An omitted notInJournal means the record covered it, not that the read failed.
+    expect(parsed.notInJournal).toBe('');
+  });
+
+  it('accepts an empty setups list as a real answer', () => {
+    const parsed = parseCoachResponse('learn', { ...learnJson, setups: [] }) as {
+      setups: LearnedSetup[];
+    };
+
+    expect(parsed.setups).toEqual([]);
+  });
+
+  it('rejects a learn read that named no method or no next step', () => {
+    const { method, ...withoutMethod } = learnJson;
+    expect(() => parseCoachResponse('learn', withoutMethod)).toThrow(/method/);
+
+    const { nextStep, ...withoutStep } = learnJson;
+    expect(() => parseCoachResponse('learn', withoutStep)).toThrow(/nextStep/);
   });
 });
 

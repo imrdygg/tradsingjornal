@@ -8,11 +8,16 @@ import {
 } from '../focus-setups';
 
 /**
- * The focus pair is what the Playbook trims to and what a fresh day watches, so the match
- * rule matters: a near-miss name would either hide a set-up the trader uses or pull an
- * unrelated one into the trimmed view.
+ * The focus pair is the trader's own two level plays, and it is what the Playbook trims to
+ * and what a fresh day watches. The match rule matters: a near-miss name would either hide
+ * a set-up the trader uses or pull an unrelated one into the trimmed view.
  */
 describe('focus setups', () => {
+  it('is Support and Resistance, in that order', () => {
+    expect([...FOCUS_SETUP_NAMES]).toEqual(['Support', 'Resistance']);
+    expect([...FOCUS_SETUP_IDS]).toEqual(['support', 'resistance']);
+  });
+
   it('matches the two names, case-insensitively and trimmed', () => {
     for (const name of FOCUS_SETUP_NAMES) {
       expect(isFocusSetup(name)).toBe(true);
@@ -25,8 +30,9 @@ describe('focus setups', () => {
     expect(isFocusSetup(null)).toBe(false);
     expect(isFocusSetup('')).toBe(false);
     expect(isFocusSetup('Breakout')).toBe(false);
-    // The pattern is a break-and-run, not any setup containing "Break".
-    expect(isFocusSetup('Failed Breakout')).toBe(false);
+    // A setup that merely contains the word is not the level play itself.
+    expect(isFocusSetup('Resistance Break')).toBe(false);
+    expect(isFocusSetup('Support Tweak')).toBe(false);
   });
 
   it('matches the two seeded ids', () => {
@@ -38,15 +44,15 @@ describe('focus setups', () => {
 
   it('splits a catalog into the pair and the rest, preserving order', () => {
     const setups = [
-      { name: 'Session Break & Run' },
+      { name: 'Resistance' },
       { name: 'Engulfing' },
-      { name: 'Overnight Break & Run' },
+      { name: 'Support' },
       { name: 'Breakout' },
     ];
 
     const { focus, rest } = splitFocusSetups(setups);
 
-    expect(focus.map((s) => s.name)).toEqual(['Session Break & Run', 'Overnight Break & Run']);
+    expect(focus.map((s) => s.name)).toEqual(['Resistance', 'Support']);
     expect(rest.map((s) => s.name)).toEqual(['Engulfing', 'Breakout']);
   });
 });

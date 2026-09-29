@@ -18,8 +18,10 @@ export interface SetupGuide {
 }
 
 export const SETUP_GUIDES: Record<string, SetupGuide> = {
-  // The trader's two set-ups lead the catalog. They are the same break-and-run pattern in
-  // two sessions, so the guides differ by when the break happens rather than by shape.
+  // Kept for journals that already carry these two. The catalog no longer ships them — a
+  // level trader's catalog is Support and Resistance and nothing else — but a setup the
+  // trader kept still finds its guide by name. Both are the same break-and-run pattern in
+  // two sessions, so the guides differ by when the break happens, not by shape.
   'Overnight Break & Run': {
     summary:
       'The overnight session breaks a level and never looks back: price leaves the level and does not return to it.',

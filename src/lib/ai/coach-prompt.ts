@@ -2,13 +2,20 @@
 // the function needs no third-party package. A failed import at load time would surface
 // as an HTML error page rather than JSON, which is indistinguishable from the function
 // not being deployed — hence keeping this dependency-free.
-import type { DigestLevelTouch, DigestStatLine, JournalDigest, LevelEdge } from './journal-digest';
+import type {
+  DigestLevelTouch,
+  DigestStatLine,
+  DigestTradeSample,
+  JournalDigest,
+  LevelEdge,
+} from './journal-digest';
 import type { BehaviorBucket as DigestBehaviorBucket } from '../analytics/behavior';
 import type {
   CoachExtras,
   CoachMode,
   CoachResponse,
   CoachTradeFacts,
+  LearnedSetup,
   PlannedLevel,
   PlanFieldName,
   WeeklyPattern,
@@ -39,6 +46,11 @@ export const COACH_MODES: readonly CoachMode[] = [
    * own touch log says price did not come back to, from the recorded sample only.
    */
   'edge',
+  /**
+   * The setup learner: the setups the trader actually repeats, read from their own logged
+   * trades and the entry charts attached to them.
+   */
+  'learn',
   'trade',
   'prep',
   'postclose',
@@ -92,6 +104,9 @@ export function allowsMarketOpinion(mode: CoachMode): boolean {
  * - `withLevelEdge`: the digest carries the trader's level-touch record, which is easy to
  *   misread as a forecast or as profit, so it gets its own honesty rules whenever it is in
  *   the prompt.
+ * - `withLearn`: the model is asked to name setups from the trader's own trades and may be
+ *   shown their chart screenshots — the one request that carries an image, so it is the one
+ *   place it could describe a chart it was never given.
  * - `withMarketData`: the live sector read the plan-lock opinion quotes from.
  * - `withOpinion`: the trader has explicitly asked the coach for a directional call on
  *   their own instrument, which a strict reading of rule 2 would otherwise forbid.
@@ -99,9 +114,11 @@ export function allowsMarketOpinion(mode: CoachMode): boolean {
 export function coachGuardrails(
   withMarketData: boolean,
   withOpinion = false,
-  withLevelEdge = false
+  withLevelEdge = false,
+  withLearn = false
 ): string {
   let text = COACH_GUARDRAILS;
+  if (withLearn) text += LEARN_GUARDRAILS_SUFFIX;
   if (withLevelEdge) text += LEVEL_EDGE_GUARDRAILS_SUFFIX;
   if (withMarketData) text += MARKET_GUARDRAILS_SUFFIX;
   if (withOpinion) text += OPINION_GUARDRAILS_SUFFIX;
@@ -239,6 +256,33 @@ L4. THE LEVELS ARE THE TRADER'S OWN. The prices and labels in this section are l
 L5. Do not tell them to trade a session, a level kind or a labelled level more often. Point
     at what their own record shows and hand the observation back to them.`;
 
+/**
+ * The rules for finding setups in the trader's own trades, screenshots included.
+ *
+ * This is the one request that carries an image, which makes it the one place the model
+ * could describe a chart the trader never sent. So every named setup is tied to counts from
+ * the digest, an attached image is spelled out as a screenshot of one recorded trade rather
+ * than a live chart, and "the record is too thin" is made a complete answer.
+ */
+const LEARN_GUARDRAILS_SUFFIX = `\n\nTHE TRADER'S OWN SETUPS — SPECIAL RULES FOR THIS REQUEST ONLY.
+You have been asked to find the setups this trader actually repeats, from their own logged
+trades and, where they attached one, the chart screenshot taken at entry.
+
+S1. READ ONLY WHAT THE JOURNAL HOLDS. Every setup you name must come from the trade samples
+    and the rest of the digest. Quote how many trades back it and the figures you are
+    leaning on. Never invent a trade, an indicator, a level, a price or a result.
+S2. AN IMAGE IS A SCREENSHOT OF ONE RECORDED TRADE, NOT A LIVE CHART. Describe only what is
+    visible in it and only in relation to the trade it is labelled with. You still have no
+    market data, no current prices and no other charts — rule 1 above holds in full.
+S3. THIN IS AN ANSWER. A pattern needs several trades. With only a handful, say so, return
+    few or no setups and make nextStep about logging more. Never pad the list to look useful.
+S4. THESE ARE DRAFTS FOR THEIR OWN PLAYBOOK. They are written in for the trader to edit or
+    delete. Never claim a setup works, pays, or will keep working, and never tell them to
+    trade it. Report what their record shows and hand the observation back.
+S5. NAME THEM AS THEY WOULD. Prefer a short, specific name drawn from what they actually do
+    over a generic textbook label. If a proposed setup is the same behaviour as one they
+    already log, say so rather than inventing a second name for it.`;
+
 /** The trader's own words for what happened to a touch, so the prompt reads plainly. */
 function touchOutcomeWord(outcome: DigestLevelTouch['outcome']): string {
   switch (outcome) {
@@ -343,10 +387,80 @@ function formatLevelEdgeForPrompt(edge: LevelEdge | undefined): string[] {
 }
 
 /**
+ * The per-trade record, rendered for the setup learner.
+ *
+ * Nothing is summarised on purpose: the whole point of the section is that the model groups
+ * the trades itself, so it is handed the rows and told which ones carry a picture.
+ */
+function formatTradeSamplesForPrompt(samples: DigestTradeSample[] | undefined): string[] {
+  const lines: string[] = [];
+  const list = samples ?? [];
+
+  lines.push('');
+  lines.push("=== TRADE SAMPLES (the trader's own logged trades, newest first) ===");
+  if (!list.length) {
+    lines.push('No closed trade has been logged, so there is nothing to find a setup in.');
+    return lines;
+  }
+
+  const withImages = list.filter((sample) => sample.imageCount > 0).length;
+  lines.push(
+    `${list.length} recent closed trade(s), ${withImages} of them carrying a chart ` +
+      'screenshot. These are individual trades, not a summary: group them yourself and ' +
+      'quote the counts behind anything you name.'
+  );
+  for (const sample of list) {
+    lines.push(
+      `- ${sample.date} ${sample.entryTime} ${sample.symbol} ${sample.direction.toUpperCase()} ` +
+        `(${sample.session}), logged as ${sample.setupName ?? 'no setup'} ` +
+        `→ ${sample.rMultiple}R / ${sample.netPnL < 0 ? '-' : '+'}$${Math.abs(sample.netPnL)}` +
+        (sample.tags.length ? `, tags ${sample.tags.join(', ')}` : '') +
+        (sample.imageCount ? `, ${sample.imageCount} chart image(s) attached` : '')
+    );
+    if (sample.entryReason) lines.push(`    why they said they entered: "${sample.entryReason}"`);
+    if (sample.notes) lines.push(`    their entry note: "${sample.notes}"`);
+  }
+  return lines;
+}
+
+/**
+ * Names the attached images, in order, in the prompt text.
+ *
+ * The images themselves travel as separate parts of the request and carry no position the
+ * model can read, so listing them here is what lets it tie the third picture to the third
+ * line — and what stops it treating any of them as a view of the market right now.
+ */
+export function formatImageBlockForPrompt(labels: string[] | undefined): string {
+  const list = labels ?? [];
+  if (!list.length) {
+    return (
+      "\n\n=== THE CHART IMAGES ATTACHED TO THIS REQUEST ===\n" +
+      'No chart screenshot was attached, so work from the trade samples and the written ' +
+      'reasons alone. Say so in notInJournal if a picture would have changed the read.'
+    );
+  }
+
+  const lines: string[] = [];
+  lines.push('');
+  lines.push('=== THE CHART IMAGES ATTACHED TO THIS REQUEST ===');
+  lines.push(
+    `${list.length} screenshot(s) the trader attached to their own logged trades follow this ` +
+      'text, in this order. Each is a picture of one recorded trade taken when it was logged — ' +
+      'not a live chart of the market now.'
+  );
+  list.forEach((label, index) => lines.push(`- IMAGE ${index + 1}: ${label}`));
+  return `\n\n${lines.join('\n').trim()}`;
+}
+
+/**
  * Renders the digest as compact text for the prompt. Deliberately explicit about
  * thin data so the model cannot mistake a small sample for a finding.
+ *
+ * `mode` decides whether the per-trade samples are included. They are per-trade detail that
+ * only the setup learner reads, and every other mode is better served by the grouped
+ * sections than by twenty individual rows.
  */
-export function formatDigestForPrompt(digest: JournalDigest): string {
+export function formatDigestForPrompt(digest: JournalDigest, mode?: CoachMode): string {
   const lines: string[] = [];
   const money = (n: number) => `${n < 0 ? '-' : ''}$${Math.abs(n).toLocaleString('en-US')}`;
 
@@ -403,6 +517,11 @@ export function formatDigestForPrompt(digest: JournalDigest): string {
   // Only emitted when there are touches, which keeps the no-market vocabulary out of every
   // prompt built from a journal that has never logged one.
   for (const line of formatLevelEdgeForPrompt(digest.levelEdge)) lines.push(line);
+
+  // ---- The setup learner's raw material -----------------------------------
+  if (mode === 'learn') {
+    for (const line of formatTradeSamplesForPrompt(digest.tradeSamples)) lines.push(line);
+  }
 
   // ---- Risk capacity ------------------------------------------------------
   // The size question is answered here rather than inferred from how the last few trades
@@ -935,6 +1054,24 @@ When the two windows are too thin to compare, say exactly that in trendRead, lea
   "motivation": "2 sentences. Specific to this trader and earned by their data. No slogans."
 }
 Rank only conditions with a readable hold rate. Never quote a rate for a condition listed as not yet readable. A hold means price never came back, not that the trade paid.`,
+  learn: `Return exactly this JSON:
+{
+  "headline": "one sentence, under 16 words, on what you found in their own trades",
+  "setups": [
+    {
+      "name": "a short name for a pattern they actually repeat, in their own terms",
+      "description": "1-2 sentences on what they do, tied to the trades it was drawn from",
+      "entryRules": ["the specific conditions of the entry, one per item, as concrete as the record allows"],
+      "evidence": "the trades and figures behind it: how many, which sessions and hours, and how those turned out",
+      "confidence": "one of low, medium, high — how much the record actually supports this"
+    }
+  ],
+  "method": "2-3 sentences on how you grouped the trades and what that showed, quoting the counts",
+  "notInJournal": "what the journal does not record that would have sharpened this read. Empty string when nothing was missing",
+  "nextStep": "one concrete, checkable thing to log that would make the next read better",
+  "motivation": "2 sentences. Specific to this trader and earned by their data. No slogans."
+}
+Return 1-3 setups, best supported first. Return an empty setups array when the record is too thin to show a repeated pattern, and say exactly that in method — never pad the list to look useful. These are drafts for the trader's own playbook: describe what their record shows, never what will pay.`,
   trade: `Return exactly this JSON:
 {
   "verdict": "2 sentences judging the decision and the execution separately",
@@ -1067,6 +1204,14 @@ export type CoachPromptExtras = CoachExtras & {
   currentFieldValue?: string;
   /** The daily-bar series the chart-read mode is asked to interpret. */
   chartSeries?: DailyBars;
+  /**
+   * Labels of the chart images that survived validation, in the order they will be attached.
+   *
+   * Only the labels travel into the prompt: the image bytes are added to the request as
+   * separate parts, so there is nothing for the model to read as text and nothing for the
+   * prompt to smuggle.
+   */
+  imageLabels?: string[];
 };
 
 export function buildCoachPrompt(
@@ -1076,7 +1221,7 @@ export function buildCoachPrompt(
   marketBrief?: MarketBrief,
   extras?: CoachPromptExtras
 ): { systemInstruction: string; userPrompt: string } {
-  const context = formatDigestForPrompt(digest);
+  const context = formatDigestForPrompt(digest, mode);
 
   const task =
     mode === 'brief'
@@ -1151,6 +1296,14 @@ export function buildCoachPrompt(
         `the record shows has happened, never what it predicts will happen — and never call a ` +
         `hold a profit. If nothing is readable yet, say exactly that and make nextStep about ` +
         `logging more touches.`
+      : mode === 'learn'
+      ? `Find the setups this trader actually repeats, from their own logged trades and the ` +
+        `entry charts they attached. Group the TRADE SAMPLES by what they really did — ` +
+        `direction, hour, session, what they wrote they were waiting for, how the trade turned ` +
+        `out — and name only the patterns that hold across several trades, quoting the counts ` +
+        `behind each. Say plainly when the sample is too thin to name anything. Write each one ` +
+        `as a draft for their own playbook that they can edit or delete, never as a rule to ` +
+        `follow.`
       : mode === 'ask'
       ? `The trader typed you a question about their own trading. It is under THE TRADER'S ` +
         `QUESTION. Answer that question, from their records: quote their own figures, and use ` +
@@ -1214,8 +1367,12 @@ export function buildCoachPrompt(
       ? `\n\n${formatDailyBarsForPrompt(extras.chartSeries)}`
       : '';
 
+  // The chart screenshots only the learn mode is shown. They are listed here as text and
+  // attached to the same request as inline image parts, in the same order.
+  const imagesBlock = mode === 'learn' ? formatImageBlockForPrompt(extras?.imageLabels) : '';
+
   const userPrompt =
-    `${context}${marketBlock}${instrumentBlock}${chartBlock}${tradeBlock}${positionBlock}${entryBlock}${fieldBlock}${questionBlock}` +
+    `${context}${marketBlock}${instrumentBlock}${chartBlock}${imagesBlock}${tradeBlock}${positionBlock}${entryBlock}${fieldBlock}${questionBlock}` +
     `\n\n=== YOUR TASK ===\n${task.replace('{instrument}', extras?.instrument || 'the instrument')}\n\n${COACH_RESPONSE_SHAPES[mode]}`;
 
   return {
@@ -1225,7 +1382,10 @@ export function buildCoachPrompt(
       // Appended whenever the record is in the prompt, in every mode, so the hold rate is
       // never read in a mode whose guardrails did not mention it. Optional for the same
       // reason as the formatter: a digest that predates the record simply has none.
-      (digest.levelEdge?.touches ?? 0) > 0
+      (digest.levelEdge?.touches ?? 0) > 0,
+      // Gated on the mode, not on whether an image happened to arrive: the rules about
+      // naming setups from the record apply even when the trader attached no screenshot.
+      mode === 'learn'
     ),
     userPrompt,
   };
@@ -1403,6 +1563,33 @@ export function parseCoachResponse(
       whatItMeans: asText(obj.whatItMeans, 'whatItMeans'),
       // The step is required: the mode exists to point at what to log next, so an answer
       // that only describes the record would leave the trader with nothing to do.
+      nextStep: asText(obj.nextStep, 'nextStep'),
+      motivation: asText(obj.motivation, 'motivation'),
+    };
+  }
+
+  if (mode === 'learn') {
+    const setupsRaw = Array.isArray(obj.setups) ? obj.setups : [];
+    const setups: LearnedSetup[] = setupsRaw
+      .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+      .map((item) => ({
+        name: typeof item.name === 'string' ? item.name.trim() : '',
+        description: typeof item.description === 'string' ? item.description.trim() : '',
+        entryRules: asTextList(item.entryRules, 'setups.entryRules'),
+        evidence: typeof item.evidence === 'string' ? item.evidence.trim() : '',
+        confidence: asEnum(item.confidence, ['low', 'medium', 'high'] as const, 'low'),
+      }))
+      // A setup with no name or no description is not something the trader could use, so it
+      // is dropped rather than written into their playbook as an empty card.
+      .filter((item) => item.name && item.description);
+
+    return {
+      headline: asText(obj.headline, 'headline'),
+      setups,
+      method: asText(obj.method, 'method'),
+      // An omitted notInJournal means the record covered what it needed, which is not a
+      // failure worth erroring on.
+      notInJournal: asLooseText(obj.notInJournal),
       nextStep: asText(obj.nextStep, 'nextStep'),
       motivation: asText(obj.motivation, 'motivation'),
     };

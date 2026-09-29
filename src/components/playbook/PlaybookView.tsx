@@ -17,6 +17,7 @@ import {
   Play,
   MousePointerClick,
   PencilLine,
+  Sparkles,
 } from 'lucide-react';
 import {
   DailyReview,
@@ -35,6 +36,7 @@ import { SetupDiagram } from './SetupDiagram';
 import { SetupGuide, resolveSetupGuide } from './setup-guides';
 import { ChartPatternsView } from './ChartPatternsView';
 import { EdgeFinderCard } from './EdgeFinderCard';
+import { CoachSetupsCard } from './CoachSetupsCard';
 import { isFocusSetup, splitFocusSetups } from '../../lib/playbook/focus-setups';
 import { PATTERNS } from '../../lib/playbook/patterns';
 import { isVideoUrl } from '../../lib/media/media-utils';
@@ -67,8 +69,8 @@ interface PlaybookViewProps {
   /** Reports which pattern is open so the app can keep the URL in step. */
   onOpenPattern?: (patternId: string | null) => void;
   /**
-   * The journal records the coach's break-and-run edge finder reads. Omitted hides the
-   * card, so the playbook still renders for a caller with no records to hand.
+   * The journal records the coach's edge finder reads. Omitted hides the card, so the
+   * playbook still renders for a caller with no records to hand.
    */
   edgeFinder?: {
     trades: Trade[];
@@ -79,6 +81,20 @@ interface PlaybookViewProps {
     timezone: string;
     maxDrawdown?: number | null;
     levelTouches: LevelTouch[];
+  };
+  /**
+   * The journal the coach reads to propose setups of its own from the trade history and its
+   * entry charts. Omitted hides the card, the same way `edgeFinder` does.
+   */
+  coachSetups?: {
+    trades: Trade[];
+    tradingDays: TradingDay[];
+    reviews: DailyReview[];
+    instruments: Instrument[];
+    todayTradeDate: string;
+    timezone: string;
+    maxDrawdown?: number | null;
+    levelTouches?: LevelTouch[];
   };
 }
 
@@ -119,11 +135,12 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
   focusPatternId,
   onOpenPattern,
   edgeFinder,
+  coachSetups,
 }) => {
   const [newSetupName, setNewSetupName] = useState('');
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
-  // The catalog is trimmed to the two break-and-run set-ups by default; this reveals the
-  // rest. See the focus bar below for why the rest are hidden rather than removed.
+  // The catalog is trimmed to the trader's two set-ups by default; this reveals the rest.
+  // See the focus bar below for why the rest are hidden rather than removed.
   const [showAllSetups, setShowAllSetups] = useState(false);
 
   // The pair, and the rest of the catalog. A deep link or a watched setup outside the pair
@@ -218,6 +235,20 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
     }
 
     setIsSetupModalOpen(false);
+  };
+
+  /**
+   * Saves the setups the coach proposed.
+   *
+   * Called straight after a successful read, because the trader asked for the coach's
+   * setups to land in the playbook as editable drafts rather than to sit in a panel waiting
+   * on a second decision. The card filters out names that already exist, so a re-run adds
+   * only what is new and this stays a plain write.
+   */
+  const handleAddLearnedSetups = (learned: Setup[]) => {
+    learned.forEach((setup) => onAddSetup(setup));
+    // A setup just learned must not vanish behind the focus bar.
+    if (learned.length) setShowAllSetups(true);
   };
 
   const handleAddSetup = (e: React.FormEvent) => {
@@ -373,8 +404,17 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
         </div>
       </div>
 
-      {/* The coach's break-and-run finder, fed by the level-touch journal. */}
+      {/* The coach's edge finder, fed by the level-touch journal. */}
       {edgeFinder && <EdgeFinderCard setups={setups} {...edgeFinder} />}
+
+      {/* The coach's own setups, learned from the trade history and its entry charts. */}
+      {coachSetups && (
+        <CoachSetupsCard
+          setups={setups}
+          onAddSetups={handleAddLearnedSetups}
+          {...coachSetups}
+        />
+      )}
 
       {/* Quick add setup form */}
       <form onSubmit={handleAddSetup} className="space-y-2">
@@ -410,10 +450,11 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
       </form>
 
       {/*
-        The focus bar. The app is built around the trader's two break-and-run set-ups, so
-        the Playbook leads with them and keeps the other ~30 built-ins one click away
-        rather than in the way. Nothing is deleted: a hidden setup is still selectable when
-        recording a trade and still comes back the moment the control is pressed.
+        The focus bar. The app is built around the trader's two set-ups, so the Playbook
+        leads with them and keeps everything else one click away rather than in the way —
+        setups carried over from before the catalog was cut, and any drafts the coach has
+        learned. Nothing is deleted: a hidden setup is still selectable when recording a
+        trade and still comes back the moment the control is pressed.
       */}
       {otherSetups.length > 0 && (
         <div
@@ -424,11 +465,11 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
             <p className="text-xs font-semibold text-zinc-100">
               {showAll
                 ? `Showing all ${setups.length} setups`
-                : `Showing your ${focusSetups.length} break-and-run setup(s)`}
+                : `Showing your ${focusSetups.length} setup(s)`}
             </p>
             <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-400">
               {showAll
-                ? 'Your two set-ups are listed first; the rest of the catalog is below.'
+                ? 'Your two set-ups are listed first; everything else is below.'
                 : `${otherSetups.length} other setup(s) are hidden. They are one click away, and still available when recording a trade.`}
             </p>
           </div>
@@ -458,6 +499,9 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
             list.some((n) => n.trim().toLowerCase() === s.name.trim().toLowerCase());
           const isFocused = nameMatches(focusSetupNames);
           const isWatched = nameMatches(watchedSetupNames);
+          // Anything the coach wrote into the playbook is badged, so the trader can see at
+          // a glance which setups are theirs and which the model learned.
+          const isAiDraft = s.origin === 'ai';
 
           return (
             <div
@@ -498,12 +542,26 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
                     {s.name}
                   </span>
 
-                  {isWatched && (
+                  {(isWatched || isAiDraft) && (
                     <span className="mt-1 flex flex-wrap items-center gap-2">
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono uppercase font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-800">
-                        <Eye className="w-3 h-3" />
-                        Watched today
-                      </span>
+                      {isWatched && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono uppercase font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-800">
+                          <Eye className="w-3 h-3" />
+                          Watched today
+                        </span>
+                      )}
+                      {/* Where the setup came from, so the trader's own two are never
+                          confused with a draft the coach wrote from their journal. */}
+                      {isAiDraft && (
+                        <span
+                          id={`setup-ai-badge-${s.id}`}
+                          title="Written by the coach from your trade history. Edit or delete it like any other setup."
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono uppercase font-bold bg-indigo-950/80 text-indigo-300 border border-indigo-800"
+                        >
+                          <Sparkles className="w-3 h-3" />
+                          AI draft
+                        </span>
+                      )}
                     </span>
                   )}
 

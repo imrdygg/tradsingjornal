@@ -24,7 +24,7 @@ function freshDay(overrides: Partial<TradingDay> = {}): TradingDay {
     primaryInstrument: 'MES',
     allowedSessions: ['Regular Session'],
     marketBias: 'neutral',
-    watchedSetups: ['Overnight Break & Run', 'Session Break & Run'],
+    watchedSetups: ['Support', 'Resistance'],
     defaultRiskTier: 1,
     importantLevels: [],
     waitingFor: '',
@@ -72,7 +72,7 @@ describe('dayHasRecordedActivity', () => {
     // The default set-ups and the one planned contract are not choices, so a day carrying
     // only those must stay out of the archive.
     const day = freshDay({
-      watchedSetups: ['Overnight Break & Run', 'Session Break & Run'],
+      watchedSetups: ['Support', 'Resistance'],
       contractsPlanned: 1,
     });
     expect(dayHasRecordedActivity(day, { tradeCount: 0 })).toBe(false);

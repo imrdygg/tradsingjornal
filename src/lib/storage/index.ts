@@ -18,28 +18,32 @@ import { clearCachedNotes } from '../ai/checkpoints';
 import { getCurrentTradingDate } from './date-utils';
 
 /**
- * The built-in setup catalog, written out rather than generated so the order is a
- * deliberate rough priority: the level-based and structure setups a day trader reaches
- * for first, then the pattern and context ones, with 'Other' last because it is a
- * catch-all rather than a setup.
+ * The built-in setup catalog: exactly two setups.
  *
- * Every name in this list has a study guide (setup-guides.ts) and bullish/bearish
- * examples (SetupDiagram.tsx) keyed to exactly this spelling. Renaming one here means
- * renaming it in both of those files, or the card falls back to the generic 'Other'
- * content. The two break-and-run set-ups at the top are the deliberate exception: they
- * have no hand-drawn guide yet, so they show the generic examples until one is written.
+ * This journal belongs to one trader and is built around one idea — price reaching a
+ * level and either holding there or breaking through it. So the catalog is Support and
+ * Resistance and nothing else. The pattern library the app used to ship was removed on
+ * purpose: this is a journal for finding YOUR setups, not a browser of thirty textbook
+ * patterns, and a wall of built-ins only buries the two that matter.
+ *
+ * Both names have a full study guide (setup-guides.ts) and bullish/bearish example charts
+ * (SetupDiagram.tsx) keyed to exactly this spelling, so the cards teach rather than fall
+ * back to the generic diagrams.
  *
  * `since` marks the catalog version a setup arrived in, and it is what lets the catalog
  * grow for a journal that already exists: see `ensureSetupCatalog`. Entries without it
- * predate the versioning and are never re-added once a trader has removed them.
+ * predate the versioning and are never re-added once a trader has removed them. Neither
+ * setup here carries one, so the merge has nothing to add today — it stays for the next
+ * addition, and for journals that already stored their own list.
  */
 
 /**
  * The current built-in catalog version. Bump it, and tag the new setups with the new
  * number, when adding setups that existing journals should receive.
  *
- * Version 3 arrives the trader's two break-and-run set-ups, so a journal that already
- * exists gets them rather than only a fresh install.
+ * Version 3 was the release of the two break-and-run set-ups, which the catalog no longer
+ * carries. The number is not wound back: a journal that already received them keeps them,
+ * which is the rule for every removal — a release adds, it never deletes.
  */
 export const SETUP_CATALOG_VERSION = 3;
 
@@ -69,51 +73,12 @@ function keepBuiltinLink(next: Setup, previous?: Setup): Setup {
   return direct ? { ...next, builtinName: direct.name } : next;
 }
 export const DEFAULT_SETUPS: Setup[] = [
-  // The trader's two set-ups lead the catalog. They are the same break-and-run pattern in
-  // two sessions, and they are what the Playbook shows by default and what a fresh day's
-  // plan watches — see `focus-setups.ts`.
-  { id: 'overnight-break-and-run', name: 'Overnight Break & Run', active: true, createdAt: '2026-09-29T00:00:00Z', since: 3 },
-  { id: 'session-break-and-run', name: 'Session Break & Run', active: true, createdAt: '2026-09-29T00:00:00Z', since: 3 },
-
-  { id: 'engulfing', name: 'Engulfing', active: true, createdAt: '2026-01-01T00:00:00Z' },
+  // The two the whole app is built around. They lead the catalog, they are what a fresh
+  // day's plan watches, and they are what the Playbook shows by default — see
+  // `focus-setups.ts`. Anything the coach learns from the journal is added on top of these
+  // as an editable AI draft, never in place of them.
   { id: 'support', name: 'Support', active: true, createdAt: '2026-01-01T00:00:00Z' },
   { id: 'resistance', name: 'Resistance', active: true, createdAt: '2026-01-01T00:00:00Z' },
-  { id: 'breakout', name: 'Breakout', active: true, createdAt: '2026-01-01T00:00:00Z' },
-  { id: 'reversal', name: 'Reversal', active: true, createdAt: '2026-01-01T00:00:00Z' },
-  { id: 'trend-continuation', name: 'Trend Continuation', active: true, createdAt: '2026-01-01T00:00:00Z' },
-
-  // Level and structure plays.
-  { id: 'vwap-reclaim', name: 'VWAP Reclaim', active: true, createdAt: '2026-01-01T00:00:00Z' },
-  { id: 'vwap-rejection', name: 'VWAP Rejection', active: true, createdAt: '2026-01-01T00:00:00Z' },
-  { id: 'opening-range-breakout', name: 'Opening Range Breakout', active: true, createdAt: '2026-01-01T00:00:00Z' },
-  { id: 'failed-breakout', name: 'Failed Breakout', active: true, createdAt: '2026-01-01T00:00:00Z' },
-  { id: 'retest', name: 'Retest of Broken Level', active: true, createdAt: '2026-01-01T00:00:00Z' },
-  { id: 'trendline-break', name: 'Trendline Break', active: true, createdAt: '2026-01-01T00:00:00Z' },
-  { id: 'liquidity-sweep', name: 'Liquidity Sweep', active: true, createdAt: '2026-01-01T00:00:00Z' },
-  { id: 'opening-gap-fill', name: 'Opening Gap Fill', active: true, createdAt: '2026-01-01T00:00:00Z' },
-  { id: 'gap-and-go', name: 'Gap and Go', active: true, createdAt: '2026-09-20T00:00:00Z', since: 2 },
-  { id: 'range-fade', name: 'Range Fade', active: true, createdAt: '2026-01-01T00:00:00Z' },
-  { id: 'prior-day-high-break', name: 'Prior Day High Break', active: true, createdAt: '2026-09-20T00:00:00Z', since: 2 },
-  { id: 'fib-retracement', name: 'Fib Retracement', active: true, createdAt: '2026-09-20T00:00:00Z', since: 2 },
-
-  // Imbalance and order-flow plays.
-  { id: 'fair-value-gap', name: 'Fair Value Gap', active: true, createdAt: '2026-01-01T00:00:00Z' },
-  { id: 'order-block', name: 'Order Block', active: true, createdAt: '2026-01-01T00:00:00Z' },
-  { id: 'breaker-block', name: 'Breaker Block', active: true, createdAt: '2026-09-20T00:00:00Z', since: 2 },
-  { id: 'pullback-to-ema', name: 'Pullback to EMA', active: true, createdAt: '2026-01-01T00:00:00Z' },
-
-  // Classic chart patterns.
-  { id: 'double-top', name: 'Double Top', active: true, createdAt: '2026-01-01T00:00:00Z' },
-  { id: 'double-bottom', name: 'Double Bottom', active: true, createdAt: '2026-01-01T00:00:00Z' },
-  { id: 'head-and-shoulders', name: 'Head and Shoulders', active: true, createdAt: '2026-01-01T00:00:00Z' },
-  { id: 'bull-flag', name: 'Bull Flag', active: true, createdAt: '2026-01-01T00:00:00Z' },
-  { id: 'bear-flag', name: 'Bear Flag', active: true, createdAt: '2026-01-01T00:00:00Z' },
-  { id: 'inside-bar-break', name: 'Inside Bar Break', active: true, createdAt: '2026-01-01T00:00:00Z' },
-  { id: 'three-bar-reversal', name: 'Three-Bar Reversal', active: true, createdAt: '2026-01-01T00:00:00Z' },
-  { id: 'pin-bar', name: 'Pin Bar', active: true, createdAt: '2026-09-20T00:00:00Z', since: 2 },
-  { id: 'triangle-breakout', name: 'Triangle Breakout', active: true, createdAt: '2026-09-20T00:00:00Z', since: 2 },
-
-  { id: 'other', name: 'Other', active: true, createdAt: '2026-01-01T00:00:00Z' },
 ];
 
 export const DEFAULT_PROFILE: UserProfile = {
@@ -676,8 +641,9 @@ export const storage = {
       primaryInstrument: profile.defaultInstrument || 'MES',
       allowedSessions: ['Regular Session'],
       marketBias: 'neutral',
-      // A fresh day watches the two set-ups the app is built around, rather than a mix of
-      // the old catalog: the plan should start pointed at the trader's own edge.
+      // A fresh day watches the two set-ups the app is built around — the trader's own
+      // level plays — rather than a mix of a catalog: the plan should start pointed at
+      // what they actually trade.
       watchedSetups: [...FOCUS_SETUP_NAMES],
       // Trade #1 is the default slot, so recording a trade always has a risk attached.
       defaultRiskTier: 1,

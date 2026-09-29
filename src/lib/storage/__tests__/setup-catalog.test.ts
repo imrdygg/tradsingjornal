@@ -3,13 +3,14 @@ import { DEFAULT_SETUPS, SETUP_CATALOG_VERSION, storage } from '../index';
 import type { Setup } from '../../../types';
 
 /**
- * The catalog merge is the only thing standing between a new built-in setup and a journal
- * that already exists: a stored setup list wins over the defaults, so without it the new
- * setups would only ever appear on a fresh install.
+ * The catalog is Support and Resistance and nothing else, and these tests pin both halves
+ * of what that means.
  *
- * It has to grow the catalog without ever overwriting what the trader has done to it —
- * renaming nothing, deleting nothing, and above all not resurrecting a built-in they
- * deliberately removed.
+ * A fresh journal gets exactly the two built-ins. A journal that already stored a list —
+ * every journal that existed before the catalog was cut — keeps it untouched: the merge
+ * that lets the catalog grow only ever appends setups tagged with a version newer than the
+ * one the device has seen, and nothing in the current catalog is tagged that way. So a
+ * built-in the trader removed stays removed, and one they never had is not forced back in.
  *
  * The rest of the file covers the management that grew around it — renaming a setup while
  * keeping its study guide, reordering the catalog, and rewriting the journal entries that
@@ -121,24 +122,35 @@ afterEach(() => {
   removeStorage();
 });
 
+describe('the built-in catalog', () => {
+  it('is exactly Support and Resistance', () => {
+    expect(names(DEFAULT_SETUPS)).toEqual(['Support', 'Resistance']);
+    // Neither carries a version marker, so the merge below has nothing to append until a
+    // future release tags one.
+    expect(DEFAULT_SETUPS.filter((setup) => (setup.since ?? 1) > 1)).toEqual([]);
+  });
+});
+
 describe('ensureSetupCatalog', () => {
-  it('adds the built-ins a stored journal is missing', () => {
+  it('returns the two built-ins for a journal that has never stored a catalog', () => {
+    const result = storage.ensureSetupCatalog();
+
+    expect(names(result)).toEqual(['Support', 'Resistance']);
+    // Nothing is written over a journal that simply had no setup list: the defaults are
+    // still the defaults, and the marker records that this device has seen them.
+    expect(fake.getItem(SETUPS_KEY)).toBeNull();
+    expect(JSON.parse(fake.getItem(VERSION_KEY) ?? '0')).toBe(SETUP_CATALOG_VERSION);
+  });
+
+  it('leaves a stored journal exactly as it is', () => {
+    // A journal from before the cut, still holding the pattern library it was shipped.
+    // With nothing tagged as a later arrival, the merge is a no-op — the stored list wins.
     seedJournal([{ name: 'Engulfing' }], 1);
 
     const result = storage.ensureSetupCatalog();
 
-    // The setups that arrived after this journal was created, and only those. An old
-    // built-in it simply never had is not forced back in — the trader may have removed it
-    // before this release, and the version marker cannot tell those apart.
-    const arrivals = DEFAULT_SETUPS.filter((setup) => (setup.since ?? 1) > 1);
-    expect(arrivals.length).toBeGreaterThan(0);
-    for (const setup of arrivals) {
-      expect(names(result)).toContain(setup.name);
-    }
-    expect(result).toHaveLength(1 + arrivals.length);
-    expect(names(result)).not.toContain('Support');
-    // The merge is persisted, so the app does not have to redo it on every read.
-    expect(names(namesInStorage())).toContain('Pin Bar');
+    expect(names(result)).toEqual(['Engulfing']);
+    expect(names(namesInStorage())).toEqual(['Engulfing']);
   });
 
   it('leaves the trader’s own setups untouched', () => {
@@ -154,7 +166,7 @@ describe('ensureSetupCatalog', () => {
   });
 
   it('never resurrects a built-in that was deleted on purpose', () => {
-    // A journal that has already been through the upgrade deletes 'Pin Bar' afterwards.
+    // A journal that has already been through the upgrade deletes 'Support' afterwards.
     seedJournal([{ name: 'Engulfing' }], SETUP_CATALOG_VERSION);
 
     const result = storage.ensureSetupCatalog();
@@ -164,102 +176,82 @@ describe('ensureSetupCatalog', () => {
     expect(fake.getItem(SETUPS_KEY)).toContain('Engulfing');
   });
 
-  it('does not add a second copy when the name is already there in another case', () => {
-    seedJournal([{ name: 'pin bar' }], 1);
+  it('records the current version without touching a stored list', () => {
+    seedJournal([{ name: 'Support' }]);
 
     const result = storage.ensureSetupCatalog();
-    const matching = result.filter((setup) => setup.name.trim().toLowerCase() === 'pin bar');
 
-    expect(matching).toHaveLength(1);
-    expect(matching[0].name).toBe('pin bar');
+    expect(names(result)).toEqual(['Support']);
+    expect(JSON.parse(fake.getItem(VERSION_KEY) ?? '0')).toBe(SETUP_CATALOG_VERSION);
   });
 
   it('leaves the catalog alone on a second call', () => {
-    seedJournal([{ name: 'Engulfing' }], 1);
+    seedJournal([{ name: 'Support' }], 1);
 
     const first = storage.ensureSetupCatalog();
     const second = storage.ensureSetupCatalog();
 
     expect(names(second)).toEqual(names(first));
   });
-
-  it('returns the full defaults for a journal that has never stored a catalog', () => {
-    const result = storage.ensureSetupCatalog();
-
-    expect(names(result)).toEqual(names(DEFAULT_SETUPS));
-    // Nothing is written over a journal that simply had no setup list: the defaults are
-    // still the defaults, and the marker records that this device has seen them.
-    expect(fake.getItem(SETUPS_KEY)).toBeNull();
-    expect(JSON.parse(fake.getItem(VERSION_KEY) ?? '0')).toBe(SETUP_CATALOG_VERSION);
-  });
-
-  it('treats a missing marker as the oldest version, so those journals still upgrade', () => {
-    seedJournal([{ name: 'Engulfing' }]);
-
-    const result = storage.ensureSetupCatalog();
-
-    expect(names(result)).toContain('Breaker Block');
-    expect(JSON.parse(fake.getItem(VERSION_KEY) ?? '0')).toBe(SETUP_CATALOG_VERSION);
-  });
 });
 
 describe('renameSetup', () => {
   it('renames in place and records the built-in it came from', () => {
-    seedJournal([{ id: 'a', name: 'Engulfing' }, { id: 'b', name: 'Support' }], SETUP_CATALOG_VERSION);
+    seedJournal([{ id: 'a', name: 'Support' }, { id: 'b', name: 'Resistance' }], SETUP_CATALOG_VERSION);
 
-    const result = storage.renameSetup('a', 'Body Swap');
+    const result = storage.renameSetup('a', 'Prior Day Low');
 
-    expect(names(result ?? [])).toEqual(['Body Swap', 'Support']);
+    expect(names(result ?? [])).toEqual(['Prior Day Low', 'Resistance']);
     // The guide and the charts are keyed by the built-in name, so the link is what keeps a
     // renamed setup teaching the same material.
-    expect(result?.find((setup) => setup.id === 'a')?.builtinName).toBe('Engulfing');
+    expect(result?.find((setup) => setup.id === 'a')?.builtinName).toBe('Support');
     expect(result?.find((setup) => setup.id === 'a')?.id).toBe('a');
-    expect(names(namesInStorage())).toEqual(['Body Swap', 'Support']);
+    expect(names(namesInStorage())).toEqual(['Prior Day Low', 'Resistance']);
   });
 
   it('keeps the link through a second rename', () => {
-    seedJournal([{ id: 'a', name: 'Engulfing' }], SETUP_CATALOG_VERSION);
+    seedJournal([{ id: 'a', name: 'Support' }], SETUP_CATALOG_VERSION);
 
-    storage.renameSetup('a', 'Body Swap');
-    const result = storage.renameSetup('a', 'Body Swap II');
+    storage.renameSetup('a', 'Prior Day Low');
+    const result = storage.renameSetup('a', 'Prior Day Low II');
 
     // Recorded from the name it answered to before the save, which at this point is the
-    // link itself — not "Body Swap", which is nobody's built-in.
-    expect(result?.[0].builtinName).toBe('Engulfing');
-    expect(result?.[0].name).toBe('Body Swap II');
+    // link itself — not "Prior Day Low", which is nobody's built-in.
+    expect(result?.[0].builtinName).toBe('Support');
+    expect(result?.[0].name).toBe('Prior Day Low II');
   });
 
   it('refuses an empty name and a name another setup already has', () => {
-    seedJournal([{ id: 'a', name: 'Engulfing' }, { id: 'b', name: 'Support' }], SETUP_CATALOG_VERSION);
+    seedJournal([{ id: 'a', name: 'Support' }, { id: 'b', name: 'Resistance' }], SETUP_CATALOG_VERSION);
 
     expect(storage.renameSetup('a', '   ')).toBeNull();
-    expect(storage.renameSetup('a', 'support')).toBeNull();
+    expect(storage.renameSetup('a', 'resistance')).toBeNull();
     expect(storage.renameSetup('nope', 'Anything')).toBeNull();
 
     // Nothing was written, so the journal still answers to the names it did before.
-    expect(names(namesInStorage())).toEqual(['Engulfing', 'Support']);
+    expect(names(namesInStorage())).toEqual(['Support', 'Resistance']);
   });
 
   it('trims the new name and treats a re-typed name as no change', () => {
-    seedJournal([{ id: 'a', name: 'Engulfing' }], SETUP_CATALOG_VERSION);
+    seedJournal([{ id: 'a', name: 'Support' }], SETUP_CATALOG_VERSION);
 
-    expect(names(storage.renameSetup('a', '  Body Swap  ') ?? [])).toEqual(['Body Swap']);
-    const unchanged = storage.renameSetup('a', 'Body Swap');
+    expect(names(storage.renameSetup('a', '  Prior Day Low  ') ?? [])).toEqual(['Prior Day Low']);
+    const unchanged = storage.renameSetup('a', 'Prior Day Low');
 
-    expect(names(unchanged ?? [])).toEqual(['Body Swap']);
-    expect(names(namesInStorage())).toEqual(['Body Swap']);
+    expect(names(unchanged ?? [])).toEqual(['Prior Day Low']);
+    expect(names(namesInStorage())).toEqual(['Prior Day Low']);
   });
 
   it('links a setup typed by hand under a built-in’s name', () => {
     // Typed by hand rather than added by the catalog, and still offered the guide.
     const result = storage.saveSetup({
       id: 'mine',
-      name: 'VWAP Reclaim',
+      name: 'Resistance',
       active: true,
       createdAt: '2026-01-01T00:00:00Z',
     });
 
-    expect(result.find((setup) => setup.id === 'mine')?.builtinName).toBe('VWAP Reclaim');
+    expect(result.find((setup) => setup.id === 'mine')?.builtinName).toBe('Resistance');
   });
 
   it('invents no link for a name that is nobody’s built-in', () => {
@@ -276,22 +268,15 @@ describe('renameSetup', () => {
 
 describe('ensureSetupCatalog after a rename', () => {
   it('does not add the built-in back under its old name', () => {
-    // A journal created before this release, which then renames 'Pin Bar' before it has
-    // been through the merge — so the merge still runs and has to be told to leave it.
-    seedJournal([{ id: 'pin', name: 'Pin Bar' }], 1);
-    storage.renameSetup('pin', 'Wick Rejection');
+    // A journal created before the cut, which then renames 'Support' before it has been
+    // through the merge — so the merge still runs and has to leave it alone.
+    seedJournal([{ id: 'sup', name: 'Support' }], 1);
+    storage.renameSetup('sup', 'Shelf');
 
     const result = storage.ensureSetupCatalog();
 
-    // 'Pin Bar' is still taken by the renamed copy, so the release must not resurrect it —
-    // the same rule that protects a deliberate delete.
-    expect(names(result)).not.toContain('Pin Bar');
-    expect(names(result)).toContain('Wick Rejection');
-    // And the rename does not hold back the setups that same release does bring.
-    for (const setup of DEFAULT_SETUPS.filter((entry) => (entry.since ?? 1) > 1)) {
-      if (setup.name === 'Pin Bar') continue;
-      expect(names(result)).toContain(setup.name);
-    }
+    expect(names(result)).not.toContain('Support');
+    expect(names(result)).toContain('Shelf');
   });
 });
 
@@ -323,46 +308,46 @@ describe('reorderSetups', () => {
 
 describe('relabelSetupReferences', () => {
   it('moves logged trades and planned days onto the new name', () => {
-    seedJournal([{ id: 'a', name: 'Engulfing' }], SETUP_CATALOG_VERSION);
+    seedJournal([{ id: 'a', name: 'Support' }], SETUP_CATALOG_VERSION);
     seedJournalEntries(
       [
-        { id: 't1', setupName: 'Engulfing' },
-        { id: 't2', setupName: 'engulfing' },
-        { id: 't3', setupName: 'Support' },
+        { id: 't1', setupName: 'Support' },
+        { id: 't2', setupName: 'support' },
+        { id: 't3', setupName: 'Resistance' },
         { id: 't4' },
       ],
-      [{ id: 'd1', watchedSetups: ['Engulfing', 'Support'] }, { id: 'd2', watchedSetups: ['Support'] }]
+      [{ id: 'd1', watchedSetups: ['Support', 'Resistance'] }, { id: 'd2', watchedSetups: ['Resistance'] }]
     );
 
-    const result = storage.relabelSetupReferences('Engulfing', 'Body Swap');
+    const result = storage.relabelSetupReferences('Support', 'Prior Day Low');
 
     expect(result).toEqual({ trades: 2, days: 1 });
     expect(tradesInStorage().map((trade) => trade.setupName)).toEqual([
-      'Body Swap',
-      'Body Swap',
-      'Support',
+      'Prior Day Low',
+      'Prior Day Low',
+      'Resistance',
       undefined,
     ]);
-    expect(daysInStorage()[0].watchedSetups).toEqual(['Body Swap', 'Support']);
-    expect(daysInStorage()[1].watchedSetups).toEqual(['Support']);
+    expect(daysInStorage()[0].watchedSetups).toEqual(['Prior Day Low', 'Resistance']);
+    expect(daysInStorage()[1].watchedSetups).toEqual(['Resistance']);
   });
 
   it('counts the same references without changing anything', () => {
     seedJournalEntries(
-      [{ id: 't1', setupName: 'Engulfing' }, { id: 't2' }],
-      [{ id: 'd1', watchedSetups: ['Engulfing'] }]
+      [{ id: 't1', setupName: 'Support' }, { id: 't2' }],
+      [{ id: 'd1', watchedSetups: ['Support'] }]
     );
 
-    expect(storage.countSetupReferences('engulfing')).toEqual({ trades: 1, days: 1 });
-    expect(storage.countSetupReferences('Engulfing')).toEqual({ trades: 1, days: 1 });
+    expect(storage.countSetupReferences('support')).toEqual({ trades: 1, days: 1 });
+    expect(storage.countSetupReferences('Support')).toEqual({ trades: 1, days: 1 });
     expect(storage.countSetupReferences('')).toEqual({ trades: 0, days: 0 });
-    expect(tradesInStorage()[0].setupName).toBe('Engulfing');
+    expect(tradesInStorage()[0].setupName).toBe('Support');
   });
 
   it('does nothing when the names only differ by case', () => {
-    seedJournalEntries([{ id: 't1', setupName: 'Engulfing' }], []);
+    seedJournalEntries([{ id: 't1', setupName: 'Support' }], []);
 
-    expect(storage.relabelSetupReferences('Engulfing', 'engulfing')).toEqual({ trades: 0, days: 0 });
-    expect(tradesInStorage()[0].setupName).toBe('Engulfing');
+    expect(storage.relabelSetupReferences('Support', 'support')).toEqual({ trades: 0, days: 0 });
+    expect(tradesInStorage()[0].setupName).toBe('Support');
   });
 });

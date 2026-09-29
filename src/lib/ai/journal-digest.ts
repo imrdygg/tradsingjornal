@@ -77,6 +77,34 @@ export interface DigestLevelTouch {
 }
 
 /**
+ * One logged trade, reduced to the facts the setup learner reasons about.
+ *
+ * The grouped stats elsewhere in the digest say how a labelled setup performed, but they
+ * cannot show what the trader actually does: someone with two setups produces exactly two
+ * groups. This is the per-trade record — what it was marked as, when, which way, and why in
+ * their own words — which is the raw material for noticing a pattern they never named.
+ */
+export interface DigestTradeSample {
+  /** Trading date, so a pattern can be placed in time. */
+  date: string;
+  symbol: string;
+  direction: string;
+  session: string;
+  /** The setup the trade was logged under, or null when it was left blank. */
+  setupName: string | null;
+  /** The entry timestamp exactly as the trader entered it. */
+  entryTime: string;
+  rMultiple: number;
+  netPnL: number;
+  /** Why they said they entered, in their own words. */
+  entryReason: string | null;
+  notes: string | null;
+  tags: string[];
+  /** How many chart images the trade carries, whether or not any were sent to the coach. */
+  imageCount: number;
+}
+
+/**
  * The break-and-run record: the trader's own forward observations of whether price came
  * back to a level.
  *
@@ -267,6 +295,14 @@ export interface JournalDigest {
    * the coach can answer "which of my break-and-run conditions actually hold?".
    */
   levelEdge: LevelEdge;
+  /**
+   * The most recent closed trades, one entry each, newest first.
+   *
+   * This is what the setup learner reads. The grouped figures above can say how a setup the
+   * trader already labelled performed; only the individual trades can show a pattern they
+   * have been trading all along without ever naming it.
+   */
+  tradeSamples: DigestTradeSample[];
   /** The trader's own words, trimmed. Lets the coach quote them back. */
   traderOwnWords: {
     entryReasons: string[];
@@ -305,6 +341,13 @@ const MAX_RECENT_DAYS = 14;
 const MAX_OWN_WORDS = 6;
 const MAX_WORD_LENGTH = 240;
 const MAX_RECENT_TOUCHES = 12;
+/**
+ * Trades the setup learner is shown.
+ *
+ * A repeated pattern is visible in a dozen trades; the same fields for a hundred would
+ * crowd every other section out of the prompt without adding signal.
+ */
+const MAX_TRADE_SAMPLES = 20;
 
 function round(value: number, dp = 2): number {
   if (!Number.isFinite(value)) return 0;
@@ -795,6 +838,31 @@ export function buildJournalDigest(input: {
   );
   const reviewsNewestFirst = [...reviews].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
+  // ---- Trade samples -------------------------------------------------------
+  // The setup learner's raw material, newest first. A trade whose day is missing falls back
+  // to the date on its own timestamp, the same rule the recent-form windows use.
+  const tradeSamples: DigestTradeSample[] = closedNewestFirst
+    .slice(0, MAX_TRADE_SAMPLES)
+    .map((trade) => {
+      const day = dayById.get(trade.tradingDayId);
+      return {
+        date:
+          day?.tradeDate ??
+          (trade.entryTime ? trade.entryTime.slice(0, 10) : 'date not recorded'),
+        symbol: instrumentSymbol(instruments, trade.instrumentId),
+        direction: trade.direction,
+        session: trade.session,
+        setupName: trade.setupName?.trim() || null,
+        entryTime: trade.entryTime,
+        rMultiple: round(rMultiple(trade)),
+        netPnL: round(realizedPnL(trade)),
+        entryReason: trimWord(trade.entryReason),
+        notes: trimWord(trade.notes),
+        tags: trade.tags ?? [],
+        imageCount: trade.images?.length ?? 0,
+      };
+    });
+
   // ---- Recent form ---------------------------------------------------------
   // Built from the same newest-first order the owner's words use, so "the most recent
   // trades" means the same thing everywhere in the digest. A trade whose day is missing
@@ -953,6 +1021,7 @@ export function buildJournalDigest(input: {
     recentForm,
     behavior,
     levelEdge,
+    tradeSamples,
     traderOwnWords: {
       entryReasons: collectWords(closedNewestFirst.map((t) => t.entryReason)),
       tradeNotes: collectWords(closedNewestFirst.map((t) => t.notes)),

@@ -39,7 +39,10 @@ async function expandTodayAdvanced(page: Page) {
   if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click();
 }
 
-/** The form asks for entry/exit/why/note/tags; everything else is under "More options". */
+/**
+ * The form asks for direction, entry, stop, size, setup, label, note, exit and target;
+ * everything else is under "More options".
+ */
 async function expandTradeOptions(page: Page) {
   const toggle = page.locator('#trade-more-options-toggle');
   if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click();
@@ -164,7 +167,7 @@ test.describe('Undoing a plan lock', () => {
     const preview = page.getByRole('dialog');
     await expect(preview.getByText(/Important price levels/i)).toBeVisible();
     await expect(preview.getByText(/What am I waiting for\?/i)).toBeVisible();
-    await expect(preview.getByText('Overnight Break & Run, Session Break & Run')).toBeVisible();
+    await expect(preview.getByText('Support, Resistance')).toBeVisible();
 
     await page.locator('#plan-lock-confirm-btn').click();
 
@@ -256,15 +259,10 @@ test.describe('Starting fresh', () => {
     await gotoTab(page, 'today', /^Today$/);
     await expect(page.getByRole('heading', { name: /Trade Executions \(0\)/ })).toBeVisible();
 
-    // ...but the playbook set-ups survived. The library opens trimmed to the two focus
-    // setups, so the rest of the catalog has to be revealed to check them.
+    // ...but the playbook set-ups survived. Addressed by title, because the diagrams label
+    // their level with the same word as the setup.
     await gotoTab(page, 'playbook', /Trading Setups & Playbook Library/i);
-    const focusToggle = page.locator('#playbook-focus-toggle');
-    await expect(focusToggle).toBeVisible();
-    if ((await focusToggle.textContent())?.includes('Show all setups')) await focusToggle.click();
-    await expect(page.getByText('Engulfing', { exact: true })).toBeVisible();
-    await expect(page.getByText('Trend Continuation', { exact: true })).toBeVisible();
-    // And the two the app is built around are still there.
-    await expect(page.getByText('Overnight Break & Run', { exact: true })).toBeVisible();
+    await expect(page.getByTitle('Support', { exact: true })).toBeVisible();
+    await expect(page.getByTitle('Resistance', { exact: true })).toBeVisible();
   });
 });

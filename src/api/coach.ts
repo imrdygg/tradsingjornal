@@ -11,6 +11,7 @@ import type {
   CoachPositionFacts,
   CoachTradeFacts,
 } from '../lib/ai/coach-types';
+import { readCoachImages, type CoachImagePart } from '../lib/ai/coach-images';
 import type { JournalDigest } from '../lib/ai/journal-digest';
 import { getDailyBars, getInstrumentQuote, getMarketBrief } from '../lib/ai/market-data';
 import type { MarketBrief } from '../lib/ai/market-data';
@@ -65,7 +66,7 @@ interface ApiResponse {
 }
 
 
-const ENDPOINT_VERSION = 10;
+const ENDPOINT_VERSION = 11;
 
 /** Total time to spend trying models before returning what we have. */
 const REQUEST_BUDGET_MS = 45_000;
@@ -482,8 +483,10 @@ export async function runCoachModels(params: {
   trade?: CoachTradeFacts;
   marketBrief?: MarketBrief;
   extras?: CoachPromptExtras;
+  /** Chart images the setup learner asked the coach to read. Never set for another mode. */
+  imageParts?: CoachImagePart[];
 }): Promise<CoachModelOutcome> {
-  const { apiKey, mode, digest, trade, marketBrief, extras } = params;
+  const { apiKey, mode, digest, trade, marketBrief, extras, imageParts } = params;
 
   // The prompt is assembled here, on the server, from the digest the client sent.
   const { systemInstruction, userPrompt } = buildCoachPrompt(
@@ -506,7 +509,7 @@ export async function runCoachModels(params: {
       break;
     }
 
-    const result = await callGemini({ apiKey, model, systemInstruction, userPrompt });
+    const result = await callGemini({ apiKey, model, systemInstruction, userPrompt, imageParts });
 
     if (result.ok) {
       const raw = result.text;
@@ -590,12 +593,21 @@ async function callGemini(params: {
   model: string;
   systemInstruction: string;
   userPrompt: string;
+  imageParts?: CoachImagePart[];
 }): Promise<{ ok: true; text: string; model: string } | { ok: false; status: number; message: string; retryable: boolean }> {
-  const { apiKey, model, systemInstruction, userPrompt } = params;
+  const { apiKey, model, systemInstruction, userPrompt, imageParts } = params;
+
+  // The prompt as one text part, then any chart images as inline data, in the same order the
+  // prompt lists them. They belong to the same user turn: the model reads the text and the
+  // pictures together, which is what lets it tie a screenshot to the trade it came from.
+  const parts: Array<Record<string, unknown>> = [{ text: userPrompt }];
+  for (const image of imageParts ?? []) {
+    parts.push({ inlineData: { mimeType: image.mimeType, data: image.data } });
+  }
 
   const body = {
     systemInstruction: { parts: [{ text: systemInstruction }] },
-    contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+    contents: [{ role: 'user', parts }],
     generationConfig: {
       // Ask for JSON, then validate it ourselves: a shape mismatch is better reported
       // as a readable error than rendered as a hole in the UI.
@@ -818,8 +830,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   if (!isCoachMode(mode)) {
     res.status(400).json({
       error:
-        'Unknown coach mode. Expected brief, weekly, form, edge, trade, prep, postclose, ' +
-        'planreview, planfield, planbuild, scalein, entrycall, chartread or ask.',
+        'Unknown coach mode. Expected brief, weekly, form, edge, learn, trade, prep, ' +
+        'postclose, planreview, planfield, planbuild, scalein, entrycall, chartread or ask.',
     });
     return;
   }
@@ -891,6 +903,15 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     extras.question = question.slice(0, 800);
   }
 
+  // The chart screenshots the setup learner reads. Re-validated here, because a request body
+  // is untrusted input whatever the client did: a malformed or oversized image is dropped
+  // rather than forwarded, and only the labels ever reach the prompt text.
+  let imageParts: CoachImagePart[] = [];
+  if (mode === 'learn') {
+    imageParts = readCoachImages(extrasRaw.images);
+    extras.imageLabels = imageParts.map((part) => part.label);
+  }
+
   if (mode === 'chartread') {
     const symbol = typeof extrasRaw.instrument === 'string' ? extrasRaw.instrument.trim().toUpperCase() : '';
     if (!symbol) {
@@ -939,7 +960,15 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   }
 
   try {
-    const outcome = await runCoachModels({ apiKey, mode, digest, trade, marketBrief, extras });
+    const outcome = await runCoachModels({
+      apiKey,
+      mode,
+      digest,
+      trade,
+      marketBrief,
+      extras,
+      imageParts,
+    });
     res.status(outcome.status).json(outcome.body);
   } finally {
     // On every path, including a throw, or this caller's in-flight slot leaks.

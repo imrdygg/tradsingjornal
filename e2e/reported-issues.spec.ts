@@ -6,7 +6,8 @@ import { DEFAULT_SETUPS } from '../src/lib/storage';
  * scale-in calculator and the mobile layout:
  *
  *  1. Recording a trade only offered one setup — every playbook setup must be
- *     selectable, including ones toggled "off".
+ *     selectable, including ones toggled "off". (The catalog is now just the trader's
+ *     two level setups, so the coverage is thinner; the rule is the same.)
  *  2. Setup names were visually cut off on the Playbook cards.
  *  3. The break-even calculator shipped hard-coded example prices — it must
  *     auto-fill from the trader's real open trade instead.
@@ -28,10 +29,16 @@ async function gotoPlaybook(page: Page) {
   await revealAllSetups(page);
 }
 
-/** The library opens trimmed to the two focus setups; these tests are about the catalog. */
+/**
+ * Reveals anything sitting outside the focus pair.
+ *
+ * A fresh journal's catalog is exactly that pair — Support and Resistance — so the control
+ * is not rendered at all and there is nothing to do. It appears only once a setup has been
+ * added or learned.
+ */
 async function revealAllSetups(page: Page) {
   const toggle = page.locator('#playbook-focus-toggle');
-  await expect(toggle).toBeVisible();
+  if ((await toggle.count()) === 0) return;
   if ((await toggle.textContent())?.includes('Show all setups')) await toggle.click();
 }
 
@@ -58,7 +65,10 @@ async function expandTodayAdvanced(page: Page) {
   if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click();
 }
 
-/** The form asks for entry/exit/why/note/tags; everything else is under "More options". */
+/**
+ * The form asks for direction, entry, stop, size, setup, label, note, exit and target;
+ * everything else is under "More options".
+ */
 async function expandTradeOptions(page: Page) {
   const toggle = page.locator('#trade-more-options-toggle');
   if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click();
@@ -100,10 +110,11 @@ test.describe('Recording a trade lists every playbook setup', () => {
   });
 
   test('a setup toggled off in the Playbook is still selectable', async ({ page }) => {
-    // Turn Engulfing off from the Playbook card's Active/Off badge.
+    // Turn Support off from the Playbook card's Active/Off badge. Addressed by title because
+    // the Support diagram labels its level "Support" too, so a text match is ambiguous.
     await gotoPlaybook(page);
     const card = page
-      .locator('div.rounded-2xl', { has: page.getByText('Engulfing', { exact: true }) })
+      .locator('div.rounded-2xl', { has: page.getByTitle('Support', { exact: true }) })
       .first();
     await card.getByTitle(/Active — shown first/).click();
     await expect(card.getByText('Off', { exact: true })).toBeVisible();
@@ -114,7 +125,7 @@ test.describe('Recording a trade lists every playbook setup', () => {
     await expandTradeOptions(page);
 
     const options = await page.locator('#trade-setup-select option').allTextContents();
-    expect(options.some((o) => o.trim().startsWith('Engulfing'))).toBeTruthy();
+    expect(options.some((o) => o.trim().startsWith('Support'))).toBeTruthy();
     expect(options.length).toBe(DEFAULT_SETUPS.length);
   });
 

@@ -1,20 +1,21 @@
 /**
- * The two set-ups this journal is built around.
+ * The two set-ups this journal is built around: the trader's own level plays.
  *
- * They are the same pattern — a level is touched, price breaks it, and price never comes
- * back — differing only by the session the break happens in. That is why everything else
- * leans on this list rather than on a name spelled out at each call site: the level-touch
- * record groups by session and level kind to find which of the two actually holds, and the
- * Playbook leads with these two instead of burying them among thirty others.
+ * Support and Resistance are the only two setups in the built-in catalog — every other
+ * pattern the app used to ship was deliberately cut, because this journal is one trader's
+ * and they trade levels, not a library of thirty textbook patterns. The rest of the app
+ * leans on this list rather than on a name spelled out at each call site: a fresh day's
+ * plan watches these two, and the Playbook leads with them (a journal that still carries
+ * setups from before the cut keeps them behind the "Show all setups" control).
  *
  * Kept as names, like every other setup reference in the app (`watchedSetups`, a trade's
  * `setupName`), so a match works whether a caller holds ids or names. Matching is
  * case-insensitive and trimmed, the same rule `storage.renameSetup` uses.
  */
-export const FOCUS_SETUP_NAMES = ['Overnight Break & Run', 'Session Break & Run'] as const;
+export const FOCUS_SETUP_NAMES = ['Support', 'Resistance'] as const;
 
 /** The ids the two built-ins are seeded under, so a caller can match either way. */
-export const FOCUS_SETUP_IDS = ['overnight-break-and-run', 'session-break-and-run'] as const;
+export const FOCUS_SETUP_IDS = ['support', 'resistance'] as const;
 
 /**
  * True when a setup name is one of the two the app is focused on.

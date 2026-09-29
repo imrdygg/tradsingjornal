@@ -37,6 +37,7 @@ import {
 import { ImageUploader } from '../common/ImageUploader';
 import { ImageLightboxModal } from '../common/ImageLightboxModal';
 import { ModalOverlay } from '../common/ModalOverlay';
+import { FOCUS_SETUP_NAMES } from '../../lib/playbook/focus-setups';
 
 interface TradeFormModalProps {
   isOpen: boolean;
@@ -85,7 +86,10 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
   const [initialStop, setInitialStop] = useState('');
   const [contracts, setContracts] = useState('1');
   const [session, setSession] = useState<TradingSession>('Regular Session');
-  const [setupName, setSetupName] = useState('Engulfing');
+  // The day's own watch list leads, so a trade is labelled with a setup the trader already
+  // chose for today. The first of the two the app is built around is the fallback for a day
+  // whose plan carries no watch list at all.
+  const [setupName, setSetupName] = useState(day.watchedSetups?.[0] ?? FOCUS_SETUP_NAMES[0]);
   const [entryTime, setEntryTime] = useState('');
   const [exitPrice, setExitPrice] = useState('');
   const [exitTime, setExitTime] = useState('');
@@ -163,7 +167,7 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
       setInitialStop(editingTrade.initialStop.toString());
       setContracts(editingTrade.contracts.toString());
       setSession(editingTrade.session);
-      setSetupName(editingTrade.setupName || 'Engulfing');
+      setSetupName(editingTrade.setupName || FOCUS_SETUP_NAMES[0]);
       setEntryTime(editingTrade.entryTime ? editingTrade.entryTime.slice(0, 16) : '');
       setExitPrice(editingTrade.exitPrice ? editingTrade.exitPrice.toString() : '');
       setExitTime(editingTrade.exitTime ? editingTrade.exitTime.slice(0, 16) : '');
@@ -206,7 +210,7 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
       setInitialStop(prefill.initialStop !== undefined ? prefill.initialStop.toString() : '');
       setContracts(prefill.contracts !== undefined ? prefill.contracts.toString() : '1');
       setSession(prefill.session || (day.allowedSessions?.[0] ?? 'Regular Session'));
-      setSetupName(prefill.setupName || (day.watchedSetups?.[0] ?? 'Engulfing'));
+      setSetupName(prefill.setupName || (day.watchedSetups?.[0] ?? FOCUS_SETUP_NAMES[0]));
       setEntryTime(prefill.entryTime ? prefill.entryTime.slice(0, 16) : localISO);
       setExitPrice('');
       setExitTime('');
@@ -251,7 +255,7 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
           : 'Regular Session'
       );
       setSetupName(
-        day.watchedSetups && day.watchedSetups[0] ? day.watchedSetups[0] : 'Engulfing'
+        day.watchedSetups && day.watchedSetups[0] ? day.watchedSetups[0] : FOCUS_SETUP_NAMES[0]
       );
       setEntryTime(localISO);
       setExitPrice('');
@@ -591,7 +595,7 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
               {editingTrade ? 'Edit Trade' : 'Log a Trade'}
             </h3>
             <span className="hidden text-[10px] font-mono text-zinc-500 sm:inline">
-              entry · exit · why · note · tags
+              entry · stop · setup · exit · target
             </span>
           </div>
           <button
@@ -658,15 +662,16 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
           {/*
             The optional half of the form.
 
-            Every field below this toggle is a real feature — the instrument, the plan's
-            risk slot, sessions, setups, the target, the charts — but none of them is needed
-            to write a trade down. They are folded, not removed, so the form opens as the five
-            things a trade is, and the depth is still one click away for the days it is wanted.
+            Every field below this toggle is a real feature — the instrument, the plan's risk
+            slot, the session, the exact times, the exit reason, the tags and the charts — but
+            none of them is needed to write a trade down. They are folded, not removed, so the
+            form opens as the trade itself: what you entered at, where you were wrong, which
+            of your setups it was, what you saw, and how it ended.
           */}
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-zinc-800 bg-zinc-950/60 px-3 py-2">
             <span className="text-[11px] leading-relaxed text-zinc-500">
-              Optional, for the days you want them: the instrument, your plan's risk slot,
-              the timing, the target and your charts.
+              Optional: the instrument, your plan's risk slot, the session, the exact times,
+              the exit reason, tags and charts.
             </span>
             <button
               type="button"
@@ -863,7 +868,7 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
             <span className="text-xs font-semibold text-emerald-400/90 uppercase tracking-wider font-mono">
               Entry
             </span>
-            <span className="text-[10px] text-zinc-500 font-mono">price · size · stop · why</span>
+            <span className="text-[10px] text-zinc-500 font-mono">price · size · stop · setup</span>
           </div>
 
           {/* Row 2: Entry Price, Initial Stop, Contracts */}
@@ -930,54 +935,58 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
             </div>
           </div>
 
-          {/* Row 3: Session & Setup */}
+          {/*
+            Which of the trader's setups this was. Asked on the open form rather than folded
+            away, because it is the label every group in the journal is built on: the setup's
+            own record, the plan-adherence count and the coach's read all key off it, and a
+            trade saved without one is a trade nothing can be learned from.
+          */}
+          <div>
+            <label
+              htmlFor="trade-setup-select"
+              className="text-xs font-medium text-zinc-300 block mb-1"
+            >
+              Setup{' '}
+              <span className="text-[10px] font-normal text-zinc-500 font-mono">
+                ({sortedSetups.length} in playbook)
+              </span>
+            </label>
+            <select
+              id="trade-setup-select"
+              value={setupName}
+              onChange={(e) => setSetupName(e.target.value)}
+              className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 focus:border-zinc-600 focus:outline-none"
+            >
+              {/* Keep an unlisted current value visible instead of blank. */}
+              {!setupNameIsListed && setupName && (
+                <option value={setupName}>{setupName}</option>
+              )}
+              {sortedSetups.map((s) => (
+                <option key={s.id} value={s.name}>
+                  {s.name}
+                  {s.active ? '' : ' — off'}
+                </option>
+              ))}
+              {sortedSetups.length === 0 && (
+                <option value="">No setups yet — add one in the Playbook</option>
+              )}
+            </select>
+          </div>
+
+          {/* Row 3: Session & Entry Time — the exact when, for the days it matters. */}
           {moreOptions && (
           <>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-medium text-zinc-300 block mb-1">Session</label>
-              <select
-                value={session}
-                onChange={(e) => setSession(e.target.value as TradingSession)}
-                className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 focus:border-zinc-600 focus:outline-none"
-              >
-                <option value="Overnight">Overnight</option>
-                <option value="Premarket">Premarket</option>
-                <option value="Regular Session">Regular Session</option>
-              </select>
-            </div>
-
-            <div>
-              <label
-                htmlFor="trade-setup-select"
-                className="text-xs font-medium text-zinc-300 block mb-1"
-              >
-                Setup{' '}
-                <span className="text-[10px] font-normal text-zinc-500 font-mono">
-                  ({sortedSetups.length} in playbook)
-                </span>
-              </label>
-              <select
-                id="trade-setup-select"
-                value={setupName}
-                onChange={(e) => setSetupName(e.target.value)}
-                className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 focus:border-zinc-600 focus:outline-none"
-              >
-                {/* Keep an unlisted current value visible instead of blank. */}
-                {!setupNameIsListed && setupName && (
-                  <option value={setupName}>{setupName}</option>
-                )}
-                {sortedSetups.map((s) => (
-                  <option key={s.id} value={s.name}>
-                    {s.name}
-                    {s.active ? '' : ' — off'}
-                  </option>
-                ))}
-                {sortedSetups.length === 0 && (
-                  <option value="">No setups yet — add one in the Playbook</option>
-                )}
-              </select>
-            </div>
+          <div>
+            <label className="text-xs font-medium text-zinc-300 block mb-1">Session</label>
+            <select
+              value={session}
+              onChange={(e) => setSession(e.target.value as TradingSession)}
+              className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 focus:border-zinc-600 focus:outline-none"
+            >
+              <option value="Overnight">Overnight</option>
+              <option value="Premarket">Premarket</option>
+              <option value="Regular Session">Regular Session</option>
+            </select>
           </div>
 
           {/* Row 4: Entry Time */}
@@ -1003,12 +1012,12 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
               htmlFor="trade-entry-reason"
               className="text-xs font-medium text-zinc-300 block mb-1"
             >
-              Why
+              Label
             </label>
             <input
               id="trade-entry-reason"
               type="text"
-              placeholder="What made you take it?"
+              placeholder="What you saw — e.g. prior day low, second test"
               value={entryReason}
               onChange={(e) => setEntryReason(e.target.value)}
               className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
@@ -1037,7 +1046,9 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
             <div className="rounded-xl border border-zinc-800 bg-zinc-950/80 p-3 text-xs space-y-1 font-mono">
               <div className="flex items-center gap-1.5 text-zinc-400 text-[11px] uppercase font-semibold">
                 <Calculator className="w-3.5 h-3.5 text-zinc-300" />
-                Live {selectedInstrument.symbol} Calculation
+                {/* Size is folded away with the rest of the depth, so it is named here:
+                    every figure below is for this many contracts, not one. */}
+                Live {contracts || '1'} × {selectedInstrument.symbol} Calculation
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-zinc-300">
                 <div>
@@ -1152,9 +1163,10 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
           )}
 
           {/*
-            Exit. The fill is the one thing worth asking for — a trade with an exit price is a
-            closed trade. The target and the timing are plan detail, so they live with the rest
-            of the optional fields; the fill is left blank while the trade is still running.
+            Exit. Two prices and nothing else: what it actually came out at, and where it was
+            headed in case the trader takes it off early. The fill alone says the trade is
+            closed; the target sits beside it because a target only means anything next to
+            the fill, and the gap between the two is what the card reads back.
           */}
           <div className="flex flex-wrap items-baseline gap-x-2 pt-2 border-t border-zinc-800/80">
             <span className="text-xs font-semibold text-amber-400/90 uppercase tracking-wider font-mono">
@@ -1165,57 +1177,60 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
             </span>
           </div>
 
-          <div>
-            <label
-              htmlFor="trade-exit-price"
-              className="text-xs font-medium text-zinc-300 block mb-1"
-            >
-              Exit Price
-            </label>
-            <input
-              id="trade-exit-price"
-              type="number"
-              step="0.25"
-              placeholder="6732.25"
-              value={exitPrice}
-              onChange={(e) => setExitPrice(e.target.value)}
-              className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
-            />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label
+                htmlFor="trade-exit-price"
+                className="text-xs font-medium text-zinc-300 block mb-1"
+              >
+                Exit Price
+              </label>
+              <input
+                id="trade-exit-price"
+                type="number"
+                step="0.25"
+                placeholder="6732.25"
+                value={exitPrice}
+                onChange={(e) => setExitPrice(e.target.value)}
+                className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label
+                htmlFor="trade-target-price"
+                className="text-xs font-medium text-zinc-300 mb-1 flex items-baseline justify-between gap-2"
+              >
+                <span>Target Price</span>
+                <span className="text-[10px] font-normal text-zinc-500">
+                  if you exit early
+                </span>
+              </label>
+              <input
+                id="trade-target-price"
+                type="number"
+                step="0.25"
+                placeholder="6742.25"
+                value={targetPrice}
+                onChange={(e) => setTargetPrice(e.target.value)}
+                className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
+              />
+            </div>
           </div>
 
           {moreOptions && (
             <>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label
-                    htmlFor="trade-target-price"
-                    className="text-xs font-medium text-zinc-300 block mb-1"
-                  >
-                    Target Price
-                  </label>
-                  <input
-                    id="trade-target-price"
-                    type="number"
-                    step="0.25"
-                    placeholder="6742.25"
-                    value={targetPrice}
-                    onChange={(e) => setTargetPrice(e.target.value)}
-                    className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-xs font-medium text-zinc-300 block mb-1">
-                    Exit Date / Time
-                  </label>
-                  <input
-                    id="trade-exit-time"
-                    type="datetime-local"
-                    value={exitTime}
-                    onChange={(e) => setExitTime(e.target.value)}
-                    className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none"
-                  />
-                </div>
+              <div>
+                <label className="text-xs font-medium text-zinc-300 block mb-1">
+                  Exit Date / Time
+                </label>
+                <input
+                  id="trade-exit-time"
+                  type="datetime-local"
+                  value={exitTime}
+                  onChange={(e) => setExitTime(e.target.value)}
+                  className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none"
+                />
               </div>
 
               <div>

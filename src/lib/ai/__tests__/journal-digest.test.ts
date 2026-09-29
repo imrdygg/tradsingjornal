@@ -834,3 +834,74 @@ describe('recent form', () => {
     expect(recentForm.recent.disciplineScore).toBe(75);
   });
 });
+
+/**
+ * The trade samples are the setup learner's raw material. The grouped `bySetup` rows cannot
+ * show a pattern the trader never labelled — someone with two setups produces two groups —
+ * so what matters here is that the per-trade detail and the trader's own words survive into
+ * the digest, newest first and without the image bytes themselves.
+ */
+describe('trade samples', () => {
+  it('carries the newest closed trades first, with the trader’s own words', () => {
+    const { tradeSamples } = build({
+      trades: [
+        makeTrade({
+          id: 'old',
+          netPnL: 10,
+          rMultiple: 0.5,
+          entryTime: '2026-09-10T13:30:00.000Z',
+          exitTime: '2026-09-10T15:00:00.000Z',
+        }),
+        makeTrade({
+          id: 'new',
+          netPnL: 40,
+          rMultiple: 2,
+          exitTime: '2026-09-18T15:00:00.000Z',
+          entryReason: 'Faded the open',
+          notes: 'Late entry',
+        }),
+        makeTrade({ id: 'still-open', status: 'open' }),
+      ],
+    });
+
+    expect(tradeSamples.map((sample) => sample.date)).toEqual(['2026-09-18', '2026-09-10']);
+    expect(tradeSamples[0].entryReason).toBe('Faded the open');
+    expect(tradeSamples[0].notes).toBe('Late entry');
+    expect(tradeSamples[0].rMultiple).toBe(2);
+    expect(tradeSamples[0].setupName).toBe('Breakout');
+    expect(tradeSamples[0].symbol).toBe('MES');
+  });
+
+  it('counts a trade’s images without carrying them into the prompt', () => {
+    const { tradeSamples } = build({
+      trades: [
+        makeTrade({ images: ['data:image/jpeg;base64,AAAA', 'https://example.com/clip.mp4'] }),
+      ],
+    });
+
+    expect(tradeSamples[0].imageCount).toBe(2);
+    // The pictures travel as their own parts of the request; the digest only says how many.
+    expect(JSON.stringify(tradeSamples[0])).not.toContain('base64');
+  });
+
+  it('falls back to the trade’s own timestamp when its day is missing', () => {
+    const { tradeSamples } = build({
+      trades: [makeTrade({ tradingDayId: 'missing', setupName: undefined, entryReason: undefined })],
+    });
+
+    expect(tradeSamples[0].date).toBe('2026-09-18');
+    expect(tradeSamples[0].setupName).toBeNull();
+    expect(tradeSamples[0].entryReason).toBeNull();
+  });
+
+  it('caps the list so one long journal cannot crowd the prompt', () => {
+    const trades = Array.from({ length: 30 }, (_, i) =>
+      makeTrade({
+        id: `t${i}`,
+        exitTime: `2026-09-${String(28 - (i % 28)).padStart(2, '0')}T15:00:00.000Z`,
+      })
+    );
+
+    expect(build({ trades }).tradeSamples).toHaveLength(20);
+  });
+});

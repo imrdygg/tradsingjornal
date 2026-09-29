@@ -18,6 +18,12 @@ export type CoachMode =
   /** Which way the trader's numbers say they are heading: recent window against the one before. */
   | 'form'
   /**
+   * The weekly setup read: which setups the last seven days of trades say are working, each
+   * with its level-touch record behind it. Journal data only; the verdict is computed from
+   * the trader's own figures before the model is asked.
+   */
+  | 'setups'
+  /**
    * The break-and-run finder: which sessions, level kinds or named levels the trader's own
    * level-touch log says price did not come back to. Journal data only; no market opinion.
    */
@@ -317,6 +323,33 @@ export interface EdgeResponse {
   motivation: string;
 }
 
+/**
+ * The weekly setup read: which of the trader's setups the last seven days say is working.
+ *
+ * The verdict itself is not in here — it is computed from the recorded trades in the digest
+ * before the model is asked anything, so the two can never disagree. These fields are the
+ * explanation: what is working, what is not, whether the levels held behind it, and the one
+ * thing to change next week.
+ */
+export interface SetupsResponse {
+  headline: string;
+  /** The week read back, quoting each judged setup's trades, net P&L and R. */
+  weekRead: string;
+  /** What is working, each tied to a setup and a figure. Empty when none was judged working. */
+  working: string[];
+  /** What is not working, same terms. Empty when none was judged not working. */
+  notWorking: string[];
+  /** Whether the levels behind those setups held, with the decided counts quoted first. */
+  levelsRead: string;
+  /** The setup to take more of, or an empty string when the week judged none. */
+  leanOn: string;
+  /** The setup to stop taking for now, or an empty string when the week judged none. */
+  shelve: string;
+  /** One concrete thing to do differently next week. */
+  nextWeek: string;
+  motivation: string;
+}
+
 /** One setup the coach proposes, learned from the trader's own trades. */
 export interface LearnedSetup {
   /** A short name in the trader's own terms, not a textbook pattern name. */
@@ -427,6 +460,7 @@ export type CoachResponse =
   | WeeklyResponse
   | FormResponse
   | EdgeResponse
+  | SetupsResponse
   | LearnResponse
   | AskResponse
   | TradeCritiqueResponse

@@ -1,5 +1,12 @@
 import React, { useMemo, useState } from 'react';
-import { Sparkles, AlertTriangle, TrendingUp, BookOpenCheck, Activity } from 'lucide-react';
+import {
+  Sparkles,
+  AlertTriangle,
+  TrendingUp,
+  BookOpenCheck,
+  Activity,
+  CalendarRange,
+} from 'lucide-react';
 import {
   DailyReview,
   Instrument,
@@ -9,7 +16,13 @@ import {
   TradingDay,
 } from '../../types';
 import { buildJournalDigest } from '../../lib/ai/journal-digest';
-import type { BriefResponse, CoachMode, FormResponse, WeeklyResponse } from '../../lib/ai/coach-types';
+import type {
+  BriefResponse,
+  CoachMode,
+  FormResponse,
+  SetupsResponse,
+  WeeklyResponse,
+} from '../../lib/ai/coach-types';
 import { CoachErrorCode, CoachResult, requestCoach } from '../../lib/ai/coach-client';
 import {
   CoachAction,
@@ -28,6 +41,7 @@ import { ApproachAlertCard } from './ApproachAlertCard';
 import { COACH_WAIT_STEPS } from '../common/AiThinking';
 import { BehaviorCard } from './BehaviorCard';
 import { RecentFormCard } from './RecentFormCard';
+import { SetupWeekCard } from './SetupWeekCard';
 import { instrumentSymbol } from '../../lib/trading/instruments';
 import { formatTimestamp } from '../../lib/storage/date-utils';
 
@@ -120,12 +134,14 @@ export const CoachView: React.FC<CoachViewProps> = ({
   const [briefState, setBriefState] = useState<RequestState>(IDLE);
   const [weeklyState, setWeeklyState] = useState<RequestState>(IDLE);
   const [formState, setFormState] = useState<RequestState>(IDLE);
+  const [setupsState, setSetupsState] = useState<RequestState>(IDLE);
 
   /**
-   * Runs one of the three reads this tab keeps.
+   * Runs one of the reads this tab keeps.
    *
-   * All three are answered from the journal digest alone — the two windows of trades, the
-   * day's plan, and the week — so nothing else travels with the request.
+   * All of them are answered from the journal digest alone — the two windows of trades, the
+   * day's plan, the level-touch record and the week read from both — so nothing else travels
+   * with the request.
    */
   async function run(
     mode: CoachMode,
@@ -155,6 +171,10 @@ export const CoachView: React.FC<CoachViewProps> = ({
 
   const planCaveat = digest.dataSufficiency.caveats;
 
+  /** The week read, once one has come back. Null keeps the block from rendering at all. */
+  const setupsRead =
+    setupsState.result?.ok ? (setupsState.result.data as SetupsResponse) : null;
+
   return (
     <div className="space-y-5">
       <div>
@@ -175,6 +195,133 @@ export const CoachView: React.FC<CoachViewProps> = ({
         symbol={instrumentSymbol(instruments, todayTradingDay.primaryInstrument)}
         timezone={timezone}
       />
+
+      {/*
+        The week, one setup at a time, before any writing about it.
+
+        Deliberately the deterministic half of the pair below: the verdict on each setup is
+        computed from the trader's own trades, so the read that follows can be checked
+        against the numbers rather than believed.
+      */}
+      <SetupWeekCard week={digest.setupWeek} />
+
+      {/* ------------------------------------------------------------------ */}
+      {/* The week read                                                       */}
+      {/* ------------------------------------------------------------------ */}
+      <CoachCard className="space-y-3.5">
+        <SectionHeader
+          icon={<CalendarRange className="w-4 h-4 text-amber-400" />}
+          title="Weekly setup read"
+          description="Which of your setups earned its place this week — and the level record sitting behind each one."
+        />
+
+        {!setupsState.result && (
+          <CoachGenerateButton
+            id="coach-setups-generate"
+            label={setupsState.failure ? 'Try again' : 'Read my week by setup'}
+            loadingLabel="Reading the week…"
+            loading={setupsState.loading}
+            onClick={() => run('setups', setSetupsState)}
+          />
+        )}
+
+        {setupsState.loading && (
+          <CoachLoading
+            label="Reading your setups against their levels…"
+            steps={COACH_WAIT_STEPS('the last seven days')}
+          />
+        )}
+
+        {setupsState.failure && (
+          <CoachErrorPanel
+            code={setupsState.failure.code}
+            message={setupsState.failure.message}
+            idSuffix="setups"
+          />
+        )}
+
+        {setupsRead && (
+          <CoachResultPanel
+            id="coach-setups-result"
+            heading="Result"
+            meta={
+              setupsState.writtenAt
+                ? `written ${formatTimestamp(setupsState.writtenAt, timezone)}`
+                : undefined
+            }
+            resultKey={setupsState.writtenAt}
+            busy={setupsState.loading}
+            onRegenerate={() => run('setups', setSetupsState)}
+            regenerateLabel="Regenerate the week read"
+          >
+            <p className="text-sm font-semibold text-zinc-100 leading-snug">{setupsRead.headline}</p>
+            <p className="text-xs text-zinc-300 leading-relaxed">{setupsRead.weekRead}</p>
+
+            <div className="grid sm:grid-cols-2 gap-3">
+              <div>
+                <span className="text-[10px] font-mono uppercase font-bold text-emerald-400">
+                  Working
+                </span>
+                <div className="mt-1.5">
+                  <CoachBullets
+                    items={setupsRead.working}
+                    tone="good"
+                    emptyLabel="No setup was judged working this week."
+                  />
+                </div>
+              </div>
+              <div>
+                <span className="text-[10px] font-mono uppercase font-bold text-rose-400">
+                  Not working
+                </span>
+                <div className="mt-1.5">
+                  <CoachBullets
+                    items={setupsRead.notWorking}
+                    tone="bad"
+                    emptyLabel="No setup was judged not working this week."
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
+                What the levels did
+              </span>
+              <p className="mt-1.5 text-xs text-zinc-300 leading-relaxed">{setupsRead.levelsRead}</p>
+            </div>
+
+            {/*
+              The week's own instruction, in two halves. Both are empty when the week judged
+              no setup either way, which is a finding rather than a gap: the card above says
+              which week it was, and that is what the trader needs to know.
+            */}
+            {(setupsRead.leanOn || setupsRead.shelve) && (
+              <div className="grid sm:grid-cols-2 gap-3 rounded-xl border border-zinc-800 bg-zinc-900/60 p-3">
+                <div>
+                  <span className="text-[10px] font-mono uppercase font-bold text-emerald-400">
+                    Lean on
+                  </span>
+                  <p className="mt-1 text-xs text-zinc-200">
+                    {setupsRead.leanOn || 'nothing this week'}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-[10px] font-mono uppercase font-bold text-amber-400">
+                    Shelve
+                  </span>
+                  <p className="mt-1 text-xs text-zinc-200">
+                    {setupsRead.shelve || 'nothing this week'}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            <CoachAction label="Next week" text={setupsRead.nextWeek} />
+            <CoachMotivation text={setupsRead.motivation} />
+          </CoachResultPanel>
+        )}
+      </CoachCard>
 
       {/* What the coach is allowed to know. Shown up front so the advice can be judged. */}
       <CoachCard className="space-y-2">

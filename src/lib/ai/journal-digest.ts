@@ -18,6 +18,10 @@ import { HIGH_DISCIPLINE_SCORE } from '../analytics/review-trend';
 import { assessRiskCapacity, type RiskCapacity } from '../analytics/risk-capacity';
 import { realizedPnL } from '../analytics/realized-pnl';
 import {
+  buildSetupWeek,
+  type SetupWeek,
+} from '../analytics/setup-week';
+import {
   findLevelEdges,
   MIN_DECIDED,
   summarizeTouches,
@@ -295,6 +299,13 @@ export interface JournalDigest {
    * the coach can answer "which of my break-and-run conditions actually hold?".
    */
   levelEdge: LevelEdge;
+  /**
+   * The last seven days, one setup at a time: what its trades did and what its levels did.
+   *
+   * All-time figures blend a setup's good month with its bad one; this is the window a
+   * trader can still act on, with the verdict computed here rather than by the model.
+   */
+  setupWeek: SetupWeek;
   /**
    * The most recent closed trades, one entry each, newest first.
    *
@@ -902,6 +913,18 @@ export function buildJournalDigest(input: {
   // ---- The break-and-run record -------------------------------------------
   const levelEdge = buildLevelEdge(input.levelTouches ?? [], instruments, setups);
 
+  // ---- The week, one setup at a time --------------------------------------
+  // The same seven days read twice: what each setup's trades paid, and how its levels held.
+  // Built here rather than per mode so the numbers the coach writes about are the numbers
+  // the card shows, from one pass over one window.
+  const setupWeek = buildSetupWeek({
+    trades,
+    tradingDays,
+    touches: input.levelTouches ?? [],
+    todayTradeDate,
+    focusSetupNames: setups.map((setup) => setup.name),
+  });
+
   const behavior = analyzeBehavior({ trades, tradingDays, timezone });
   const unreadableTimes = behavior.timeOfDay.unreadableEntries + behavior.holdTime.unreadable;
   if (unreadableTimes > 0) {
@@ -1021,6 +1044,7 @@ export function buildJournalDigest(input: {
     recentForm,
     behavior,
     levelEdge,
+    setupWeek,
     tradeSamples,
     traderOwnWords: {
       entryReasons: collectWords(closedNewestFirst.map((t) => t.entryReason)),

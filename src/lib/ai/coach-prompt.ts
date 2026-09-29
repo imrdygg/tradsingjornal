@@ -9,6 +9,7 @@ import type {
   JournalDigest,
   LevelEdge,
 } from './journal-digest';
+import type { SetupVerdict, SetupWeek } from '../analytics/setup-week';
 import type { BehaviorBucket as DigestBehaviorBucket } from '../analytics/behavior';
 import type {
   CoachExtras,
@@ -46,6 +47,12 @@ export const COACH_MODES: readonly CoachMode[] = [
    * own touch log says price did not come back to, from the recorded sample only.
    */
   'edge',
+  /**
+   * The weekly read: which of the trader's setups its own week of trades says is working,
+   * with the level-touch record behind each one as the explanation. Journal data only — the
+   * verdict is computed from the recorded figures before the model ever sees it.
+   */
+  'setups',
   /**
    * The setup learner: the setups the trader actually repeats, read from their own logged
    * trades and the entry charts attached to them.
@@ -387,6 +394,65 @@ function formatLevelEdgeForPrompt(edge: LevelEdge | undefined): string[] {
 }
 
 /**
+ * The week, one setup at a time, rendered for the weekly read.
+ *
+ * Each setup's verdict is stated as the digest's own conclusion, the same way the recent-form
+ * trend is: it is computed from the recorded trades, so the writing and the numbers the
+ * trader can see cannot disagree about which setup is working. The model's job is to explain
+ * the verdict and point at the touch record behind it — never to overrule either.
+ */
+function formatSetupWeekForPrompt(week: SetupWeek | undefined): string[] {
+  const lines: string[] = [];
+  if (!week || !week.rows.length) return lines;
+
+  const verdictWord: Record<SetupVerdict, string> = {
+    working: 'WORKING',
+    'not-working': 'NOT WORKING',
+    'too-thin': 'TOO THIN TO JUDGE',
+  };
+  const money = (n: number) => `${n < 0 ? '-' : ''}$${Math.abs(n).toLocaleString('en-US')}`;
+
+  lines.push('');
+  lines.push(`=== THE WEEK: ${week.from} to ${week.to} (${week.days} days, one setup at a time) ===`);
+  lines.push(
+    `Each setup is judged on what its OWN closed trades paid in this window. A setup with ` +
+      `fewer than ${week.minTrades} closed trades in the window is not judged at all. The ` +
+      `touch line under each setup is the explanation, not the verdict: a hold means price ` +
+      `never came back to the level, and a hold is not a profit.`
+  );
+
+  for (const row of week.rows) {
+    const outcome = row.hasOutcome
+      ? `${row.trades} closed trade(s), ${row.wins} win(s), ${row.losses} loss(es), ` +
+        `net ${money(row.netPnL)}, ${row.totalR}R total, ${row.avgR ?? 0}R per trade`
+      : 'no closed trade in this window';
+    lines.push(`- ${row.name} [${verdictWord[row.verdict]}]: ${outcome}`);
+
+    const touch = row.touchRecord;
+    if (touch && touch.touches > 0) {
+      lines.push(
+        `  Levels for this setup: ${touch.touches} touch(es), ${touch.decided} decided, ` +
+          `${touch.neverReturned} held, ${touch.returned} came back` +
+          (touch.decided >= week.minDecided
+            ? ` — hold rate ${touch.holdRate}% of ${touch.decided} decided`
+            : ` — TOO THIN to quote a hold rate (${week.minDecided} decided touches needed)`)
+      );
+    } else if (touch) {
+      lines.push('  Levels for this setup: no touches logged in this window');
+    }
+  }
+
+  if (!week.hasOutcome) {
+    lines.push(
+      'No setup has a closed trade in this window, so the week cannot rank them. Say exactly ' +
+        'that and make the step for next week about logging rather than about performance.'
+    );
+  }
+
+  return lines;
+}
+
+/**
  * The per-trade record, rendered for the setup learner.
  *
  * Nothing is summarised on purpose: the whole point of the section is that the model groups
@@ -521,6 +587,13 @@ export function formatDigestForPrompt(digest: JournalDigest, mode?: CoachMode): 
   // ---- The setup learner's raw material -----------------------------------
   if (mode === 'learn') {
     for (const line of formatTradeSamplesForPrompt(digest.tradeSamples)) lines.push(line);
+  }
+
+  // ---- The week, one setup at a time --------------------------------------
+  // Only the weekly read carries it. The rows are the whole subject of that mode, and every
+  // other prompt is already long enough without a second summary of the last seven days.
+  if (mode === 'setups') {
+    for (const line of formatSetupWeekForPrompt(digest.setupWeek)) lines.push(line);
   }
 
   // ---- Risk capacity ------------------------------------------------------
@@ -1054,6 +1127,19 @@ When the two windows are too thin to compare, say exactly that in trendRead, lea
   "motivation": "2 sentences. Specific to this trader and earned by their data. No slogans."
 }
 Rank only conditions with a readable hold rate. Never quote a rate for a condition listed as not yet readable. A hold means price never came back, not that the trade paid.`,
+  setups: `Return exactly this JSON:
+{
+  "headline": "one sentence, under 16 words, on which setup the week's own numbers say is working",
+  "weekRead": "2-3 sentences on the week, quoting each judged setup's trades, net P&L and R from THE WEEK",
+  "working": ["what is working, each tied to a setup and the figure behind it. Empty array when no setup was judged working"],
+  "notWorking": ["what is not, each tied to a setup and the figure behind it. Empty array when no setup was judged not working"],
+  "levelsRead": "1-2 sentences on whether the setups' levels held, reporting the decided counts before any hold rate. When a setup's touches are too thin, give the counts and say no rate can be read",
+  "leanOn": "the setup the week says to take more of. Empty string when the week judged none working",
+  "shelve": "the setup the week says to stop taking for now. Empty string when the week judged none not working",
+  "nextWeek": "one concrete, checkable thing to do differently next week, matched to what the week actually showed",
+  "motivation": "2 sentences. Specific to this trader and earned by their data. No slogans."
+}
+The bracketed verdict on each setup in THE WEEK is the digest's conclusion from the trader's own recorded trades. Never contradict it, never re-rank a setup marked TOO THIN TO JUDGE, and never attach a hold rate to a setup whose touches are too thin to carry one.`,
   learn: `Return exactly this JSON:
 {
   "headline": "one sentence, under 16 words, on what you found in their own trades",
@@ -1296,6 +1382,16 @@ export function buildCoachPrompt(
         `the record shows has happened, never what it predicts will happen — and never call a ` +
         `hold a profit. If nothing is readable yet, say exactly that and make nextStep about ` +
         `logging more touches.`
+      : mode === 'setups'
+      ? `Read this trader's WEEK SETUP BY SETUP, from THE WEEK section: what each setup's own ` +
+        `trades paid in the last seven days, and whether its levels held behind that. Every ` +
+        `setup is marked WORKING, NOT WORKING or TOO THIN TO JUDGE — that verdict is computed ` +
+        `from the recorded figures and is not yours to change: explain it with the numbers ` +
+        `behind it, and never rank a setup the digest refused to judge. Say which one the ` +
+        `week says to lean on and which to shelve only when the week judged them, quote the ` +
+        `decided counts before any hold rate, and say what has happened rather than what will. ` +
+        `When the window is too thin to rank anything, say exactly that and make the step for ` +
+        `next week about logging.`
       : mode === 'learn'
       ? `Find the setups this trader actually repeats, from their own logged trades and the ` +
         `entry charts they attached. Group the TRADE SAMPLES by what they really did — ` +
@@ -1564,6 +1660,22 @@ export function parseCoachResponse(
       // The step is required: the mode exists to point at what to log next, so an answer
       // that only describes the record would leave the trader with nothing to do.
       nextStep: asText(obj.nextStep, 'nextStep'),
+      motivation: asText(obj.motivation, 'motivation'),
+    };
+  }
+
+  if (mode === 'setups') {
+    return {
+      headline: asText(obj.headline, 'headline'),
+      weekRead: asText(obj.weekRead, 'weekRead'),
+      working: asTextList(obj.working, 'working'),
+      notWorking: asTextList(obj.notWorking, 'notWorking'),
+      levelsRead: asText(obj.levelsRead, 'levelsRead'),
+      // Both of these may legitimately be empty: a week in which nothing was judged has no
+      // setup to lean on and none to shelve, and that is a finding, not a missing field.
+      leanOn: asLooseText(obj.leanOn),
+      shelve: asLooseText(obj.shelve),
+      nextWeek: asText(obj.nextWeek, 'nextWeek'),
       motivation: asText(obj.motivation, 'motivation'),
     };
   }

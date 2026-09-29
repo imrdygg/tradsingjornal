@@ -4,7 +4,6 @@ import { expect, test, type Page } from '@playwright/test';
  * Covers the reported workflow gaps:
  *  - clicking a trade must open the record you wrote
  *  - a closed trade with no review must be completable, so discipline is real
- *  - a locked plan must be undoable
  *  - the journal must be resettable ("start fresh")
  *  - the Position column must never just be a dash
  */
@@ -25,18 +24,6 @@ async function openSettings(page: Page, heading: RegExp) {
   await page.locator('#account-menu-btn').click();
   await page.locator('#account-menu-settings-btn').click();
   await expect(page.getByRole('heading', { name: heading })).toBeVisible();
-}
-
-/**
- * The Today tab opens on the review, the trend, the search box and the day's trades. The
- * morning plan, the risk summary and the coach panels are one click below, in a single
- * folded section.
- */
-async function expandTodayAdvanced(page: Page) {
-  // Addressed by the body it controls, not by aria-expanded: the section holds other
-  // collapsibles, so "any collapsed button inside it" is not the section's own toggle.
-  const toggle = page.locator('button[aria-controls="section-today-advanced-body"]').first();
-  if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click();
 }
 
 /**
@@ -146,45 +133,6 @@ test.describe('Completing an execution review', () => {
     await expect(
       page.locator('#trade-detail-modal').getByText(/% discipline/)
     ).toBeVisible();
-  });
-});
-
-test.describe('Undoing a plan lock', () => {
-  test('a locked plan can be unlocked with a recorded reason', async ({ page }) => {
-    await expandTodayAdvanced(page);
-    await expect(page.getByRole('heading', { name: /Morning Plan/i })).toBeVisible();
-
-    await page.locator('#lock-plan-btn').click();
-
-    // The lock opens a preview first: plan stats, the live sector heat map and a coach
-    // opinion. In the dev server none of those services exist, so the modal reports
-    // both as failed while still leaving the lock reachable — locking must not depend
-    // on a network service being up.
-    await expect(page.getByText(/Before you lock/i)).toBeVisible();
-    await expect(page.getByText(/Sector heat map/i)).toBeVisible();
-    await expect(page.getByText(/Coach opinion on this plan/i)).toBeVisible();
-
-    // The preview carries the whole plan rather than a summary, so the trader sees
-    // exactly what the lock commits to without going back to the form.
-    const preview = page.getByRole('dialog');
-    await expect(preview.getByText(/Important price levels/i)).toBeVisible();
-    await expect(preview.getByText(/What am I waiting for\?/i)).toBeVisible();
-    await expect(preview.getByText('Support, Resistance')).toBeVisible();
-
-    await page.locator('#plan-lock-confirm-btn').click();
-
-    await expect(page.getByText(/Immutable Baseline Stored/i)).toBeVisible();
-
-    await page.locator('#unlock-plan-btn').click();
-    await page
-      .getByPlaceholder(/Locked too early/i)
-      .fill('Locked before I finished marking my levels.');
-    await page.getByRole('button', { name: 'Unlock plan' }).click();
-
-    // Back to an editable plan, with the undo kept in the audit trail.
-    await expect(page.locator('#lock-plan-btn')).toBeVisible();
-    await expect(page.getByText(/Immutable Baseline Stored/i)).toHaveCount(0);
-    await expect(page.getByText('Plan Lock')).toBeVisible();
   });
 });
 

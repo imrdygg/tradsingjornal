@@ -34,20 +34,39 @@ async function writeReview(page: Page) {
 }
 
 test.describe('What Today shows on load', () => {
-  test('the review, the trend and the search box are open without unfolding anything', async ({
+  test('the day, its trades and the room behind them, without unfolding anything', async ({
     page,
   }) => {
+    await expect(page.locator('#section-today-summary-body')).toBeVisible();
     await expect(page.locator('#section-eod-review-body')).toBeVisible();
     await expect(page.locator('#latest-review')).toBeVisible();
     await expect(page.locator('#latest-review')).toContainText('no review written yet');
     await expect(page.locator('#section-review-trend-body')).toBeVisible();
     await expect(page.locator('#journal-search')).toBeVisible();
 
-    // Still folded: the plan and the risk panels are not on screen until asked for.
+    // Nothing is folded shut any more: the drawdown room and its chart are on the page.
+    await expect(page.locator('#drawdown-room')).toBeVisible();
+    await expect(page.locator('#drawdown-room-chart')).toBeVisible();
+
+    // The day reads in one order — the numbers, then the trades they came from, then the
+    // room and the trend behind both. Today's trades are inside the first group, not
+    // stranded past the long-run panels.
+    const y = async (selector: string) => (await page.locator(selector).boundingBox())?.y ?? -1;
+    const summary = await y('#section-today-summary');
+    const trades = await y('#today-trades');
+    const room = await y('#today-room-and-trend');
+    expect(summary).toBeGreaterThanOrEqual(0);
+    expect(summary).toBeLessThan(trades);
+    expect(trades).toBeLessThan(room);
+
+    // And the morning plan is gone from the tab entirely: no bias to write, no plan to
+    // lock, and no fold left holding either.
+    await expect(page.getByRole('heading', { name: /Morning Plan/i })).toHaveCount(0);
+    await expect(page.locator('#lock-plan-btn')).toHaveCount(0);
     await expect(
-      page.locator('button[aria-controls="section-today-advanced-body"]').first()
-    ).toHaveAttribute('aria-expanded', 'false');
-    await expect(page.locator('#drawdown-room')).toBeHidden();
+      page.locator('button[aria-controls="section-today-advanced-body"]')
+    ).toHaveCount(0);
+    await expect(page.getByText(/Plan, risk & coach/i)).toHaveCount(0);
   });
 
   test('the review just written is on the tab, with its focus', async ({ page }) => {

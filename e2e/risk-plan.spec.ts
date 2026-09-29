@@ -1,26 +1,12 @@
 import { expect, test, type Page } from '@playwright/test';
 
 /**
- * Covers the numbered risk plan:
- *  - a trade can be recorded against a chosen slot instead of a free-typed risk
- *  - the plan's per-slot cap is flagged on the Today summary once a slot is spent
- *  - a slot with no cap set never flags, because there is nothing to break
+ * Covers the numbered risk plan: a trade can be recorded against a chosen slot instead of a
+ * free-typed risk, and that slot travels with the record.
  *
- * A fresh journal starts with the default ladder ($25/$50/$75/$100), trade #1 selected, and
- * no caps — so a flag only ever appears because the test set one.
+ * A fresh journal starts with the default ladder ($25/$50/$75/$100) and trade #1 selected,
+ * so a card showing another slot proves the picker was honoured.
  */
-
-/**
- * The Today tab opens on the review, the trend, the search box and the day's trades: the
- * plan, the risk summary that carries the cap flags, and the coach panels are behind one
- * folded section.
- */
-async function expandTodayAdvanced(page: Page) {
-  // Addressed by the body it controls, not by aria-expanded: the section holds other
-  // collapsibles, so "any collapsed button inside it" is not the section's own toggle.
-  const toggle = page.locator('button[aria-controls="section-today-advanced-body"]').first();
-  if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click();
-}
 
 /** The risk ladder is one of the form's optional fields, so it is unfolded first. */
 async function expandTradeOptions(page: Page) {
@@ -36,8 +22,9 @@ async function openAddTrade(page: Page) {
 /**
  * Records one open trade against a given slot.
  *
- * The contracts field is set by hand after the stop: the form derives a size from the slot,
- * and a test that let it would be asserting on the derivation rather than on the cap.
+ * The contracts field is set by hand after the stop: the form fills both in from the slot,
+ * and a test that let it would be asserting on the derivation rather than on the slot the
+ * trade ends up carrying.
  */
 async function recordTrade(page: Page, slot: number, entry = '7730', stop = '7710') {
   await openAddTrade(page);
@@ -48,14 +35,6 @@ async function recordTrade(page: Page, slot: number, entry = '7730', stop = '771
   await page.locator('#trade-contracts').fill('1');
   await page.getByRole('button', { name: /Save Open Trade/i }).click();
   await expect(page.getByRole('heading', { name: /Today's Trade Executions/i })).toBeVisible();
-}
-
-/** Sets a slot's cap in the Morning Plan. Committed on blur, like any other plan field. */
-async function setCap(page: Page, slot: number, cap: number) {
-  await expandTodayAdvanced(page);
-  const input = page.locator(`[data-testid="tier-cap-${slot}"]`);
-  await input.fill(String(cap));
-  await input.blur();
 }
 
 test.beforeEach(async ({ page }) => {
@@ -88,52 +67,5 @@ test.describe('Recording a trade against a risk slot', () => {
 
     await expect(page.locator('[data-trade-risk-slot="custom"]').first()).toBeVisible();
     await expect(page.locator('[data-trade-risk-slot="custom"]').first()).toContainText('$40');
-  });
-});
-
-test.describe('Slots whose cap the day has used up', () => {
-  test('flags the slot as full when the day’s last trade fills it', async ({ page }) => {
-    await setCap(page, 1, 1);
-
-    // Nothing taken yet, so the slot is not yet spent.
-    await expect(page.locator('[data-testid="cap-flag-1"]')).toHaveCount(0);
-
-    await recordTrade(page, 1);
-
-    await expandTodayAdvanced(page);
-    const flag = page.locator('[data-testid="cap-flag-1"]');
-    await expect(flag).toBeVisible();
-    await expect(flag).toContainText('Trade #1 is full');
-    await expect(flag).toContainText('1 of 1 taken');
-    // The flag names the trade that just filled it.
-    await expect(flag).toContainText('Your last trade filled it');
-  });
-
-  test('warns in rose once a slot has gone past its cap', async ({ page }) => {
-    await setCap(page, 1, 1);
-    await recordTrade(page, 1);
-
-    // A second trade at the same slot breaks the plan rather than filling it.
-    await recordTrade(page, 1, '7740', '7725');
-
-    await expandTodayAdvanced(page);
-    const flag = page.locator('[data-testid="cap-flag-1"]');
-    await expect(flag).toBeVisible();
-    await expect(flag).toHaveAttribute('data-cap-over', 'true');
-    await expect(flag).toContainText('over its cap');
-    await expect(flag).toContainText('2 taken against a plan of 1');
-  });
-
-  test('a slot with no cap set never flags', async ({ page }) => {
-    await recordTrade(page, 2);
-
-    await expect(page.locator('[data-testid="cap-flag-2"]')).toHaveCount(0);
-  });
-
-  test('a slot with room left does not flag', async ({ page }) => {
-    await setCap(page, 1, 3);
-    await recordTrade(page, 1);
-
-    await expect(page.locator('[data-testid="cap-flag-1"]')).toHaveCount(0);
   });
 });

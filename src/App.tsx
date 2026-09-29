@@ -9,7 +9,6 @@ import { DrawdownRoomStrip } from './components/today/DrawdownRoomStrip';
 import { DrawdownRoomChart } from './components/today/DrawdownRoomChart';
 import { realizedPnL } from './lib/analytics/realized-pnl';
 import { TodaySummary } from './components/today/TodaySummary';
-import { DailyPlanForm } from './components/today/DailyPlanForm';
 import { GlobalSearch } from './components/common/GlobalSearch';
 import { CollapsibleSection } from './components/common/CollapsibleSection';
 import { TradeCard } from './components/trades/TradeCard';
@@ -18,7 +17,6 @@ import { TradeCloseModal } from './components/trades/TradeCloseModal';
 import { RiskFixupModal } from './components/trades/RiskFixupModal';
 import { TradeDetailModal } from './components/trades/TradeDetailModal';
 import { DailyReviewModal } from './components/review/DailyReviewModal';
-import { PlanLockPreviewModal } from './components/today/PlanLockPreviewModal';
 import { LatestReviewCard } from './components/today/LatestReviewCard';
 import { askEntryCall, buildCoachPlanPatch, type PlanCoachContext } from './lib/ai/plan-coach';
 import type { CoachPlanFields, EntryCallResponse } from './lib/ai/coach-types';
@@ -109,7 +107,7 @@ import {
   estimateStopDistance,
 } from './lib/analytics/risk-capacity';
 import { findInstrument } from './lib/trading/instruments';
-import { Plus, Award, Sparkles, Layers, Cloud, CloudOff, Loader2 } from 'lucide-react';
+import { Plus, Award, Sparkles, Layers, Activity, Cloud, CloudOff, Loader2 } from 'lucide-react';
 
 function AuthScreen() {
   const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in');
@@ -249,9 +247,6 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   const [isCloseModalOpen, setIsCloseModalOpen] = useState(false);
   const [closingTrade, setClosingTrade] = useState<Trade | null>(null);
   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
-  // The plan lock preview: shows stats, the live sector heat map and a coach opinion
-  // before the day's plan is committed. Opened by the lock button, resolved by confirm.
-  const [isLockPreviewOpen, setIsLockPreviewOpen] = useState(false);
   // Trade detail view is stored as an id so it re-renders from live state and
   // immediately reflects a saved execution review.
   const [viewingTradeId, setViewingTradeId] = useState<string | null>(null);
@@ -570,22 +565,6 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   const handleSaveDay = (updated: TradingDay) => {
     storage.saveTradingDay(updated);
     setTradingDays(storage.getTradingDays());
-  };
-
-  /**
-   * Opens the plan lock preview instead of locking outright. Locking commits the day's
-   * risk, so the trader first sees the plan's stats, a live sector heat map and an
-   * honest coach opinion, then confirms. The actual lock happens in confirmLockPlan.
-   */
-  const handleLockPlan = () => {
-    setIsLockPreviewOpen(true);
-  };
-
-  /** The confirmed lock: stores the immutable baseline and closes the preview. */
-  const confirmLockPlan = () => {
-    storage.lockPlan(todayTradingDay.id);
-    setTradingDays(storage.getTradingDays());
-    setIsLockPreviewOpen(false);
   };
 
   /**
@@ -1209,11 +1188,10 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             {/*
               Today, said in one line.
 
-              The page used to open on a search box, a lesson banner, four collapsible panels
-              and a plan form before the first trade appeared. What a trader actually wants
-              from this tab is the day's result and a way to write a trade down, so that is
-              the whole of it: this strip, then the journal. Everything the app had built on
-              top of that is still here, one click down in the section below.
+              The number, the record behind it and the two things a trader does with it: write
+              a trade down, and say how the day went. Everything below this strip is reading
+              the same day back — the lesson, the review and the trades — so the strip stays
+              the page's header and nothing sits between it and them.
             */}
             <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 backdrop-blur-sm sm:p-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1277,126 +1255,19 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             </div>
 
             {/*
-              The lesson, the review it came from, the trend behind it and the search box all
-              sit above the fold, on purpose.
+              ── Today ─────────────────────────────────────────────────────────────────
 
-              These are the four things a trader reads or writes around a session rather than
-              during one, and the four that stop working the moment they are behind a click: a
-              lesson nobody can re-read, a review that disappears after it is saved, and a
-              search box nobody looks for are the same as not having them. The lesson banner
-              is not collapsible at all — it is the one thing the page must keep in view. The
-              risk summary, the drawdown strip and the whole morning plan stay folded below,
-              one click away.
+              The day as it stands, in the order a session is read in: the number, then the
+              lesson from the last one, then the review the trader wrote, then the trades the
+              numbers came from. Nothing here is behind a click, because all four are things
+              a trader reads or writes around a session rather than during one, and each one
+              stops working the moment it is folded away: a lesson nobody can re-read, a
+              review that disappears after it is saved, and a record nobody scrolls back to
+              are the same as not having them.
+
+              The lesson banner stays uncollapsible on purpose — it is the one thing on this
+              page that has to be in view whether or not it is welcome.
             */}
-            {yesterdayFocus && (
-              <YesterdayFocusBanner
-                yesterdayFocus={yesterdayFocus}
-                acknowledged={lessonAcknowledged}
-                acknowledgedAt={lessonAck?.acknowledgedAt ?? null}
-                onAcknowledge={handleAcknowledgeLesson}
-              />
-            )}
-
-            {/* The review the trader last wrote, so the focus they set is still in front of
-                them when they sit down to trade it. */}
-            <CollapsibleSection
-              id="section-eod-review"
-              title="End-of-day review"
-              meta={
-                <span className="font-mono text-[11px] text-zinc-400">
-                  {reviews.length} recorded
-                </span>
-              }
-              persistKey="eod-review"
-            >
-              <LatestReviewCard
-                reviews={reviews}
-                tradingDays={tradingDays}
-                todayTradeDate={todayTradingDay.tradeDate}
-                onOpenReview={() => setIsReviewModalOpen(true)}
-              />
-            </CollapsibleSection>
-
-            {/*
-              The trend is the evidence behind the review, and it is no longer held back until
-              the lesson is accepted: closing the line because a banner was not clicked hid the
-              trader's own record from them.
-            */}
-            <Suspense
-              fallback={
-                <div className="mb-4 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4 text-xs text-zinc-400">
-                  Loading your review trend…
-                </div>
-              }
-            >
-              <CollapsibleSection
-                id="section-review-trend"
-                title="End-of-day review trend"
-                meta={
-                  <span className="font-mono text-[11px] text-zinc-400">
-                    {reviews.length} reviewed
-                  </span>
-                }
-                persistKey="review-trend"
-              >
-                <ReviewTrendPanel reviews={reviews} tradingDays={tradingDays} trades={trades} />
-              </CollapsibleSection>
-            </Suspense>
-
-            {/* Journal-wide search: one box that finds trades by tags, setups, notes, P&L
-                and date/time. Kept out of the fold because finding a past record is the one
-                action that can start from any other. */}
-            <CollapsibleSection
-              id="section-search"
-              title="Search the journal"
-              meta={
-                <span className="font-mono text-[11px] text-zinc-500">
-                  trades, days, notes and tags
-                </span>
-              }
-              persistKey="search"
-            >
-              <GlobalSearch
-                trades={trades}
-                tradingDays={tradingDays}
-                reviews={reviews}
-                instruments={instruments}
-                timezone={profile.timezone}
-                onViewTrade={(trade) => setViewingTradeId(trade.id)}
-                onOpenDay={(dayId) => {
-                  setActiveTab('history');
-                  setHistoryFocusDayId(dayId);
-                }}
-              />
-            </CollapsibleSection>
-
-            {/*
-              Everything else the app knows how to do, folded into one line.
-
-              The risk summary, the drawdown strip and the whole morning plan all still render
-              exactly as they did — they just no longer stand between the trader and the day's
-              trades. Folded rather than deleted: the plan and the risk ladder are the reason
-              the journal exists, and they stay one click away.
-            */}
-            <CollapsibleSection
-              id="section-today-advanced"
-              title="Plan & risk"
-              meta={
-                <span className="font-mono text-[11px] text-zinc-500">
-                  {todayTradingDay.lockedAt ? 'plan locked' : 'plan not locked'}
-                </span>
-              }
-              defaultOpen={false}
-              persistKey="today-advanced"
-            >
-            {/*
-              The panels below are the previous page, kept verbatim — spacing and all — with
-              one wrapper around them. They are deliberately not re-indented: nothing inside
-              changed, and shifting two hundred untouched lines sideways would bury the part
-              of this that actually did.
-            */}
-            <div className="space-y-6">
-            {/* Today's Risk & Performance Summary Card */}
             <CollapsibleSection
               id="section-today-summary"
               title="Today's summary"
@@ -1431,68 +1302,40 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               />
             </CollapsibleSection>
 
-            {/*
-              What the account can still absorb, directly above what today is allowed to
-              risk. The plan's loss limit can read unchanged while the room behind it is
-              nearly gone, and this is the moment that gap matters most.
-            */}
-            <DrawdownRoomStrip
-              capacity={riskCapacity}
-              plannedSize={plannedSizeRisk}
-              onOpenRisk={() => setActiveTab('analytics')}
-            />
+            {yesterdayFocus && (
+              <YesterdayFocusBanner
+                yesterdayFocus={yesterdayFocus}
+                acknowledged={lessonAcknowledged}
+                acknowledgedAt={lessonAck?.acknowledgedAt ?? null}
+                onAcknowledge={handleAcknowledgeLesson}
+              />
+            )}
 
-            {/*
-              The strip says what is left today; this says how it got there. Kept beside it
-              rather than on Analytics, where the limit is set, because the reading the chart
-              explains is the one on this screen.
-            */}
-            <DrawdownRoomChart trades={trades} maxDrawdown={profile.maxDrawdown ?? null} />
-
-            {/* Morning Plan & Guardrails Form */}
+            {/* The review the trader last wrote, so the focus they set is still in front of
+                them when they sit down to trade it. */}
             <CollapsibleSection
-              id="section-morning-plan"
-              title="Morning plan"
+              id="section-eod-review"
+              title="End-of-day review"
               meta={
-                <span
-                  className={`rounded-md border px-2 py-0.5 font-mono text-[10px] ${
-                    todayTradingDay.lockedAt
-                      ? 'border-emerald-800 bg-emerald-950/50 text-emerald-300'
-                      : 'border-amber-800/70 bg-amber-950/40 text-amber-300'
-                  }`}
-                >
-                  {todayTradingDay.lockedAt ? 'Locked' : 'Not locked'}
+                <span className="font-mono text-[11px] text-zinc-400">
+                  {reviews.length} recorded
                 </span>
               }
-              persistKey="morning-plan"
+              persistKey="eod-review"
             >
-              <DailyPlanForm
-                day={todayTradingDay}
-                setups={setups}
-                instruments={instruments}
-                openTrades={todayTrades.filter((t) => t.status === 'open')}
-                todayTrades={todayTrades}
-                onSaveDay={handleSaveDay}
-                onLockPlan={handleLockPlan}
-                lockPreviewOpen={isLockPreviewOpen}
-                onRecordPlanChange={handleRecordPlanChange}
-                onOpenPlaybook={handleOpenPlaybook}
-                onLogScaleInTrade={openAddTrade}
-                onUnlockPlan={handleUnlockPlan}
-                drawdownCapacity={riskCapacity}
-                plannedSizeRisk={plannedSizeRisk}
-                riskTiers={riskTiers}
+              <LatestReviewCard
+                reviews={reviews}
+                tradingDays={tradingDays}
+                todayTradeDate={todayTradingDay.tradeDate}
+                onOpenReview={() => setIsReviewModalOpen(true)}
               />
-            </CollapsibleSection>
-
-            </div>
             </CollapsibleSection>
 
             {/*
               The journal itself — the reason the tab exists.
 
-              Kept out of the folded section above on purpose: whatever else a trader has
-              turned on, the trades they took today are the thing they came to see.
+              Last inside Today, because it is the record everything above it is about: the
+              summary, the lesson and the review are all reading these trades back.
             */}
             <section id="today-trades" className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1542,6 +1385,98 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
                 </div>
               )}
             </section>
+
+            {/*
+              ── Drawdown room over time, and the trend the reviews make ──────────────
+
+              The room left is a number; these two are what explain it. The chart is the
+              account's own history of room against the agreed floor, which is the one thing
+              a day's loss limit cannot say on its own — the limit can read unchanged while
+              the room behind it is nearly gone. The review trend is the same history told by
+              the trader's own writing: whether the discipline described in the last review is
+              the discipline of the last month of trades.
+
+              Both sit below Today rather than beside it because they are read once a session,
+              not once a trade.
+            */}
+            <section id="today-room-and-trend" className="space-y-6">
+              <h2 className="flex items-center gap-2 font-mono text-xs font-bold uppercase tracking-wider text-zinc-400">
+                <Activity className="h-4 w-4 text-zinc-300" />
+                Drawdown room & review trend
+              </h2>
+
+              {/*
+                What the account can still absorb, directly above the chart that got it there.
+              */}
+              <DrawdownRoomStrip
+                capacity={riskCapacity}
+                plannedSize={plannedSizeRisk}
+                onOpenRisk={() => setActiveTab('analytics')}
+              />
+
+              {/*
+                The strip says what is left today; this says how it got there. Kept beside it
+                rather than on Analytics, where the limit is set, because the reading the
+                chart explains is the one on this screen.
+              */}
+              <DrawdownRoomChart trades={trades} maxDrawdown={profile.maxDrawdown ?? null} />
+
+              {/*
+                The trend is the evidence behind the review, and it is not held back until the
+                lesson is accepted: closing the line because a banner was not clicked hid the
+                trader's own record from them.
+              */}
+              <Suspense
+                fallback={
+                  <div className="mb-4 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4 text-xs text-zinc-400">
+                    Loading your review trend…
+                  </div>
+                }
+              >
+                <CollapsibleSection
+                  id="section-review-trend"
+                  title="End-of-day review trend"
+                  meta={
+                    <span className="font-mono text-[11px] text-zinc-400">
+                      {reviews.length} reviewed
+                    </span>
+                  }
+                  persistKey="review-trend"
+                >
+                  <ReviewTrendPanel
+                    reviews={reviews}
+                    tradingDays={tradingDays}
+                    trades={trades}
+                  />
+                </CollapsibleSection>
+              </Suspense>
+            </section>
+
+            {/* Journal-wide search: one box that finds trades by tags, setups, notes, P&L
+                and date/time. It reads across every tab's records, so it sits last. */}
+            <CollapsibleSection
+              id="section-search"
+              title="Search the journal"
+              meta={
+                <span className="font-mono text-[11px] text-zinc-500">
+                  trades, days, notes and tags
+                </span>
+              }
+              persistKey="search"
+            >
+              <GlobalSearch
+                trades={trades}
+                tradingDays={tradingDays}
+                reviews={reviews}
+                instruments={instruments}
+                timezone={profile.timezone}
+                onViewTrade={(trade) => setViewingTradeId(trade.id)}
+                onOpenDay={(dayId) => {
+                  setActiveTab('history');
+                  setHistoryFocusDayId(dayId);
+                }}
+              />
+            </CollapsibleSection>
           </div>
         );
 
@@ -1820,20 +1755,6 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
         onSaveReview={handleSaveDailyReview}
       />
 
-      {/* Plan Lock Preview: stats + live sector heat map + coach opinion before committing */}
-      <PlanLockPreviewModal
-        isOpen={isLockPreviewOpen}
-        day={todayTradingDay}
-        instruments={instruments}
-        trades={trades}
-        reviews={reviews}
-        setups={setups}
-        timezone={profile.timezone}
-        maxDrawdown={profile.maxDrawdown ?? null}
-        riskTiers={riskTiers}
-        onConfirm={confirmLockPlan}
-        onBack={() => setIsLockPreviewOpen(false)}
-      />
     </AppShell>
   );
 }

@@ -23,17 +23,6 @@ async function gotoTab(page: Page, tab: string, heading: RegExp) {
   await expect(page.getByRole('heading', { name: heading })).toBeVisible();
 }
 
-/**
- * The Today tab opens on the review, the trend, the search box and the day's trades: the
- * coach checkpoints and the rest of the plan sit behind one folded section.
- */
-async function expandTodayAdvanced(page: Page) {
-  // Addressed by the body it controls, not by aria-expanded: the section holds other
-  // collapsibles, so "any collapsed button inside it" is not the section's own toggle.
-  const toggle = page.locator('button[aria-controls="section-today-advanced-body"]').first();
-  if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click();
-}
-
 /** The form asks for entry/exit/why/note/tags; the times and the rest are under "More options". */
 async function expandTradeOptions(page: Page) {
   const toggle = page.locator('#trade-more-options-toggle');
@@ -224,10 +213,6 @@ test.describe('Ask about my trading', () => {
  */
 test.describe('The ask box is not duplicated onto Today', () => {
   test('never renders a second instance on the Today tab', async ({ page }) => {
-    // Unfolded as well as folded: the sections keep their body mounted, so an absence here
-    // is an absence from the page rather than from the visible slice of it.
-    await expandTodayAdvanced(page);
-
     await expect(page.locator('#today-ask-input')).toHaveCount(0);
     await expect(page.locator('#coach-ask-input')).toHaveCount(0);
 
@@ -313,24 +298,20 @@ test.describe('Behaviour read from the trader own timestamps', () => {
 /**
  * The coach lives on its own tab and nowhere else.
  *
- * Today is for the day's record: the end-of-day review, the lesson carried forward and the
- * trend behind it. The coach cards that used to sit in its folded section put a second,
- * model-written reading of the same journal onto the page, and are gone. They are checked
- * folded as well as unfolded, because the sections keep their bodies mounted — an absence
- * here has to be an absence from the page, not from the visible slice of it.
+ * Today is for the day's record: the summary, the end-of-day review, the lesson carried
+ * forward, the trades and the trend behind them. The coach cards that used to sit on the
+ * page put a second, model-written reading of the same journal there, and are gone. Every
+ * section on the tab is open, so an absence checked here is an absence from the tab rather
+ * than from the visible slice of it.
  */
 test.describe('The coach has no home on the Today tab', () => {
-  test('renders no coach card, folded or unfolded', async ({ page }) => {
-    await expect(page.locator('#coach-checkpoint-card')).toHaveCount(0);
-    await expect(page.locator('#coach-comparison-list')).toHaveCount(0);
-
-    await expandTodayAdvanced(page);
-
+  test('renders no coach card anywhere on the tab', async ({ page }) => {
     await expect(page.locator('#coach-checkpoint-card')).toHaveCount(0);
     await expect(page.locator('#coach-comparison-list')).toHaveCount(0);
     await expect(page.locator('#coach-checkpoint-after-loss')).toHaveCount(0);
 
-    // And the section it used to live in is named for what is left in it.
+    // And the fold they used to sit inside is gone with the plan it was named for.
     await expect(page.getByText(/Plan, risk & coach/i)).toHaveCount(0);
+    await expect(page.locator('#section-today-advanced-body')).toHaveCount(0);
   });
 });

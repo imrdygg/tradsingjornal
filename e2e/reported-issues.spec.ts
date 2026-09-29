@@ -1,15 +1,12 @@
 import { expect, test, type Page } from '@playwright/test';
 
 /**
- * Regression tests for the issues reported against the Playbook, the position
- * scale-in calculator and the mobile layout:
+ * Regression tests for the issues reported against the Playbook and the mobile layout:
  *
  *  1. Recording a trade used to make the trader pick a setup out of a menu. It now asks
  *     one question — which of the two sides was it — and the answer is stored as given.
  *  2. Setup names were visually cut off on the Playbook cards.
- *  3. The break-even calculator shipped hard-coded example prices — it must
- *     auto-fill from the trader's real open trade instead.
- *  4. The bottom navigation disappeared under the browser's own bars while
+ *  3. The bottom navigation disappeared under the browser's own bars while
  *     scrolling on a phone.
  */
 
@@ -49,17 +46,6 @@ async function gotoTab(page: Page, tab: string, heading: RegExp) {
     await mobile.click();
   }
   await expect(page.getByRole('heading', { name: heading })).toBeVisible();
-}
-
-/**
- * The Today tab opens on the review, the trend, the search box and the day's trades: the
- * morning plan, the risk summary and the drawdown strip sit behind one folded section.
- */
-async function expandTodayAdvanced(page: Page) {
-  // Addressed by the body it controls, not by aria-expanded: the section holds other
-  // collapsibles, so "any collapsed button inside it" is not the section's own toggle.
-  const toggle = page.locator('button[aria-controls="section-today-advanced-body"]').first();
-  if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click();
 }
 
 async function openAddTrade(page: Page) {
@@ -197,128 +183,7 @@ test.describe('The bottom nav stays on screen while the page scrolls', () => {
   });
 });
 
-test.describe('Break-even calculator uses real numbers', () => {
-  test('auto-fills from the open trade instead of an example price', async ({ page }) => {
-    // Log a real open position: 2 contracts long from 6700.00.
-    await openAddTrade(page);
-    await page.locator('#trade-entry-price').fill('6700');
-    await page.locator('#trade-initial-stop').fill('6680');
-    await page.locator('#trade-contracts').fill('2');
-    await page.getByRole('button', { name: /Save Open Trade/i }).click();
-
-    // The scale-in calculator lives in the folded section with the rest of the plan.
-    await expandTodayAdvanced(page);
-
-    // The calculator should have picked the real fill up, not 7730/7700.
-    await expect(page.locator('#breakeven-entry-price')).toHaveValue('6700.00');
-    await expect(page.locator('#breakeven-contracts-held')).toHaveValue('2');
-    await expect(page.locator('#breakeven-current-price')).toHaveValue('6700.00');
-
-    // And the dollar figures must use MES's real $5/point.
-    await page.locator('#breakeven-current-price').fill('6690');
-    await expect(page.getByText(/\$5\.00\/pt/).first()).toBeVisible();
-    await expect(
-      page.getByText('New Average Entry = Break-Even Price')
-    ).toBeVisible();
-  });
-
-  test('no example preset buttons remain on the calculator', async ({ page }) => {
-    await expandTodayAdvanced(page);
-
-    // The calculator is opt-in now, so it is opened before it can be inspected.
-    await page.locator('#toggle-scale-in').click();
-    await expect(page.getByText(/Your Example \(1 @ 7730/i)).toHaveCount(0);
-    await expect(page.getByText(/Down \$50 Example/i)).toHaveCount(0);
-  });
-
-  test('scaling in is optional: the calculator is folded away until it is asked for', async ({
-    page,
-  }) => {
-    await expandTodayAdvanced(page);
-
-    // With no open position there is nothing to add to, so the step stays collapsed and
-    // nothing about it is required before locking.
-    await expect(page.locator('#toggle-scale-in')).toHaveAttribute('aria-expanded', 'false');
-    await expect(page.locator('#breakeven-entry-price')).toHaveCount(0);
-
-    await page.locator('#toggle-scale-in').click();
-    await expect(page.locator('#toggle-scale-in')).toHaveAttribute('aria-expanded', 'true');
-    await expect(page.locator('#breakeven-entry-price')).toBeVisible();
-
-    // And it folds away again, so the plan is never carrying a step it does not use.
-    await page.locator('#toggle-scale-in').click();
-    await expect(page.locator('#breakeven-entry-price')).toHaveCount(0);
-  });
-});
-
-test.describe('Logging a scale-in as its own trade', () => {
-  test('pre-fills the record form and saves a second open trade', async ({ page }) => {
-    // Start with a real open position: 1 long from 7730.
-    await openAddTrade(page);
-    await page.locator('#trade-entry-price').fill('7730');
-    await page.locator('#trade-initial-stop').fill('7710');
-    await page.locator('#trade-contracts').fill('1');
-    await page.getByRole('button', { name: /Save Open Trade/i }).click();
-    await expandTodayAdvanced(page);
-
-    // Describe the add: 5 more contracts at 7700 with price now at 7700.
-    await page.locator('#breakeven-current-price').fill('7700');
-    await page.locator('#breakeven-add-price').fill('7700');
-    await page.locator('#breakeven-contracts-to-add').fill('5');
-
-    // New average must be 7705 -> a 5 point bounce from the add.
-    await expect(page.getByText('7,705.00').first()).toBeVisible();
-
-    await page.locator('#breakeven-log-scale-in').click();
-
-    // The record form opens as a NEW trade, pre-filled with the add.
-    await expect(page.getByRole('heading', { name: /Log a Trade/i })).toBeVisible();
-    await expect(page.getByText(/Pre-filled from the break-even calculator/i)).toBeVisible();
-    await expect(page.locator('#trade-entry-price')).toHaveValue('7700');
-    await expect(page.locator('#trade-contracts')).toHaveValue('5');
-
-    // The add arrives with a plan stop for its own entry and size; the trader overrides it
-    // here with the level the position is actually wrong at.
-    await page.locator('#trade-initial-stop').fill('7690');
-    await page.getByRole('button', { name: /Save Open Trade/i }).click();
-
-    // Both entries are now recorded as separate trades.
-    await expect(
-      page.getByRole('heading', { name: /Today's Trade Executions \(2\)/i })
-    ).toBeVisible();
-    await expect(page.getByText(/2 Open/).first()).toBeVisible();
-  });
-
-  test('the trade list shows the combined size and average entry', async ({ page }) => {
-    // Open 1 @ 7730, then scale in 5 @ 7700 -> 6 contracts, average 7705.
-    await openAddTrade(page);
-    await page.locator('#trade-entry-price').fill('7730');
-    await page.locator('#trade-initial-stop').fill('7710');
-    await page.locator('#trade-contracts').fill('1');
-    await page.getByRole('button', { name: /Save Open Trade/i }).click();
-    await expandTodayAdvanced(page);
-
-    await page.locator('#breakeven-current-price').fill('7700');
-    await page.locator('#breakeven-add-price').fill('7700');
-    await page.locator('#breakeven-contracts-to-add').fill('5');
-    await page.locator('#breakeven-log-scale-in').click();
-    await page.locator('#trade-initial-stop').fill('7690');
-    await page.getByRole('button', { name: /Save Open Trade/i }).click();
-
-    // Today: both legs are badged as one position of 2 legs at the blended entry.
-    await expect(page.getByText(/Combined position · 2 legs/).first()).toBeVisible();
-    await expect(page.getByText(/6 MES · avg entry 7705\.00/).first()).toBeVisible();
-
-    // Trade log: the desktop table and the mobile cards each carry it too.
-    await gotoTab(page, 'trades', /Trade Log/i);
-    if (await page.locator('table').first().isVisible()) {
-      await expect(page.getByText(/6 MES total/).first()).toBeVisible();
-      await expect(page.getByText(/avg 7705\.00/).first()).toBeVisible();
-    } else {
-      await expect(page.getByText(/6 MES · avg entry 7705\.00/).first()).toBeVisible();
-    }
-  });
-
+test.describe('Position badges on the trade list', () => {
   test('a standalone trade is not badged as a position', async ({ page }) => {
     await openAddTrade(page);
     await page.locator('#trade-entry-price').fill('7730');
@@ -326,19 +191,5 @@ test.describe('Logging a scale-in as its own trade', () => {
     await page.getByRole('button', { name: /Save Open Trade/i }).click();
 
     await expect(page.getByText(/Combined position/)).toHaveCount(0);
-  });
-
-  test('the log button is disabled until the numbers make sense', async ({ page }) => {
-    await expandTodayAdvanced(page);
-
-    // No open trade, so the optional calculator is folded away until it is opened.
-    await page.locator('#toggle-scale-in').click();
-
-    // No open trade and no manual entry yet.
-    await expect(page.locator('#breakeven-log-scale-in')).toBeDisabled();
-
-    await page.locator('#breakeven-entry-price').fill('7730');
-    await page.locator('#breakeven-add-price').fill('7700');
-    await expect(page.locator('#breakeven-log-scale-in')).toBeEnabled();
   });
 });

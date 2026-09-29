@@ -12,17 +12,6 @@ import { expect, test, type Page } from '@playwright/test';
  */
 
 /**
- * The Today tab opens on the review, the trend, the search box and the day's trades; the
- * drawdown strip is down with the plan, behind one folded section.
- */
-async function expandTodayAdvanced(page: Page) {
-  // Addressed by the body it controls, not by aria-expanded: the section holds other
-  // collapsibles, so "any collapsed button inside it" is not the section's own toggle.
-  const toggle = page.locator('button[aria-controls="section-today-advanced-body"]').first();
-  if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click();
-}
-
-/**
  * Records one closed MES trade of 2 contracts, so a 10-point move is $100 at MES's $5/point.
  * Closed at the moment it is written, because the room only counts realized P&L.
  */
@@ -80,14 +69,12 @@ const FEE_BEARING_TRADE = {
 
 test.describe('The drawdown room follows the journal', () => {
   test('a winning trade adds room above the agreed drawdown', async ({ page }) => {
-    await expandTodayAdvanced(page);
     const strip = page.locator('#drawdown-room');
     await expect(strip).toContainText('$1,000.00 room left');
     await expect(strip).toContainText('10 more losing days');
 
     // +$100 → the room is the agreed limit plus the profit, not the limit again.
     await recordClosedTrade(page, 7730, 7740);
-    await expandTodayAdvanced(page);
 
     await expect(strip).toContainText('$1,100.00 room left');
     await expect(strip).toContainText('$100.00 of profit on top of $1,000.00');
@@ -95,14 +82,11 @@ test.describe('The drawdown room follows the journal', () => {
   });
 
   test('the chart behind the number waits for the first closed trade', async ({ page }) => {
-    await expandTodayAdvanced(page);
-
     const chart = page.locator('#drawdown-room-chart');
     await expect(chart).toContainText('No closed trade yet');
     await expect(chart.locator('[data-testid="room-chart"]')).toHaveCount(0);
 
     await recordClosedTrade(page, 7730, 7740);
-    await expandTodayAdvanced(page);
 
     // The line appears, and reads the same $1,100.00 the strip does.
     await expect(chart.locator('[data-testid="room-chart"]')).toBeVisible();
@@ -121,7 +105,6 @@ test.describe('The drawdown room follows the journal', () => {
       FEE_BEARING_TRADE
     );
     await page.reload();
-    await expandTodayAdvanced(page);
 
     const strip = page.locator('#drawdown-room');
     await expect(strip).toContainText('$1,150.00 room left');
@@ -132,7 +115,6 @@ test.describe('The drawdown room follows the journal', () => {
   test('a losing trade takes the room back down and reports what it spent', async ({ page }) => {
     // -$100 → the limit is partly spent, so the strip switches to the used-of reading.
     await recordClosedTrade(page, 7730, 7720);
-    await expandTodayAdvanced(page);
 
     const strip = page.locator('#drawdown-room');
     await expect(strip).toContainText('$900.00 room left');

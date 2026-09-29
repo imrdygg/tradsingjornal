@@ -20,18 +20,6 @@ const DIAGRAM_WITH_LEVEL = 'svg[role="img"] line[stroke-dasharray="4 3"]';
 const SUPPORT_SUMMARY =
   'Buying a proven demand zone where price has repeatedly stopped falling and bounced';
 
-/**
- * The Today tab opens on the review, the trend, the search box and the day's trades; the
- * morning plan — and the "Study in Playbook" link that lives on it — is behind one folded
- * section.
- */
-async function expandTodayAdvanced(page: Page) {
-  // Addressed by the body it controls, not by aria-expanded: the section holds other
-  // collapsibles, so "any collapsed button inside it" is not the section's own toggle.
-  const toggle = page.locator('button[aria-controls="section-today-advanced-body"]').first();
-  if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click();
-}
-
 /** Open the Playbook tab via whichever nav is visible at the current viewport. */
 async function gotoPlaybook(page: Page) {
   const desktop = page.locator('#nav-btn-playbook');
@@ -340,36 +328,5 @@ test.describe('Setup charts & video attachments', () => {
     await page.getByRole('button', { name: /Update Setup/i }).click();
 
     await expect(card.getByText(/Playbook Charts & Video \(3\)/)).toBeVisible();
-  });
-});
-
-test.describe('Playbook deep-link', () => {
-  test('Morning Plan "Study in Playbook" opens the tab focused on watched setups', async ({ page }) => {
-    // Start on Today where the Morning Plan lives, folded away with the rest of the plan.
-    await expandTodayAdvanced(page);
-    await expect(page.getByRole('heading', { name: /Morning Plan/i })).toBeVisible();
-
-    // Watched setups are seeded as the two level setups, so the deep link focuses cards
-    // that are already on screen.
-    await page.getByRole('button', { name: /Study in Playbook/i }).click();
-
-    await expect(page.getByRole('heading', { name: /Trading Setups & Playbook Library/i })).toBeVisible();
-
-    // The focused cards are expanded to their study guides and highlighted.
-    const card = setupCard(page, 'Support');
-    await expect(card.getByText('How this setup forms')).toBeVisible();
-    await expect(card.locator('svg[role="img"]')).toHaveCount(2);
-  });
-
-  test('a setup taken off the plan loses its Playbook badge', async ({ page }) => {
-    await expandTodayAdvanced(page);
-    await expect(page.getByRole('heading', { name: /Morning Plan/i })).toBeVisible();
-
-    // A fresh day watches both level setups; take one back off the watch list.
-    await page.getByRole('button', { name: 'Resistance', exact: true }).first().click();
-    await page.getByRole('button', { name: /Study in Playbook/i }).click();
-
-    await expect(setupCard(page, 'Support').getByText('Watched today')).toBeVisible();
-    await expect(setupCard(page, 'Resistance').getByText('Watched today')).toHaveCount(0);
   });
 });

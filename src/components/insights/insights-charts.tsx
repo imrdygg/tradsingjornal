@@ -346,11 +346,19 @@ export const ModeTile: React.FC<{
  * None of it is hover-only. With the pointer away — on a phone, or simply not moving — the
  * readout holds the final trade, so the panel still answers "where did this end up".
  *
+ * Given an `onOpenTrade`, a click on any point opens that trade. The curve is the one place in
+ * the app where a single trade is a single dot, so it is the natural place to reach one — and
+ * a dot the trader cannot open sends them back to the log to hunt for what they just found.
+ *
  * The fill is a gradient on purpose rather than a flat wash: the curve gets heavier as the
  * account gets further from zero, so the height of the line reads as money even with the axis
  * hidden behind a glance.
  */
-export const EquityCurveChart: React.FC<{ points: EquityPoint[] }> = ({ points }) => {
+export const EquityCurveChart: React.FC<{
+  points: EquityPoint[];
+  /** Opens the trade a clicked point stands for. Absent means the curve is read-only. */
+  onOpenTrade?: (tradeId: string) => void;
+}> = ({ points, onOpenTrade }) => {
   /** The trade under the pointer, or null while the pointer is away from the curve. */
   const [cursor, setCursor] = useState<number | null>(null);
 
@@ -359,24 +367,40 @@ export const EquityCurveChart: React.FC<{ points: EquityPoint[] }> = ({ points }
     null
   );
 
-  /**
+  /*
    * Follow recharts' own active index rather than measuring the pointer ourselves — it has
    * already snapped the position to a datum, which is what keeps the readout and the dot
-   * agreeing on which trade is being described.
+   * agreeing on which trade is being described, and it does the same for a finger.
    *
    * Typed structurally rather than imported from recharts' internals, and read through
    * `Number` because recharts hands the index back as a *string* on a categorical axis (and
    * as `null` the moment the pointer leaves). Nothing here trusts it to be in range either:
    * an index pointing at a trade that is not in `points` simply stops the scrub.
    */
-  const scrub = (state: { activeTooltipIndex?: number | string | null }) => {
+  const indexAt = (state: { activeTooltipIndex?: number | string | null }): number | null => {
     const raw = state?.activeTooltipIndex;
-    if (raw === null || raw === undefined || raw === '') {
-      setCursor(null);
-      return;
-    }
+    if (raw === null || raw === undefined || raw === '') return null;
     const index = Number(raw);
-    setCursor(Number.isInteger(index) && index >= 0 && index < points.length ? index : null);
+    return Number.isInteger(index) && index >= 0 && index < points.length ? index : null;
+  };
+
+  const scrub = (state: { activeTooltipIndex?: number | string | null }) =>
+    setCursor(indexAt(state));
+
+  /**
+   * A click on the curve opens the trade it landed on, which is the question the line raises
+   * and could not answer: the curve now tells the whole story and the trade tells its own.
+   *
+   * Guarded twice on purpose. A click with no point under it (below the line, in the axis
+   * gutter, after a drag that left the plot area) has nothing to open, and a point whose trade
+   * is no longer in the journal must not open an empty dialog.
+   */
+  const open = (state: { activeTooltipIndex?: number | string | null }) => {
+    if (!onOpenTrade) return;
+    const index = indexAt(state);
+    if (index === null) return;
+    const tradeId = points[index]?.tradeId;
+    if (tradeId) onOpenTrade(tradeId);
   };
 
   const hovered = cursor === null ? undefined : points[cursor];
@@ -401,8 +425,12 @@ export const EquityCurveChart: React.FC<{ points: EquityPoint[] }> = ({ points }
             </span>
             <span className="font-mono text-[9px] uppercase tracking-wider text-zinc-600">
               {hovered
-                ? `trade ${shown.index} of ${points.length}`
-                : 'drag across the curve to read back'}
+                ? `trade ${shown.index} of ${points.length}${
+                    onOpenTrade ? ' · click to open it' : ''
+                  }`
+                : onOpenTrade
+                  ? 'click a point, or drag to read back'
+                  : 'drag across the curve to read back'}
             </span>
           </div>
 
@@ -450,7 +478,10 @@ export const EquityCurveChart: React.FC<{ points: EquityPoint[] }> = ({ points }
         </div>
       )}
 
-      <div id="insights-equity-chart" className="h-56 w-full">
+      <div
+        id="insights-equity-chart"
+        className={`h-56 w-full ${onOpenTrade ? 'cursor-pointer' : 'cursor-crosshair'}`}
+      >
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart
           data={points}
@@ -459,6 +490,7 @@ export const EquityCurveChart: React.FC<{ points: EquityPoint[] }> = ({ points }
           onMouseLeave={() => setCursor(null)}
           onTouchMove={scrub}
           onTouchEnd={() => setCursor(null)}
+          onClick={open}
         >
           <defs>
             <linearGradient id="equityGrad" x1="0" y1="0" x2="0" y2="1">

@@ -67,6 +67,15 @@ interface InsightsViewProps {
    * card counted, so the numbers cannot disagree.
    */
   onOpenTrades?: (label: string, tradeIds: string[]) => void;
+  /**
+   * Opens one trade, by id.
+   *
+   * The equity curve is the only picture on the tab where a single trade is a single mark, so
+   * pointed at it the trader is already asking about one trade rather than about a group. The
+   * log is the wrong destination for that question — it would show the trade among others
+   * again — so the trade itself opens.
+   */
+  onOpenTrade?: (tradeId: string) => void;
 }
 
 /**
@@ -154,6 +163,7 @@ export const InsightsView: React.FC<InsightsViewProps> = ({
   trades,
   tradingDays,
   onOpenTrades,
+  onOpenTrade,
 }) => {
   const insights = useMemo(
     () => generateDeterministicInsights(trades, tradingDays),
@@ -475,11 +485,12 @@ export const InsightsView: React.FC<InsightsViewProps> = ({
           </div>
 
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-3.5">
-            <EquityCurveChart points={equity} />
+            <EquityCurveChart points={equity} onOpenTrade={onOpenTrade} />
             <p className="mt-2 text-[10px] leading-relaxed text-zinc-500">
               Every closed trade in order, oldest on the left, P&L before fees. The dashed line
               is your best point so far, so the gap between the curve and that line is what the
               current stretch has cost you — the reading a total can never show.
+              {onOpenTrade && ' Click any point to open that trade.'}
             </p>
           </div>
         </section>

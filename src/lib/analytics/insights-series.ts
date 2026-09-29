@@ -356,6 +356,8 @@ export function buildWeekdayBreakdown(
  * what happened.
  */
 export interface EquityPoint {
+  /** The trade this point is: what a click on the curve opens. */
+  tradeId: string;
   /** 1-based position of the trade in the sequence. */
   index: number;
   date: string;
@@ -397,6 +399,7 @@ export function buildEquitySequence(
     cumulative += trade.grossPnL;
     peak = Math.max(peak, cumulative);
     return {
+      tradeId: trade.id,
       index: position + 1,
       date,
       label: `#${position + 1}`,

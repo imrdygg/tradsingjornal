@@ -1614,6 +1614,9 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             trades={trades}
             tradingDays={tradingDays}
             onOpenTrades={handleOpenTrades}
+            // A point on the equity curve is one trade, so it opens that trade here rather
+            // than handing the log a filter for a single row.
+            onOpenTrade={(tradeId) => setViewingTradeId(tradeId)}
           />
         );
 

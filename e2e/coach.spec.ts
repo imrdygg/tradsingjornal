@@ -5,7 +5,7 @@ import { expect, test, type Page } from '@playwright/test';
  *  - the tab is reachable and states exactly what it is allowed to know
  *  - it never invents output: with no accessible service it says so instead
  *  - nothing is requested until the trader asks for it
- *  - the critique picker only offers trades that can actually be reviewed
+ *  - nothing the coach writes appears anywhere on the Today tab
  *
  * The Playwright server is `vite dev`, which does not serve the `api/` serverless
  * function. That makes these specs the right place to prove the degraded path is
@@ -67,11 +67,11 @@ test.describe('Coach tab', () => {
     await expect(page.getByText(/No end-of-day reviews completed/i)).toBeVisible();
   });
 
-  test('claims no market data, and says so before the trader relies on it', async ({ page }) => {
+  test('names the one outside number it uses before the trader relies on it', async ({ page }) => {
     await gotoTab(page, 'coach', /Coach/i);
 
-    await expect(page.getByText(/It cannot see the market/i)).toBeVisible();
-    await expect(page.getByText(/no prices, levels, news or predictions/i)).toBeVisible();
+    await expect(page.getByText(/using only what you logged/i)).toBeVisible();
+    await expect(page.getByText(/instrument's live price/i)).toBeVisible();
   });
 
   test('asks for nothing until the trader clicks, then reports honestly if it is unavailable', async ({
@@ -95,34 +95,28 @@ test.describe('Coach tab', () => {
     await expect(page.locator('#coach-brief-result')).toHaveCount(0);
   });
 
-  test('will not critique a trade until there is a closed one', async ({ page }) => {
+  test('has dropped the single-trade critique entirely', async ({ page }) => {
     await gotoTab(page, 'coach', /Coach/i);
 
+    // The tab reads the trader's setups, entries and exits as a body of work. Picking one
+    // trade apart was the one thing it did that was not that, and it is gone — picker,
+    // facts and all.
     await expect(page.locator('#coach-trade-select')).toHaveCount(0);
-    await expect(page.getByText(/No closed trades yet/i)).toBeVisible();
+    await expect(page.locator('#coach-trade-facts')).toHaveCount(0);
+    await expect(page.locator('#coach-trade-result')).toHaveCount(0);
+    await expect(page.getByText(/Critique a trade/i)).toHaveCount(0);
   });
 
-  test('offers a closed trade for critique, named with its real instrument', async ({ page }) => {
-    await openAddTrade(page);
-    await page.locator('#trade-entry-price').fill('7730');
-    await page.locator('#trade-initial-stop').fill('7710');
-    await page.locator('#trade-contracts').fill('2');
-    await page.locator('#trade-exit-price').fill('7740');
-    await page.locator('#trade-entry-reason').fill('Reclaim of the overnight low');
-    await page.getByRole('button', { name: /Save Completed Trade/i }).click();
-
+  test('shows the levels it measures price against, without any AI call', async ({ page }) => {
     await gotoTab(page, 'coach', /Coach/i);
 
-    const select = page.locator('#coach-trade-select');
-    await expect(select).toBeVisible();
-    await expect(select.locator('option')).toHaveCount(1);
-    await expect(select.locator('option')).toHaveText(/MES long 2/);
-    await expect(select.locator('option')).not.toHaveText(/MES long 2.*undefined/);
+    const card = page.locator('#coach-approach');
+    await expect(card).toBeVisible();
+    await expect(card).toContainText(/Setups about to happen/i);
 
-    // The facts shown beside the picker are computed locally, so they are real even
-    // when the AI service is not running.
-    await expect(page.getByText('R multiple')).toBeVisible();
-    await expect(page.getByText('Initial risk')).toBeVisible();
+    // A fresh journal has no planned levels, and the card says so rather than showing a
+    // measurement against nothing. This is arithmetic, so it renders with no service.
+    await expect(card).toContainText(/No levels are set for today/i);
   });
 
   test('shows the deterministic performance numbers without any AI call', async ({ page }) => {
@@ -314,22 +308,29 @@ test.describe('Behaviour read from the trader own timestamps', () => {
     await expect(card).toContainText(/3 trades/);
   });
 
-  test('carries the after-loss fact onto the Today tab', async ({ page }) => {
-    await logTrade(page, {
-      entry: 7730,
-      exit: 7720,
-      entryTime: '2026-09-18T09:30',
-      exitTime: '2026-09-18T09:45',
-    });
-    await logTrade(page, {
-      entry: 7735,
-      exit: 7750,
-      entryTime: '2026-09-18T09:50',
-      exitTime: '2026-09-18T10:00',
-    });
+});
 
-    await gotoTab(page, 'today', /^Today$/);
+/**
+ * The coach lives on its own tab and nowhere else.
+ *
+ * Today is for the day's record: the end-of-day review, the lesson carried forward and the
+ * trend behind it. The coach cards that used to sit in its folded section put a second,
+ * model-written reading of the same journal onto the page, and are gone. They are checked
+ * folded as well as unfolded, because the sections keep their bodies mounted — an absence
+ * here has to be an absence from the page, not from the visible slice of it.
+ */
+test.describe('The coach has no home on the Today tab', () => {
+  test('renders no coach card, folded or unfolded', async ({ page }) => {
+    await expect(page.locator('#coach-checkpoint-card')).toHaveCount(0);
+    await expect(page.locator('#coach-comparison-list')).toHaveCount(0);
+
     await expandTodayAdvanced(page);
-    await expect(page.locator('#coach-checkpoint-after-loss')).toBeVisible();
+
+    await expect(page.locator('#coach-checkpoint-card')).toHaveCount(0);
+    await expect(page.locator('#coach-comparison-list')).toHaveCount(0);
+    await expect(page.locator('#coach-checkpoint-after-loss')).toHaveCount(0);
+
+    // And the section it used to live in is named for what is left in it.
+    await expect(page.getByText(/Plan, risk & coach/i)).toHaveCount(0);
   });
 });

@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Sparkles, AlertTriangle, TrendingUp, BookOpenCheck, Target, Activity } from 'lucide-react';
+import { Sparkles, AlertTriangle, TrendingUp, BookOpenCheck, Activity } from 'lucide-react';
 import {
   DailyReview,
   Instrument,
@@ -9,19 +9,8 @@ import {
   TradingDay,
 } from '../../types';
 import { buildJournalDigest } from '../../lib/ai/journal-digest';
-import type {
-  BriefResponse,
-  CoachMode,
-  FormResponse,
-  TradeCritiqueResponse,
-  WeeklyResponse,
-} from '../../lib/ai/coach-types';
-import {
-  buildTradeFacts,
-  CoachErrorCode,
-  CoachResult,
-  requestCoach,
-} from '../../lib/ai/coach-client';
+import type { BriefResponse, CoachMode, FormResponse, WeeklyResponse } from '../../lib/ai/coach-types';
+import { CoachErrorCode, CoachResult, requestCoach } from '../../lib/ai/coach-client';
 import {
   CoachAction,
   CoachBullets,
@@ -35,6 +24,7 @@ import {
   money,
 } from './coach-ui';
 import { AskCoachCard } from './AskCoachCard';
+import { ApproachAlertCard } from './ApproachAlertCard';
 import { COACH_WAIT_STEPS } from '../common/AiThinking';
 import { BehaviorCard } from './BehaviorCard';
 import { RecentFormCard } from './RecentFormCard';
@@ -47,6 +37,11 @@ interface CoachViewProps {
   reviews: DailyReview[];
   setups: Setup[];
   instruments: Instrument[];
+  /**
+   * Today's own day, so the approach alert can read the levels the trader set for today and
+   * the contract they set them for.
+   */
+  todayTradingDay: TradingDay;
   todayTradeDate: string;
   timezone: string;
   /** The account drawdown the trader has agreed to, so the read can weigh risk capacity. */
@@ -90,6 +85,7 @@ export const CoachView: React.FC<CoachViewProps> = ({
   reviews,
   setups,
   instruments,
+  todayTradingDay,
   todayTradeDate,
   timezone,
   maxDrawdown,
@@ -123,39 +119,20 @@ export const CoachView: React.FC<CoachViewProps> = ({
 
   const [briefState, setBriefState] = useState<RequestState>(IDLE);
   const [weeklyState, setWeeklyState] = useState<RequestState>(IDLE);
-  const [tradeState, setTradeState] = useState<RequestState>(IDLE);
   const [formState, setFormState] = useState<RequestState>(IDLE);
 
-  // Closed trades, newest first, for the critique picker.
-  const criticableTrades = useMemo(
-    () =>
-      trades
-        .filter((t) => t.status === 'closed')
-        .sort((a, b) =>
-          (b.exitTime ?? b.entryTime ?? b.updatedAt).localeCompare(
-            a.exitTime ?? a.entryTime ?? a.updatedAt
-          )
-        )
-        .slice(0, 25),
-    [trades]
-  );
-
-  const [selectedTradeId, setSelectedTradeId] = useState<string>('');
-  const effectiveTradeId = selectedTradeId || criticableTrades[0]?.id || '';
-  const selectedTrade = criticableTrades.find((t) => t.id === effectiveTradeId);
-
+  /**
+   * Runs one of the three reads this tab keeps.
+   *
+   * All three are answered from the journal digest alone — the two windows of trades, the
+   * day's plan, and the week — so nothing else travels with the request.
+   */
   async function run(
     mode: CoachMode,
-    setState: React.Dispatch<React.SetStateAction<RequestState>>,
-    trade?: Trade
+    setState: React.Dispatch<React.SetStateAction<RequestState>>
   ) {
     setState((prev) => ({ ...prev, loading: true, failure: null }));
-    const day = trade ? tradingDays.find((d) => d.id === trade.tradingDayId) : undefined;
-    const facts =
-      trade && mode === 'trade'
-        ? buildTradeFacts(trade, { instruments, day, allTrades: trades })
-        : undefined;
-    const result = await requestCoach(mode, digest, facts);
+    const result = await requestCoach(mode, digest);
 
     if (result.ok) {
       setState((prev) => ({
@@ -186,10 +163,18 @@ export const CoachView: React.FC<CoachViewProps> = ({
           Coach
         </h1>
         <p className="text-xs text-zinc-400 mt-0.5">
-          Reviews your process using only what you logged. It cannot see the market — no prices,
-          levels, news or predictions — so every claim it makes is traceable to your own records.
+          Writes about your process using only what you logged, so every claim it makes is
+          traceable to your own records. The one number it reads from outside is your
+          instrument's live price, and only to measure how far price is from your own levels.
         </p>
       </div>
+
+      {/* Which of today's levels price is closing on. */}
+      <ApproachAlertCard
+        levels={todayTradingDay.importantLevels ?? []}
+        symbol={instrumentSymbol(instruments, todayTradingDay.primaryInstrument)}
+        timezone={timezone}
+      />
 
       {/* What the coach is allowed to know. Shown up front so the advice can be judged. */}
       <CoachCard className="space-y-2">
@@ -475,152 +460,6 @@ export const CoachView: React.FC<CoachViewProps> = ({
             />
             <CoachMotivation text={(briefState.result.data as BriefResponse).motivation} />
           </CoachResultPanel>
-        )}
-      </CoachCard>
-
-      {/* ------------------------------------------------------------------ */}
-      {/* Trade critique                                                      */}
-      {/* ------------------------------------------------------------------ */}
-      <CoachCard className="space-y-3.5">
-        <SectionHeader
-          icon={<Target className="w-4 h-4 text-amber-400" />}
-          title="Critique a trade"
-          description="Picks apart the decision and the execution separately, using your own review answers."
-        />
-
-        {criticableTrades.length === 0 ? (
-          <p className="text-xs text-zinc-500 italic">
-            No closed trades yet. Close a trade and the coach can review how you executed it.
-          </p>
-        ) : (
-          <>
-            <select
-              id="coach-trade-select"
-              value={effectiveTradeId}
-              onChange={(e) => {
-                setSelectedTradeId(e.target.value);
-                setTradeState(IDLE);
-              }}
-              className="w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs text-zinc-200"
-            >
-              {criticableTrades.map((trade) => (
-                <option key={trade.id} value={trade.id}>
-                  {instrumentSymbol(instruments, trade.instrumentId)} {trade.direction}{' '}
-                  {trade.contracts} · {trade.entryPrice}
-                  {trade.exitPrice !== undefined ? ` → ${trade.exitPrice}` : ''} ·{' '}
-                  {trade.rMultiple}R · {trade.status}
-                </option>
-              ))}
-            </select>
-
-            {selectedTrade && (
-              <div id="coach-trade-facts" className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                <CoachFact
-                  label="Instrument"
-                  value={instrumentSymbol(instruments, selectedTrade.instrumentId)}
-                />
-                <CoachFact label="R multiple" value={`${selectedTrade.rMultiple}R`} />
-                <CoachFact label="Initial risk" value={money(selectedTrade.initialRisk)} />
-                <CoachFact
-                  label="Outcome"
-                  value={money(selectedTrade.netPnL ?? selectedTrade.grossPnL)}
-                />
-              </div>
-            )}
-
-            {!tradeState.result && (
-              <CoachGenerateButton
-                id="coach-trade-generate"
-                label={tradeState.failure ? 'Try again' : 'Critique this trade'}
-                loadingLabel="Reviewing the trade…"
-                loading={tradeState.loading}
-                disabled={!selectedTrade}
-                onClick={() => selectedTrade && run('trade', setTradeState, selectedTrade)}
-              />
-            )}
-
-            {tradeState.loading && (
-              <CoachLoading
-                label="Reading the trade, its plan and your review…"
-                steps={COACH_WAIT_STEPS('trade')}
-              />
-            )}
-
-            {tradeState.failure && (
-              <CoachErrorPanel
-                code={tradeState.failure.code}
-                message={tradeState.failure.message}
-                idSuffix="trade"
-              />
-            )}
-
-            {tradeState.result?.ok && (
-              <CoachResultPanel
-                id="coach-trade-result"
-                heading="Result"
-                meta={
-                  tradeState.writtenAt
-                    ? `written ${formatTimestamp(tradeState.writtenAt, timezone)}`
-                    : undefined
-                }
-                resultKey={tradeState.writtenAt}
-                busy={tradeState.loading}
-                onRegenerate={() => selectedTrade && run('trade', setTradeState, selectedTrade)}
-                regenerateLabel="Regenerate critique"
-              >
-                <div className="flex items-start gap-3">
-                  <span className="shrink-0 rounded-lg border border-amber-800 bg-amber-950/50 text-amber-300 font-mono text-sm font-bold px-2.5 py-1">
-                    {(tradeState.result.data as TradeCritiqueResponse).grade}
-                  </span>
-                  <p className="text-xs text-zinc-300 leading-relaxed">
-                    {(tradeState.result.data as TradeCritiqueResponse).verdict}
-                  </p>
-                </div>
-                <div className="grid sm:grid-cols-2 gap-3">
-                  <div>
-                    <span className="text-[10px] font-mono uppercase font-bold text-emerald-400">
-                      Done well
-                    </span>
-                    <div className="mt-1.5">
-                      <CoachBullets
-                        items={(tradeState.result.data as TradeCritiqueResponse).didWell}
-                        tone="good"
-                        emptyLabel="Nothing positive recorded on this trade."
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <span className="text-[10px] font-mono uppercase font-bold text-amber-400">
-                      What it cost you
-                    </span>
-                    <div className="mt-1.5">
-                      <CoachBullets
-                        items={(tradeState.result.data as TradeCritiqueResponse).costYou}
-                        tone="bad"
-                        emptyLabel="Nothing logged that cost you here."
-                      />
-                    </div>
-                  </div>
-                </div>
-                <div>
-                  <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
-                    Rules your review says you broke
-                  </span>
-                  <div className="mt-1.5">
-                    <CoachBullets
-                      items={(tradeState.result.data as TradeCritiqueResponse).rulesBroken}
-                      tone="bad"
-                      emptyLabel="None — your review shows you followed every applicable rule."
-                    />
-                  </div>
-                </div>
-                <CoachAction
-                  label="Next time"
-                  text={(tradeState.result.data as TradeCritiqueResponse).nextTime}
-                />
-              </CoachResultPanel>
-            )}
-          </>
         )}
       </CoachCard>
 

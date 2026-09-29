@@ -32,15 +32,6 @@ async function gotoPlaybook(page: Page) {
   await expect(page.getByRole('heading', { name: /Trading Setups & Playbook Library/i })).toBeVisible();
 }
 
-/**
- * The trade form asks for entry/exit/why/note/tags. The setup picker — which is how a trade
- * is matched to a pattern study guide — lives under "More options".
- */
-async function expandTradeOptions(page: Page) {
-  const toggle = page.locator('#trade-more-options-toggle');
-  if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click();
-}
-
 async function gotoChartPatterns(page: Page) {
   await gotoPlaybook(page);
   await page.locator('#playbook-tab-patterns').click();
@@ -371,24 +362,59 @@ test.describe('Per-pattern URL', () => {
 });
 
 test.describe('Link from a trade', () => {
-  test('a trade logged under a pattern name leads to that pattern study guide', async ({ page }) => {
-    // Log the setup under the exact source label so the match is exact, not a guess.
-    await gotoPlaybook(page);
-    await page.getByPlaceholder(/Fair Value Gap/).fill('Bullish Flag Pattern');
-    await page.getByRole('button', { name: 'Add', exact: true }).click();
+  /**
+   * Writes a trade whose setup carries a chart pattern's own name.
+   *
+   * The form asks for one of the trader's two setups — Support or Resistance — and neither
+   * is a chart pattern, so the only trade that can name one is a record from before the
+   * catalog was cut, or an import. Seeding that record is how the case the link exists for
+   * is reproduced.
+   */
+  async function seedTradeWithSetup(page: Page, setupName: string) {
+    await page.goto('/');
+    await page.evaluate((name) => {
+      const days = JSON.parse(localStorage.getItem('ptj_trading_days_v1') || '[]') as Array<{
+        id: string;
+      }>;
+      const day = days[0];
+      if (!day) throw new Error('the app did not create a trading day to hang the trade off');
+      const now = new Date().toISOString();
+      localStorage.setItem(
+        'ptj_trades_v1',
+        JSON.stringify([
+          {
+            id: 'trade-pattern-1',
+            userId: 'u1',
+            tradingDayId: day.id,
+            instrumentId: 'mes',
+            source: 'manual',
+            direction: 'long',
+            contracts: 1,
+            entryPrice: 7730,
+            initialStop: 7710,
+            exitPrice: 7740,
+            entryTime: now,
+            exitTime: now,
+            session: 'Regular Session',
+            setupName: name,
+            initialRisk: 100,
+            grossPnL: 50,
+            netPnL: 50,
+            pointsPnL: 10,
+            rMultiple: 0.5,
+            status: 'closed',
+            createdAt: now,
+            updatedAt: now,
+          },
+        ])
+      );
+    }, setupName);
+    await page.reload();
+  }
 
-    const today = page.locator('#nav-btn-today');
-    if (await today.isVisible()) await today.click();
-    else await page.locator('#mobile-nav-today').click();
-
-    await page.locator('#btn-add-trade-top').click();
-    await expandTradeOptions(page);
-    await page.locator('#trade-setup-select').selectOption({ label: 'Bullish Flag Pattern' });
-    await page.locator('#trade-entry-price').fill('7730');
-    await page.locator('#trade-initial-stop').fill('7710');
-    await page.locator('#trade-contracts').fill('1');
-    await page.locator('#trade-exit-price').fill('7740');
-    await page.getByRole('button', { name: /Save Completed Trade/i }).click();
+  test('a trade under a pattern name leads to that pattern study guide', async ({ page }) => {
+    // The exact source label, so the match is by name rather than by guess.
+    await seedTradeWithSetup(page, 'Bullish Flag Pattern');
 
     await page.getByText('MES (1x)').first().click();
     await page.locator('#trade-study-pattern').click();

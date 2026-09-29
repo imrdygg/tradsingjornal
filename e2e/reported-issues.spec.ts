@@ -1,13 +1,11 @@
 import { expect, test, type Page } from '@playwright/test';
-import { DEFAULT_SETUPS } from '../src/lib/storage';
 
 /**
  * Regression tests for the issues reported against the Playbook, the position
  * scale-in calculator and the mobile layout:
  *
- *  1. Recording a trade only offered one setup — every playbook setup must be
- *     selectable, including ones toggled "off". (The catalog is now just the trader's
- *     two level setups, so the coverage is thinner; the rule is the same.)
+ *  1. Recording a trade used to make the trader pick a setup out of a menu. It now asks
+ *     one question — which of the two sides was it — and the answer is stored as given.
  *  2. Setup names were visually cut off on the Playbook cards.
  *  3. The break-even calculator shipped hard-coded example prices — it must
  *     auto-fill from the trader's real open trade instead.
@@ -55,22 +53,12 @@ async function gotoTab(page: Page, tab: string, heading: RegExp) {
 
 /**
  * The Today tab opens on the review, the trend, the search box and the day's trades: the
- * morning plan, the risk summary, the drawdown strip and the coach panels sit behind one
- * folded section.
+ * morning plan, the risk summary and the drawdown strip sit behind one folded section.
  */
 async function expandTodayAdvanced(page: Page) {
   // Addressed by the body it controls, not by aria-expanded: the section holds other
   // collapsibles, so "any collapsed button inside it" is not the section's own toggle.
   const toggle = page.locator('button[aria-controls="section-today-advanced-body"]').first();
-  if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click();
-}
-
-/**
- * The form asks for direction, entry, stop, setup, label, note, exit and target. Size rides
- * on the optional row, always in view; everything else is behind "More options".
- */
-async function expandTradeOptions(page: Page) {
-  const toggle = page.locator('#trade-more-options-toggle');
   if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click();
 }
 
@@ -90,56 +78,61 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/');
 });
 
-test.describe('Recording a trade lists every playbook setup', () => {
-  test('all default setups appear in the Setup dropdown', async ({ page }) => {
+test.describe('Recording a trade asks which side, not which setup', () => {
+  test('offers Support and Resistance as buttons, and no menu', async ({ page }) => {
     await openAddTrade(page);
-    await expandTradeOptions(page);
 
-    const select = page.locator('#trade-setup-select');
-    await expect(select).toBeVisible();
+    const support = page.locator('#trade-setup-support');
+    const resistance = page.locator('#trade-setup-resistance');
+    await expect(support).toBeVisible();
+    await expect(resistance).toBeVisible();
 
-    // Read from the catalog itself rather than repeating it here, so adding a built-in
-    // setup cannot quietly leave this assertion covering a stale list.
-    const expected = DEFAULT_SETUPS.map((setup) => setup.name);
+    // Support leads, so it is what an untouched form records.
+    await expect(support).toHaveAttribute('aria-pressed', 'true');
+    await expect(resistance).toHaveAttribute('aria-pressed', 'false');
 
-    const options = await select.locator('option').allTextContents();
-    expect(options.length).toBe(expected.length);
-    for (const name of expected) {
-      expect(options.some((o) => o.trim() === name)).toBeTruthy();
-    }
+    await resistance.click();
+    await expect(resistance).toHaveAttribute('aria-pressed', 'true');
+    await expect(support).toHaveAttribute('aria-pressed', 'false');
+
+    // The picker is gone for good: a list of every catalog name is exactly the menu this
+    // replaced, and re-adding one would put the choice back in the way of the trade.
+    await expect(page.locator('#trade-setup-select')).toHaveCount(0);
   });
 
-  test('a setup toggled off in the Playbook is still selectable', async ({ page }) => {
-    // Turn Support off from the Playbook card's Active/Off badge. Addressed by title because
-    // the Support diagram labels its level "Support" too, so a text match is ambiguous.
-    await gotoPlaybook(page);
-    const card = page
-      .locator('div.rounded-2xl', { has: page.getByTitle('Support', { exact: true }) })
-      .first();
-    await card.getByTitle(/Active — shown first/).click();
-    await expect(card.getByText('Off', { exact: true })).toBeVisible();
-
-    // It must still be offered when recording a trade.
-    await gotoTab(page, 'today', /^Today$/);
+  test('stores the side that was pressed', async ({ page }) => {
     await openAddTrade(page);
-    await expandTradeOptions(page);
+    await page.locator('#trade-setup-resistance').click();
+    await page.locator('#trade-entry-price').fill('7730');
+    await page.locator('#trade-initial-stop').fill('7710');
+    await page.locator('#trade-contracts').fill('1');
+    await page.locator('#trade-exit-price').fill('7740');
+    await page.getByRole('button', { name: /Save Completed Trade/i }).click();
+    await expect(page.getByRole('heading', { name: /Log a Trade/i })).toHaveCount(0);
 
-    const options = await page.locator('#trade-setup-select option').allTextContents();
-    expect(options.some((o) => o.trim().startsWith('Support'))).toBeTruthy();
-    expect(options.length).toBe(DEFAULT_SETUPS.length);
+    // Read the stored record rather than the card, so this is the saved setup and not a
+    // badge the card happens to render.
+    const stored = await page.evaluate(() => {
+      const raw = localStorage.getItem('ptj_trades_v1');
+      const trades = raw ? (JSON.parse(raw) as Array<{ setupName?: string }>) : [];
+      return trades.map((trade) => trade.setupName);
+    });
+    expect(stored).toContain('Resistance');
   });
 
-  test('a freshly added setup is immediately available', async ({ page }) => {
+  test('a setup added by hand is not silently picked for the trade', async ({ page }) => {
     await gotoPlaybook(page);
     await page.getByPlaceholder(/Fair Value Gap/).fill('VWAP Reclaim');
     await page.getByRole('button', { name: 'Add', exact: true }).click();
 
+    // Two buttons and nothing more, even with a third setup in the catalog: the catalog is
+    // where a setup is studied, and the form is where the side of the level is recorded.
     await gotoTab(page, 'today', /^Today$/);
     await openAddTrade(page);
-    await expandTradeOptions(page);
 
-    const options = await page.locator('#trade-setup-select option').allTextContents();
-    expect(options.some((o) => o.trim() === 'VWAP Reclaim')).toBeTruthy();
+    await expect(page.locator('#trade-setup-support')).toBeVisible();
+    await expect(page.locator('#trade-setup-resistance')).toBeVisible();
+    await expect(page.getByText('VWAP Reclaim')).toHaveCount(0);
   });
 });
 

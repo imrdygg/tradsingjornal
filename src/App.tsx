@@ -19,9 +19,7 @@ import { RiskFixupModal } from './components/trades/RiskFixupModal';
 import { TradeDetailModal } from './components/trades/TradeDetailModal';
 import { DailyReviewModal } from './components/review/DailyReviewModal';
 import { PlanLockPreviewModal } from './components/today/PlanLockPreviewModal';
-import { CoachCheckpointCard } from './components/today/CoachCheckpointCard';
 import { LatestReviewCard } from './components/today/LatestReviewCard';
-import { CoachEntryComparison } from './components/today/CoachEntryComparison';
 import { askEntryCall, buildCoachPlanPatch, type PlanCoachContext } from './lib/ai/plan-coach';
 import type { CoachPlanFields, EntryCallResponse } from './lib/ai/coach-types';
 
@@ -1287,8 +1285,8 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               lesson nobody can re-read, a review that disappears after it is saved, and a
               search box nobody looks for are the same as not having them. The lesson banner
               is not collapsible at all — it is the one thing the page must keep in view. The
-              coach panels, the risk summary, the drawdown strip and the whole morning plan
-              stay folded below, one click away.
+              risk summary, the drawdown strip and the whole morning plan stay folded below,
+              one click away.
             */}
             {yesterdayFocus && (
               <YesterdayFocusBanner
@@ -1375,14 +1373,14 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             {/*
               Everything else the app knows how to do, folded into one line.
 
-              The coach panels, the risk summary, the drawdown strip and the whole morning plan
-              all still render exactly as they did — they just no longer stand between the
-              trader and the day's trades. Folded rather than deleted: the plan and the risk
-              ladder are the reason the journal exists, and they stay one click away.
+              The risk summary, the drawdown strip and the whole morning plan all still render
+              exactly as they did — they just no longer stand between the trader and the day's
+              trades. Folded rather than deleted: the plan and the risk ladder are the reason
+              the journal exists, and they stay one click away.
             */}
             <CollapsibleSection
               id="section-today-advanced"
-              title="Plan, risk & coach"
+              title="Plan & risk"
               meta={
                 <span className="font-mono text-[11px] text-zinc-500">
                   {todayTradingDay.lockedAt ? 'plan locked' : 'plan not locked'}
@@ -1398,24 +1396,6 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               of this that actually did.
             */}
             <div className="space-y-6">
-            {/* Coach checkpoint: morning prep before the close, review after it. */}
-            <CollapsibleSection
-              id="section-coach-checkpoint"
-              title="Coach checkpoint"
-              persistKey="coach-checkpoint"
-            >
-              <CoachCheckpointCard
-                trades={trades}
-                tradingDays={tradingDays}
-                reviews={reviews}
-                setups={setups}
-                instruments={instruments}
-                todayTradeDate={todayTradingDay.tradeDate}
-                timezone={profile.timezone}
-                maxDrawdown={profile.maxDrawdown ?? null}
-              />
-            </CollapsibleSection>
-
             {/* Today's Risk & Performance Summary Card */}
             <CollapsibleSection
               id="section-today-summary"
@@ -1449,15 +1429,6 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
                 isPlanLocked={!!todayTradingDay.lockedAt}
                 capStatuses={tierCapFlags}
               />
-            </CollapsibleSection>
-
-            {/* The coach's call on each entry against the trader's own, for today */}
-            <CollapsibleSection
-              id="section-coach-comparison"
-              title="Coach vs your entries"
-              persistKey="coach-comparison"
-            >
-              <CoachEntryComparison trades={todayTrades} instruments={instruments} />
             </CollapsibleSection>
 
             {/*
@@ -1508,7 +1479,6 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
                 onOpenPlaybook={handleOpenPlaybook}
                 onLogScaleInTrade={openAddTrade}
                 onUnlockPlan={handleUnlockPlan}
-                coachContext={coachContext}
                 drawdownCapacity={riskCapacity}
                 plannedSizeRisk={plannedSizeRisk}
                 riskTiers={riskTiers}
@@ -1638,6 +1608,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             reviews={reviews}
             setups={setups}
             instruments={instruments}
+            todayTradingDay={todayTradingDay}
             todayTradeDate={todayTradingDay.tradeDate}
             timezone={profile.timezone}
             maxDrawdown={profile.maxDrawdown ?? null}

@@ -7,6 +7,8 @@ import {
   Calculator,
   ArrowUpRight,
   ArrowDownRight,
+  ArrowUp,
+  ArrowDown,
   Calendar,
   ChevronDown,
   Info,
@@ -141,21 +143,6 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
   const selectedInstrument = useMemo(
     () => findInstrument(instruments, instrumentId),
     [instruments, instrumentId]
-  );
-
-  // Every playbook setup is selectable — active ones are listed first, but a
-  // setup marked "off" in the Playbook is never hidden from a trade record.
-  //
-  // Otherwise the list keeps the catalog's order rather than re-sorting by name: the
-  // order is the trader's, set in Settings → Playbook Setups, and it is the order they
-  // pick in. Sorting alphabetically here would quietly discard that choice.
-  const sortedSetups = useMemo(
-    () => [...setups].sort((a, b) => Number(b.active) - Number(a.active)),
-    [setups]
-  );
-  const setupNameIsListed = useMemo(
-    () => sortedSetups.some((s) => s.name === setupName),
-    [sortedSetups, setupName]
   );
 
   // Initialize or reset form when modal opens
@@ -934,41 +921,51 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
           </div>
 
           {/*
-            Which of the trader's setups this was. Asked on the open form rather than folded
-            away, because it is the label every group in the journal is built on: the setup's
-            own record, the plan-adherence count and the coach's read all key off it, and a
-            trade saved without one is a trade nothing can be learned from.
+            Which of the trader's two setups this was.
+
+            Two buttons rather than a list. The journal is built around Support and
+            Resistance, and the only question a trade record has to answer about it is which
+            of the two this was — one tap, no menu. A trade carried in from before the catalog
+            was cut may name something else; that value is shown back rather than silently
+            replaced, and it is kept unless the trader picks a side.
           */}
           <div>
-            <label
-              htmlFor="trade-setup-select"
-              className="text-xs font-medium text-zinc-300 block mb-1"
-            >
-              Setup{' '}
-              <span className="text-[10px] font-normal text-zinc-500 font-mono">
-                ({sortedSetups.length} in playbook)
-              </span>
-            </label>
-            <select
-              id="trade-setup-select"
-              value={setupName}
-              onChange={(e) => setSetupName(e.target.value)}
-              className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 focus:border-zinc-600 focus:outline-none"
-            >
-              {/* Keep an unlisted current value visible instead of blank. */}
-              {!setupNameIsListed && setupName && (
-                <option value={setupName}>{setupName}</option>
-              )}
-              {sortedSetups.map((s) => (
-                <option key={s.id} value={s.name}>
-                  {s.name}
-                  {s.active ? '' : ' — off'}
-                </option>
-              ))}
-              {sortedSetups.length === 0 && (
-                <option value="">No setups yet — add one in the Playbook</option>
-              )}
-            </select>
+            <span className="text-xs font-medium text-zinc-300 block mb-1">Setup</span>
+            <div className="grid grid-cols-2 gap-1 rounded-xl bg-zinc-950 p-1 border border-zinc-800">
+              {FOCUS_SETUP_NAMES.map((name) => {
+                const active = setupName === name;
+                const isSupport = name === 'Support';
+                return (
+                  <button
+                    key={name}
+                    type="button"
+                    id={`trade-setup-${name.toLowerCase()}`}
+                    aria-pressed={active}
+                    onClick={() => setSetupName(name)}
+                    className={`flex items-center justify-center gap-1 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                      active
+                        ? 'bg-zinc-800 text-zinc-100 border border-zinc-700 shadow-sm'
+                        : 'text-zinc-400 hover:text-zinc-200'
+                    }`}
+                  >
+                    {isSupport ? (
+                      <ArrowDown className="w-3.5 h-3.5 text-sky-300" />
+                    ) : (
+                      <ArrowUp className="w-3.5 h-3.5 text-amber-300" />
+                    )}
+                    {name}
+                  </button>
+                );
+              })}
+            </div>
+            {!FOCUS_SETUP_NAMES.some((name) => name === setupName) && setupName && (
+              <p className="mt-1.5 text-[10px] leading-relaxed text-zinc-500">
+                This trade is stored as{' '}
+                <span className="font-mono text-zinc-300">{setupName}</span>, which is not one
+                of your two setups. Pick Support or Resistance above to change it — leaving it
+                alone keeps the label it was saved with.
+              </p>
+            )}
           </div>
 
           {/* Row 3: Session & Entry Time — the exact when, for the days it matters. */}

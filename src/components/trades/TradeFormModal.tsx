@@ -660,24 +660,44 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
           </div>
 
           {/*
-            The optional half of the form.
+            Size, and the optional half of the form.
 
-            Every field below this toggle is a real feature — the instrument, the plan's risk
-            slot, the session, the exact times, the exit reason, the tags and the charts — but
-            none of them is needed to write a trade down. They are folded, not removed, so the
-            form opens as the trade itself: what you entered at, where you were wrong, which
+            Size sits on this row rather than in the body of the form because every figure the
+            journal computes — P&L, risk, R, the day's total — is for that many contracts, so
+            it has to stay both visible and editable even though the trader never asked to be
+            questioned about it.
+
+            The rest of the row opens the depth: the instrument, the plan's risk slot, the
+            session, the exact times, the exit reason, the tags and the charts. None of those
+            is needed to write a trade down, so they are folded rather than removed, and the
+            form opens as the trade itself — what you entered at, where you were wrong, which
             of your setups it was, what you saw, and how it ended.
           */}
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-zinc-800 bg-zinc-950/60 px-3 py-2">
-            <span className="text-[11px] leading-relaxed text-zinc-500">
-              Optional: the instrument, your plan's risk slot, the session, the exact times,
-              the exit reason, tags and charts.
-            </span>
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-xl border border-zinc-800 bg-zinc-950/60 px-3 py-2">
+            <label className="flex items-center gap-2 text-[11px] text-zinc-400">
+              <span className="font-mono uppercase tracking-wider text-zinc-500">Size</span>
+              <input
+                id="trade-contracts"
+                type="number"
+                min="1"
+                max="50"
+                value={contracts}
+                onChange={(e) => {
+                  // The trader is taking the size over by hand; stop deriving it.
+                  autoSizeRef.current = false;
+                  setContracts(e.target.value);
+                }}
+                className="w-16 rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1 text-xs font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none"
+                required
+              />
+              <span>contract{contracts === '1' ? '' : 's'}</span>
+            </label>
             <button
               type="button"
               id="trade-more-options-toggle"
               onClick={() => setMoreOptions((open) => !open)}
               aria-expanded={moreOptions}
+              title="The instrument, your plan's risk slot, the session, the exact times, the exit reason, tags and charts"
               className="flex shrink-0 items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-800/80 px-2.5 py-1 text-[11px] font-semibold text-zinc-200 transition-colors hover:bg-zinc-800"
             >
               <ChevronDown
@@ -868,11 +888,11 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
             <span className="text-xs font-semibold text-emerald-400/90 uppercase tracking-wider font-mono">
               Entry
             </span>
-            <span className="text-[10px] text-zinc-500 font-mono">price · size · stop · setup</span>
+            <span className="text-[10px] text-zinc-500 font-mono">price · stop · setup</span>
           </div>
 
-          {/* Row 2: Entry Price, Initial Stop, Contracts */}
-          <div className="grid grid-cols-3 gap-3">
+          {/* Row 2: the level that was taken, and the level it is wrong at. */}
+          <div className="grid grid-cols-2 gap-3">
             <div>
               <label
                 htmlFor="trade-entry-price"
@@ -911,28 +931,6 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
               />
             </div>
 
-            <div>
-              <label
-                htmlFor="trade-contracts"
-                className="text-xs font-medium text-zinc-300 block mb-1"
-              >
-                Contracts <span className="text-rose-400">*</span>
-              </label>
-              <input
-                id="trade-contracts"
-                type="number"
-                min="1"
-                max="50"
-                value={contracts}
-                onChange={(e) => {
-                  // The trader is taking the size over by hand; stop deriving it.
-                  autoSizeRef.current = false;
-                  setContracts(e.target.value);
-                }}
-                className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none"
-                required
-              />
-            </div>
           </div>
 
           {/*
@@ -1269,26 +1267,32 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
             </>
           )}
 
-          {/* Tags belong to the trade as a whole, so they are shared, not split by subject. */}
-          <div className="pt-2 border-t border-zinc-800/80">
-            <label
-              htmlFor="trade-tags"
-              className="text-xs font-medium text-zinc-300 block mb-1"
-            >
-              Tags{' '}
-              <span className="text-[10px] font-normal text-zinc-500 font-mono">
-                (comma separated)
-              </span>
-            </label>
-            <input
-              id="trade-tags"
-              type="text"
-              placeholder="clean, morning, trend-aligned"
-              value={tags}
-              onChange={(e) => setTags(e.target.value)}
-              className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
-            />
-          </div>
+          {/*
+            Tags belong to the trade as a whole, so they are shared rather than split by
+            subject — but they are still classification, not the trade, so they live with the
+            rest of the depth.
+          */}
+          {moreOptions && (
+            <div className="pt-2 border-t border-zinc-800/80">
+              <label
+                htmlFor="trade-tags"
+                className="text-xs font-medium text-zinc-300 block mb-1"
+              >
+                Tags{' '}
+                <span className="text-[10px] font-normal text-zinc-500 font-mono">
+                  (comma separated)
+                </span>
+              </label>
+              <input
+                id="trade-tags"
+                type="text"
+                placeholder="clean, morning, trend-aligned"
+                value={tags}
+                onChange={(e) => setTags(e.target.value)}
+                className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
+              />
+            </div>
+          )}
 
           {/*
             Chart Screenshot Attachments — optional, and hidden with the rest of the depth.

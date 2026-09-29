@@ -40,8 +40,8 @@ async function expandTodayAdvanced(page: Page) {
 }
 
 /**
- * The form asks for direction, entry, stop, size, setup, label, note, exit and target;
- * everything else is under "More options".
+ * The form asks for direction, entry, stop, setup, label, note, exit and target. Size rides
+ * on the optional row, always in view; everything else is behind "More options".
  */
 async function expandTradeOptions(page: Page) {
   const toggle = page.locator('#trade-more-options-toggle');
@@ -76,6 +76,8 @@ test.describe('Trade details', () => {
   test('clicking a trade card opens everything recorded about it', async ({ page }) => {
     // A closed trade with a written reason and a tag.
     await openAddTrade(page);
+    // Tags are classification rather than the trade itself, so they open with the depth.
+    await expandTradeOptions(page);
     await page.locator('#trade-entry-price').fill('7730');
     await page.locator('#trade-initial-stop').fill('7710');
     await page.locator('#trade-contracts').fill('2');

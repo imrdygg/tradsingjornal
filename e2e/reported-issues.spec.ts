@@ -66,8 +66,8 @@ async function expandTodayAdvanced(page: Page) {
 }
 
 /**
- * The form asks for direction, entry, stop, size, setup, label, note, exit and target;
- * everything else is under "More options".
+ * The form asks for direction, entry, stop, setup, label, note, exit and target. Size rides
+ * on the optional row, always in view; everything else is behind "More options".
  */
 async function expandTradeOptions(page: Page) {
   const toggle = page.locator('#trade-more-options-toggle');

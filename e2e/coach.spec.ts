@@ -103,7 +103,7 @@ test.describe('Coach tab', () => {
     await expect(card).toBeVisible();
     await expect(card).toContainText(/Setups about to happen/i);
 
-    // A fresh journal has no planned levels, and the card says so rather than showing a
+    // A fresh journal has no levels marked, and the card says so rather than showing a
     // measurement against nothing. This is arithmetic, so it renders with no service.
     await expect(card).toContainText(/No levels are set for today/i);
   });

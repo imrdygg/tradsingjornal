@@ -9,6 +9,7 @@ import { DrawdownRoomStrip } from './components/today/DrawdownRoomStrip';
 import { DrawdownRoomChart } from './components/today/DrawdownRoomChart';
 import { realizedPnL } from './lib/analytics/realized-pnl';
 import { TodaySummary } from './components/today/TodaySummary';
+import { ImportantLevelsEditor } from './components/today/ImportantLevelsEditor';
 import { GlobalSearch } from './components/common/GlobalSearch';
 import { CollapsibleSection } from './components/common/CollapsibleSection';
 import { TradeCard } from './components/trades/TradeCard';
@@ -84,6 +85,7 @@ import {
   TradeManagement,
   PatternStudy,
   LevelTouch,
+  ImportantLevel,
 } from './types';
 import type { SyncStatus } from './components/layout/SyncStatusBadge';
 import { storage, dismissStorageFailure, measureJournalBytes } from './lib/storage';
@@ -107,7 +109,7 @@ import {
   estimateStopDistance,
 } from './lib/analytics/risk-capacity';
 import { findInstrument } from './lib/trading/instruments';
-import { Plus, Award, Sparkles, Layers, Activity, Cloud, CloudOff, Loader2 } from 'lucide-react';
+import { Plus, Award, Sparkles, Layers, Activity, Target, Cloud, CloudOff, Loader2 } from 'lucide-react';
 
 function AuthScreen() {
   const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in');
@@ -565,6 +567,20 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   const handleSaveDay = (updated: TradingDay) => {
     storage.saveTradingDay(updated);
     setTradingDays(storage.getTradingDays());
+  };
+
+  /**
+   * Saves today's levels from the Today tab.
+   *
+   * The editor builds its rows in the form, so the day is stamped on here: a level is a fact
+   * about one trading day, and everything that reads them — the coach's live-price warning,
+   * the Playbook's level log, a search result — expects that link to be there.
+   */
+  const handleSaveTodayLevels = (levels: ImportantLevel[]) => {
+    handleSaveDay({
+      ...todayTradingDay,
+      importantLevels: levels.map((level) => ({ ...level, tradingDayId: todayTradingDay.id })),
+    });
   };
 
   /**
@@ -1301,6 +1317,36 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
                 capStatuses={tierCapFlags}
               />
             </CollapsibleSection>
+
+            {/*
+              The levels today is read against.
+
+              Two things in the app look forward rather than back, and both are fed by this
+              list: the coach's warning (price measured against your own levels) and the
+              Playbook's level log (which of them price actually touched). Neither can say
+              anything without it, so it belongs on the day's own page instead of three tabs
+              away — and marking levels is not the same as writing a plan. A level is a price,
+              not a view, which is why it is the one morning entry this tab keeps.
+            */}
+            <section id="today-levels" className="space-y-3">
+              <h2 className="flex items-center gap-2 font-mono text-xs font-bold uppercase tracking-wider text-zinc-400">
+                <Target className="h-4 w-4 text-zinc-300" />
+                Today's levels ({(todayTradingDay.importantLevels || []).length})
+              </h2>
+
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 backdrop-blur-sm sm:p-5">
+                <ImportantLevelsEditor
+                  levels={todayTradingDay.importantLevels || []}
+                  onChange={handleSaveTodayLevels}
+                  showHeading={false}
+                />
+                <p className="mt-3 text-[11px] leading-relaxed text-zinc-500">
+                  The coach measures its live price against these, and the Playbook's level log
+                  records which of them price touched. Nothing here says which way you think
+                  the market is going — they are prices, not a bias.
+                </p>
+              </div>
+            </section>
 
             {yesterdayFocus && (
               <YesterdayFocusBanner

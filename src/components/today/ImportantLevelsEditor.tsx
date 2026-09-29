@@ -4,24 +4,34 @@ import { ImportantLevel } from '../../types';
 import { parseTagInput } from '../../lib/utils/tags';
 
 /**
- * The prices today's plan is built around.
+ * The prices today is read against.
  *
  * A level carries three pieces of writing, which do different jobs: the price is where it
  * is, the label names it ("Overnight High", "VWAP"), and the tags classify it so a screen
  * of levels can be read at a glance and searched later ("liquidity", "news", "key").
  * Tags are free-form and comma-separated, the same habit as a trade's tags.
+ *
+ * Nothing here is a view on direction, which is why it is the one piece of morning writing
+ * that survived the plan's removal: the coach's warning and the Playbook's level log both
+ * need a list of prices, and neither needs an opinion to go with them.
  */
 
 interface ImportantLevelsEditorProps {
   levels: ImportantLevel[];
   onChange: (levels: ImportantLevel[]) => void;
   disabled?: boolean;
+  /**
+   * The editor's own heading row. On by default; off for a caller that titles the section
+   * itself, so the page does not read its own title back twice.
+   */
+  showHeading?: boolean;
 }
 
 export const ImportantLevelsEditor: React.FC<ImportantLevelsEditorProps> = ({
   levels,
   onChange,
   disabled = false,
+  showHeading = true,
 }) => {
   const [newPrice, setNewPrice] = useState('');
   const [newLabel, setNewLabel] = useState('');
@@ -73,15 +83,17 @@ export const ImportantLevelsEditor: React.FC<ImportantLevelsEditorProps> = ({
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <label className="text-xs font-semibold uppercase tracking-wider text-zinc-400 font-mono flex items-center gap-1.5">
-          <Tag className="w-3.5 h-3.5 text-zinc-400" />
-          Important Price Levels
-        </label>
-        <span className="text-[11px] text-zinc-400 font-mono">
-          {levels.length} level{levels.length === 1 ? '' : 's'} tracked
-        </span>
-      </div>
+      {showHeading && (
+        <div className="flex items-center justify-between">
+          <label className="text-xs font-semibold uppercase tracking-wider text-zinc-400 font-mono flex items-center gap-1.5">
+            <Tag className="w-3.5 h-3.5 text-zinc-400" />
+            Important Price Levels
+          </label>
+          <span className="text-[11px] text-zinc-400 font-mono">
+            {levels.length} level{levels.length === 1 ? '' : 's'} tracked
+          </span>
+        </div>
+      )}
 
       {/* Existing Levels List */}
       {levels.length > 0 && (

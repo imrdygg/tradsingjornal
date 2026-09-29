@@ -18,16 +18,16 @@ import { formatTimestamp } from '../../lib/storage/date-utils';
  * is about to happen" in the abstract — it is "price is six points under the level you
  * wrote down this morning". This card is the measurement behind that sentence.
  *
- * It reads the plan's own levels, not the touch log, and that is the whole point: a touch
- * is written down once price is already there, which is too late to be a warning. The
- * levels in the morning plan are the only forward-looking record the journal has.
+ * It reads today's marked levels, not the touch log, and that is the whole point: a touch is
+ * written down once price is already there, which is too late to be a warning. The levels on
+ * the Today tab are the only forward-looking record the journal has.
  *
  * Nothing here is a prediction and nothing here is the model. It is arithmetic against a
  * live price, and when the price is missing it says so rather than implying a distance.
  */
 
 export interface ApproachAlertCardProps {
-  /** Today's planned levels, as set in the morning plan. */
+  /** Today's marked levels, as set on the Today tab. */
   levels: ImportantLevel[];
   /** The contract the levels are measured against, e.g. MES. */
   symbol: string;
@@ -111,8 +111,8 @@ export const ApproachAlertCard: React.FC<ApproachAlertCardProps> = ({
       </div>
 
       {levels.length === 0 ? (
-        <p className="text-xs italic text-zinc-500">
-          No levels are set for today. Add the levels you are watching in the morning plan and
+        <p id="coach-approach-empty" className="text-xs italic text-zinc-500">
+          No levels are set for today. Mark the prices you are watching on the Today tab and
           this will measure price against them.
         </p>
       ) : (

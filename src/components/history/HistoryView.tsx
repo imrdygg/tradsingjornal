@@ -12,6 +12,7 @@ import {
   Filter,
   Tag,
   Trash2,
+  ClipboardCheck,
 } from 'lucide-react';
 import { TradingDay, Trade, DailyReview, Setup, Instrument } from '../../types';
 import { formatTradingDate, formatTimestamp } from '../../lib/storage/date-utils';
@@ -63,6 +64,15 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
   const [filterRiskMode, setFilterRiskMode] = useState<'all' | 'normal' | 'expanded'>('all');
   const [filterSession, setFilterSession] = useState<string>('all');
   const [filterSetup, setFilterSetup] = useState<string>('all');
+  /**
+   * Whether the day's closed trades have had their execution review written.
+   *
+   * Filtering on the trade rather than on the day, because that is where the review lives:
+   * the end-of-day review is a separate thing and a day can have one while half its trades
+   * still say "Review pending". The option carries the count, so "which ones am I behind on"
+   * is answered by the select itself before anything is clicked.
+   */
+  const [filterReview, setFilterReview] = useState<'all' | 'needs' | 'done'>('all');
   const [filterLevelTag, setFilterLevelTag] = useState<string>('all');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
@@ -136,6 +146,28 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
     [tradingDays, tradesPerDay, dayStats]
   );
 
+  /**
+   * Closed trades per day that still have no execution review.
+   *
+   * Open trades are not counted: a review is written when the trade is closed, so an open
+   * position has nothing to review yet and flagging it would teach the trader to ignore the
+   * flag. This is the one number the archive cannot show on its own — the day's discipline
+   * score comes from the end-of-day review and says nothing about its trades.
+   */
+  const pendingReviews = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const trade of trades) {
+      if (trade.status !== 'closed' || trade.executionReview) continue;
+      map.set(trade.tradingDayId, (map.get(trade.tradingDayId) ?? 0) + 1);
+    }
+    return map;
+  }, [trades]);
+
+  const totalPendingReviews = useMemo(
+    () => [...pendingReviews.values()].reduce((sum, count) => sum + count, 0),
+    [pendingReviews]
+  );
+
   const availableLevelTags = useMemo(() => {
     const tags = new Set<string>();
     for (const day of tradingDays) {
@@ -189,6 +221,12 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
         if (!hasLevelTag) return false;
       }
 
+      // Trade review filter. "All reviewed" needs a closed trade to have reviewed, so a day
+      // whose only trade is still open is not claimed as reviewed — it has nothing to be.
+      const pending = pendingReviews.get(day.id) ?? 0;
+      if (filterReview === 'needs' && pending === 0) return false;
+      if (filterReview === 'done' && (pending > 0 || stats.tradeCount === 0)) return false;
+
       return true;
     });
   }, [
@@ -201,6 +239,8 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
     filterSession,
     filterSetup,
     filterLevelTag,
+    filterReview,
+    pendingReviews,
     trades,
   ]);
 
@@ -231,6 +271,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
     filterSession !== 'all' ||
     filterSetup !== 'all' ||
     filterLevelTag !== 'all' ||
+    filterReview !== 'all' ||
     !!startDate ||
     !!endDate;
 
@@ -240,6 +281,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
     setFilterSession('all');
     setFilterSetup('all');
     setFilterLevelTag('all');
+    setFilterReview('all');
     setStartDate('');
     setEndDate('');
   };
@@ -298,7 +340,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
           )}
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-8 gap-2">
           <div>
             <label className="text-[10px] text-zinc-400 block mb-0.5 flex items-center gap-1">
               <Calendar className="w-3 h-3 text-emerald-400" />
@@ -403,6 +445,35 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
               ))}
             </select>
           </div>
+
+          {/*
+            The execution reviews still owed, which nothing else in the archive shows: the
+            day's discipline score comes from the end-of-day review, so a day can score 100%
+            with every one of its trades saying "Review pending" underneath it. The count sits
+            in the option, so the answer is on screen before the filter is used.
+          */}
+          <div>
+            <label className="text-[10px] text-zinc-400 block mb-0.5 flex items-center gap-1">
+              <ClipboardCheck
+                className={`w-3 h-3 ${totalPendingReviews > 0 ? 'text-amber-400' : 'text-zinc-500'}`}
+              />
+              Trade Review
+            </label>
+            <select
+              id="history-review-filter"
+              value={filterReview}
+              onChange={(e) => setFilterReview(e.target.value as 'all' | 'needs' | 'done')}
+              className={`w-full rounded-lg border bg-zinc-950 px-2 py-1.5 text-xs focus:outline-none ${
+                filterReview === 'needs'
+                  ? 'border-amber-800 text-amber-200'
+                  : 'border-zinc-800 text-zinc-200'
+              }`}
+            >
+              <option value="all">Any review state</option>
+              <option value="needs">Needs review ({totalPendingReviews})</option>
+              <option value="done">All trades reviewed</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -411,6 +482,8 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900/30 p-8 text-center text-zinc-400 text-xs">
           {daysWithActivity.length === 0
             ? 'Nothing to archive yet. A day appears here once it has a trade, a plan or an end-of-day review — dates you only opened the app on are left out.'
+            : filterReview === 'needs' && totalPendingReviews === 0
+            ? 'Nothing is waiting on you: every closed trade in the journal has an execution review.'
             : 'No historical trading days found matching the specified filters.'}
         </div>
       ) : (
@@ -424,6 +497,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
             const pnlColor =
               pnl > 0 ? 'text-emerald-400' : pnl < 0 ? 'text-rose-400' : 'text-zinc-400';
             const pnlSign = pnl > 0 ? '+' : '';
+            const pending = pendingReviews.get(day.id) ?? 0;
 
             return (
               <div
@@ -525,6 +599,23 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                         +{hiddenLevels} more — open the day
                       </span>
                     )}
+                  </div>
+                )}
+
+                {/*
+                  The reviews this day still owes.
+
+                  A line rather than a chip, because it is a thing to do rather than a
+                  state: a day whose trades have no review is exactly the day worth
+                  reopening, and the archive is where a trader looks for those.
+                */}
+                {pending > 0 && (
+                  <div
+                    data-testid={`day-pending-reviews-${day.id}`}
+                    className="flex items-center gap-1.5 rounded-lg border border-amber-900/60 bg-amber-950/30 px-2 py-1 font-mono text-[10px] text-amber-300"
+                  >
+                    <ClipboardCheck className="h-3 w-3 shrink-0" />
+                    {pending} closed trade{pending === 1 ? '' : 's'} with no execution review
                   </div>
                 )}
 

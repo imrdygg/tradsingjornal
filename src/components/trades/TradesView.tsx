@@ -21,6 +21,8 @@ import { TradeCard } from './TradeCard';
 import { CoachEntryCallBadge } from './CoachEntryCallBadge';
 import { SetupBoard } from './SetupBoard';
 import { calculateSetupBreakdown } from '../../lib/analytics/aggregations';
+import { buildEquitySequence } from '../../lib/analytics/insights-series';
+import type { EquityPoint } from '../../lib/analytics/insights-series';
 import { calculateTradeRuleFollowing } from '../../lib/analytics/discipline';
 import { formatTimestamp } from '../../lib/storage/date-utils';
 import { ImageLightboxModal } from '../common/ImageLightboxModal';
@@ -110,6 +112,24 @@ export const TradesView: React.FC<TradesViewProps> = ({
       })),
     [trades]
   );
+
+  /**
+   * Each setup's own record as a sequence, for the mini curve on its board card.
+   *
+   * Built per setup from the same ordered sequence the Insights tab plots, so a card's line
+   * is the same reading as the equity curve at the top of that tab, simply narrowed to one
+   * pattern. Setups with nothing closed yet are left out rather than given an empty line.
+   */
+  const setupCurves = useMemo(() => {
+    const curves: Record<string, EquityPoint[]> = {};
+    for (const row of setupBoardRows) {
+      const mine = trades.filter((t) => t.setupName === row.name);
+      if (mine.some((t) => t.status === 'closed')) {
+        curves[row.name] = buildEquitySequence(mine, tradingDays);
+      }
+    }
+    return curves;
+  }, [setupBoardRows, trades, tradingDays]);
 
   const filteredTrades = useMemo(() => {
     return trades.filter((t) => {
@@ -461,6 +481,7 @@ export const TradesView: React.FC<TradesViewProps> = ({
       {setupBoardRows.length > 0 && (
         <SetupBoard
           rows={setupBoardRows}
+          curves={setupCurves}
           activeSetup={filterSetup !== 'all' ? filterSetup : null}
           onSelectSetup={(name) => setFilterSetup(filterSetup === name ? 'all' : name)}
         />

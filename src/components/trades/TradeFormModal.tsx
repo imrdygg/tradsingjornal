@@ -23,7 +23,7 @@ import {
   TradingDay,
 } from '../../types';
 import { calculateInitialRisk } from '../../lib/trading/calculate-risk';
-import { hasAssumedRisk } from '../../lib/trading/risk-fixup';
+import { deriveStop, hasAssumedRisk } from '../../lib/trading/risk-fixup';
 import { calculatePnL } from '../../lib/trading/calculate-pnl';
 import { calculateRMultiple } from '../../lib/trading/calculate-r';
 import { findInstrument } from '../../lib/trading/instruments';
@@ -139,6 +139,16 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
    * theirs — including through any later edit to the entry or stop.
    */
   const autoSizeRef = useRef(true);
+  /**
+   * Whether the stop is still being filled in from the plan.
+   *
+   * The same idea facing the other way. A slot says what the trade is allowed to lose, the
+   * instrument says what a point is worth and the size says how many points that buys, so
+   * the level that loses exactly the slot's risk is arithmetic rather than a judgement
+   * call. Typing a stop by hand is the trader taking the level over; from then on it is
+   * theirs, however the entry or the size changes around it.
+   */
+  const autoStopRef = useRef(true);
 
   const selectedInstrument = useMemo(
     () => findInstrument(instruments, instrumentId),
@@ -265,6 +275,10 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
     // Only a fresh, hand-entered trade has its size derived from its slot. An edit keeps
     // the size that was actually filled, and a scale-in keeps the calculator's size.
     autoSizeRef.current = !editingTrade && !prefill;
+    // The stop follows the same rule: a fresh trade has it filled from the plan, an edit
+    // keeps the stop it was recorded with, and a scale-in keeps its stop blank until the
+    // trader picks the level that invalidates the larger position.
+    autoStopRef.current = !editingTrade && !prefill;
   }, [isOpen, editingTrade, prefill, day]);
 
   // Live Calculations Preview
@@ -379,6 +393,65 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
   }, [sizing, isOpen]);
 
   /**
+   * The stop that makes the chosen slot's risk true at this entry and this size.
+   *
+   * The slot says what the trade may lose, the instrument says what a point is worth and
+   * the size says how many points that buys, so the level that loses exactly the slot's
+   * risk is arithmetic: Trade #2 at $50 on one MES contract is ten points. `deriveStop`
+   * snaps the price to a real tick, so what gets filled in is a level the trader could
+   * actually have placed, and the risk it carries is what gets reported back.
+   */
+  const plannedStop = useMemo(() => {
+    if (targetRisk === null) return null;
+    const entry = parseFloat(entryPrice);
+    const qty = parseInt(contracts, 10);
+    const pointValue = selectedInstrument.pointValue;
+    if (!Number.isFinite(entry) || entry <= 0) return null;
+    if (!Number.isInteger(qty) || qty < 1) return null;
+    if (!Number.isFinite(pointValue) || pointValue <= 0) return null;
+
+    const stopPrice = deriveStop({
+      entryPrice: entry,
+      direction,
+      mode: 'dollars',
+      dollars: targetRisk,
+      contracts: qty,
+      pointValue,
+      tickSize: selectedInstrument.tickSize,
+    });
+
+    // A plan stop that lands back on the entry, or on or below zero, is not a stop: on this
+    // instrument the slot is wider than this size can express, so nothing is filled in and
+    // the level stays the trader's to choose.
+    if (!(stopPrice > 0) || stopPrice === entry) return null;
+
+    const stopPoints = Math.round(Math.abs(entry - stopPrice) * 100) / 100;
+    const actualRisk = Math.round(stopPoints * qty * pointValue * 100) / 100;
+
+    return {
+      stopPrice,
+      stopPoints,
+      actualRisk,
+      /** True when no tick away from the entry carries the slot's risk exactly. */
+      rounded: Math.abs(actualRisk - targetRisk) > 0.01,
+      label: riskTierLabel(riskTier, targetRisk, riskTiers),
+      size: `${qty} × ${selectedInstrument.symbol}`,
+      tickSize: selectedInstrument.tickSize,
+    };
+  }, [targetRisk, entryPrice, contracts, direction, selectedInstrument, riskTier, riskTiers]);
+
+  /** True while the stop in the field is the one the plan puts there. */
+  const stopOnPlan = plannedStop !== null && parseFloat(initialStop) === plannedStop.stopPrice;
+
+  // Fills the stop in from the plan as the entry, slot, size and instrument change.
+  // `autoStopRef` is cleared by the stop field itself, so a stop the trader typed is never
+  // overwritten — and clearing the entry takes the derived stop away with it.
+  useEffect(() => {
+    if (!isOpen || !autoStopRef.current) return;
+    setInitialStop(plannedStop ? String(plannedStop.stopPrice) : '');
+  }, [plannedStop, isOpen]);
+
+  /**
    * Picking a slot with 1–4 (or 0 / C for custom) while the modal is open.
    *
    * Keystrokes inside a field are left alone: the entry price and stop are full of digits,
@@ -430,6 +503,8 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
     // which is the honest thing to store when the trader never gave a level to lose at —
     // the alternative is inventing a stop, and every risk statistic downstream would then
     // be fiction. The entry price stands in for it so the record still has a number there.
+    // A fresh trade usually arrives with the plan's stop already filled in, so a blank one
+    // here means the trader cleared it or has not given the plan a size to work from.
     const stopEntered = initialStop.trim() !== '';
     const stop = stopEntered ? parseFloat(initialStop) : entry;
     const riskKnown = stopEntered && entry !== stop;
@@ -890,7 +965,9 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
               <input
                 id="trade-entry-price"
                 type="number"
-                step="0.25"
+                // Prices come from the instrument's own grid, so an entry the trader could
+                // really have filled is one the browser accepts.
+                step={selectedInstrument.tickSize}
                 placeholder="6702.25"
                 value={entryPrice}
                 onChange={(e) => setEntryPrice(e.target.value)}
@@ -905,17 +982,51 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
                 className="text-xs font-medium text-zinc-300 block mb-1 flex items-center justify-between"
               >
                 <span>Stop</span>
-                <span className="text-[10px] font-normal text-zinc-500">optional</span>
+                <span className="text-[10px] font-normal text-zinc-500">
+                  {stopOnPlan ? 'from your plan' : 'optional'}
+                </span>
               </label>
               <input
                 id="trade-initial-stop"
                 type="number"
-                step="0.25"
+                step={selectedInstrument.tickSize}
                 placeholder="6692.25"
                 value={initialStop}
-                onChange={(e) => setInitialStop(e.target.value)}
+                onChange={(e) => {
+                  // The trader is setting the level by hand; stop filling it from the plan.
+                  autoStopRef.current = false;
+                  setInitialStop(e.target.value);
+                }}
                 className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none"
               />
+              {/*
+                Where the filled-in stop came from, in the trader's own numbers — or a way
+                back to it once they have typed a level of their own.
+              */}
+              {plannedStop &&
+                (stopOnPlan ? (
+                  <p
+                    id="trade-stop-plan"
+                    className="mt-1 text-[10px] font-mono leading-relaxed text-emerald-300/90"
+                  >
+                    {`${plannedStop.label} — ${plannedStop.stopPoints} pts on ${plannedStop.size} = $${plannedStop.actualRisk.toFixed(2)}${plannedStop.rounded ? `, snapped to the ${plannedStop.tickSize} tick` : ''}`}
+                  </p>
+                ) : (
+                  <button
+                    type="button"
+                    id="trade-stop-use-plan"
+                    onClick={() => {
+                      // Hand the field back to the plan: it fills in now and follows any
+                      // later change to the entry, the slot or the size.
+                      autoStopRef.current = true;
+                      setInitialStop(String(plannedStop.stopPrice));
+                    }}
+                    title="Put the stop back where the chosen Trade # says it belongs"
+                    className="mt-1 text-left text-[10px] font-mono leading-relaxed text-emerald-300/90 underline decoration-dotted underline-offset-2 hover:text-emerald-200"
+                  >
+                    {`Use the plan stop ${plannedStop.stopPrice} — ${plannedStop.stopPoints} pts on ${plannedStop.size}, $${plannedStop.actualRisk.toFixed(2)}`}
+                  </button>
+                ))}
             </div>
 
           </div>

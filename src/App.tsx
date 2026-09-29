@@ -1207,7 +1207,8 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               The number, the record behind it and the two things a trader does with it: write
               a trade down, and say how the day went. Everything below this strip is reading
               the same day back — the lesson, the review and the trades — so the strip stays
-              the page's header and nothing sits between it and them.
+              the page's header. The journal-wide search sits directly under it, because that
+              box is about finding any day rather than about reading this one.
             */}
             <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 backdrop-blur-sm sm:p-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1269,6 +1270,39 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
                 </div>
               )}
             </div>
+
+            {/*
+              Journal-wide search, at the top of the tab.
+
+              It reads across every tab's records rather than the day's, so it is not part of
+              reading the session back — which is exactly why it goes first: a box you reach
+              by scrolling past the whole day is a box you stop using on the days you most
+              need it. Above the day's panels it is one click away, and folded away it costs a
+              single line.
+            */}
+            <CollapsibleSection
+              id="section-search"
+              title="Search the journal"
+              meta={
+                <span className="font-mono text-[11px] text-zinc-500">
+                  trades, days, notes and tags
+                </span>
+              }
+              persistKey="search"
+            >
+              <GlobalSearch
+                trades={trades}
+                tradingDays={tradingDays}
+                reviews={reviews}
+                instruments={instruments}
+                timezone={profile.timezone}
+                onViewTrade={(trade) => setViewingTradeId(trade.id)}
+                onOpenDay={(dayId) => {
+                  setActiveTab('history');
+                  setHistoryFocusDayId(dayId);
+                }}
+              />
+            </CollapsibleSection>
 
             {/*
               ── Today ─────────────────────────────────────────────────────────────────
@@ -1495,31 +1529,6 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               </Suspense>
             </section>
 
-            {/* Journal-wide search: one box that finds trades by tags, setups, notes, P&L
-                and date/time. It reads across every tab's records, so it sits last. */}
-            <CollapsibleSection
-              id="section-search"
-              title="Search the journal"
-              meta={
-                <span className="font-mono text-[11px] text-zinc-500">
-                  trades, days, notes and tags
-                </span>
-              }
-              persistKey="search"
-            >
-              <GlobalSearch
-                trades={trades}
-                tradingDays={tradingDays}
-                reviews={reviews}
-                instruments={instruments}
-                timezone={profile.timezone}
-                onViewTrade={(trade) => setViewingTradeId(trade.id)}
-                onOpenDay={(dayId) => {
-                  setActiveTab('history');
-                  setHistoryFocusDayId(dayId);
-                }}
-              />
-            </CollapsibleSection>
           </div>
         );
 

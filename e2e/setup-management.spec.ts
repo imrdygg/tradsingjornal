@@ -7,13 +7,12 @@ import { expect, test, type Page } from '@playwright/test';
  *  - a setup can be moved, and the Playbook and the trade dropdown follow that order
  *  - a duplicate or empty name is refused rather than saved
  *
- * A fresh journal gets the built-in catalog and one trading day whose watchedSetups are
- * ['Engulfing', 'Support', 'Resistance'], so renaming Engulfing has days — but no trades —
- * already recorded under the old name.
+ * A fresh journal gets the built-in catalog and one trading day whose watchedSetups are the
+ * two break-and-run setups the app is built around, so renaming one of those has a planned
+ * day — but no trades — already recorded under the old name.
  */
 
-const ENGULFING_SUMMARY =
-  'A two-candle reversal pattern where one candle fully "swallows" the body of the previous one';
+const OVERNIGHT_SUMMARY = 'The overnight session breaks a level and never looks back';
 
 /** Open a tab via whichever nav is visible at the current viewport. */
 async function gotoTab(page: Page, tab: string) {
@@ -33,6 +32,11 @@ async function gotoSettings(page: Page) {
 async function gotoPlaybook(page: Page) {
   await gotoTab(page, 'playbook');
   await expect(page.getByRole('heading', { name: /Trading Setups & Playbook Library/i })).toBeVisible();
+  // The library opens trimmed to the two focus setups; these assertions are about the
+  // whole catalog, including setups renamed away from the focus pair.
+  const toggle = page.locator('#playbook-focus-toggle');
+  await expect(toggle).toBeVisible();
+  if ((await toggle.textContent())?.includes('Show all setups')) await toggle.click();
 }
 
 /** The vertical position of a setup's name in the Playbook, for order assertions. */
@@ -65,18 +69,18 @@ test.describe('Playbook setups in Settings', () => {
   test('renaming keeps the built-in guide and offers to relabel history', async ({ page }) => {
     await gotoSettings(page);
 
-    const field = page.locator('[data-testid="setup-name-engulfing"]');
+    const field = page.locator('[data-testid="setup-name-overnight-break-and-run"]');
     await field.fill('Body Swap');
     await field.blur();
 
     // The old name is what the journal recorded, so the offer is measured against it —
-    // one planned day, no trades.
+    // the seeded day watches it, with no trades yet.
     const offer = page.getByRole('button', { name: /Update them to/ });
     await expect(offer).toBeVisible();
-    await expect(page.getByText(/still say .Engulfing./)).toBeVisible();
+    await expect(page.getByText(/still say .Overnight Break & Run./)).toBeVisible();
 
     // The built-in association survives the rename rather than falling back to generic.
-    await expect(page.getByText('guide: Engulfing')).toBeVisible();
+    await expect(page.getByText('guide: Overnight Break & Run')).toBeVisible();
 
     await offer.click();
     await expect(page.getByRole('button', { name: /Update them to/ })).toBeHidden();
@@ -84,27 +88,27 @@ test.describe('Playbook setups in Settings', () => {
     // The renamed setup keeps its study guide in the Playbook.
     await gotoPlaybook(page);
     await expect(page.getByTitle('Body Swap', { exact: true })).toBeVisible();
-    expect(await page.getByText(ENGULFING_SUMMARY).count()).toBeGreaterThan(0);
+    expect(await page.getByText(OVERNIGHT_SUMMARY).count()).toBeGreaterThan(0);
   });
 
   test('declining the relabel keeps the journal as it was', async ({ page }) => {
     await gotoSettings(page);
 
-    const field = page.locator('[data-testid="setup-name-engulfing"]');
+    const field = page.locator('[data-testid="setup-name-overnight-break-and-run"]');
     await field.fill('Body Swap');
     await field.blur();
 
     await page.getByRole('button', { name: /Leave history as it was/ }).click();
     await expect(page.getByRole('button', { name: /Update them to/ })).toBeHidden();
 
-    // The day still watches "Engulfing", and the setup is still called "Body Swap".
+    // The day still watches "Overnight Break & Run", and the setup is called "Body Swap".
     await expect(field).toHaveValue('Body Swap');
     const watched = await page.evaluate(() => {
       const raw = localStorage.getItem('ptj_trading_days_v1');
       return raw ? JSON.parse(raw) : [];
     });
     expect(watched.some((day: { watchedSetups?: string[] }) =>
-      (day.watchedSetups ?? []).includes('Engulfing')
+      (day.watchedSetups ?? []).includes('Overnight Break & Run')
     )).toBe(true);
   });
 
@@ -137,15 +141,18 @@ test.describe('Playbook setups in Settings', () => {
     await expect
       .poll(async () => await nameTop(page, 'Support'))
       .toBeLessThan(await nameTop(page, 'Engulfing'));
-    // The first row's "up" control is disabled at the top of the list.
+    // The first row's "up" control is disabled at the top of the list. The two focus
+    // setups lead the catalog, so the top row is the first of those.
     await gotoSettings(page);
-    await expect(page.getByRole('button', { name: 'Move Support up' })).toBeDisabled();
+    await expect(
+      page.getByRole('button', { name: 'Move Overnight Break & Run up' })
+    ).toBeDisabled();
   });
 
   test('rename and order survive a reload', async ({ page }) => {
     await gotoSettings(page);
 
-    const field = page.locator('[data-testid="setup-name-engulfing"]');
+    const field = page.locator('[data-testid="setup-name-overnight-break-and-run"]');
     await field.fill('Body Swap');
     await field.blur();
     await page.getByRole('button', { name: /Leave history as it was/ }).click();
@@ -155,9 +162,10 @@ test.describe('Playbook setups in Settings', () => {
     await page.reload();
     await gotoSettings(page);
 
-    await expect(page.locator('[data-testid="setup-name-engulfing"]')).toHaveValue('Body Swap');
+    await expect(page.locator('[data-testid="setup-name-overnight-break-and-run"]')).toHaveValue('Body Swap');
+    // Body Swap was moved below the other focus setup, and that order survives the reload.
     await expect
-      .poll(async () => await nameTop(page, 'Support'))
+      .poll(async () => await nameTop(page, 'Session Break & Run'))
       .toBeLessThan(await nameTop(page, 'Body Swap'));
   });
 });

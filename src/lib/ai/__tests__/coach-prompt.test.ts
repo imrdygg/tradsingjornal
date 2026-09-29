@@ -14,7 +14,7 @@ import {
 import type { ChartReadResponse, CoachTradeFacts } from '../coach-types';
 import { buildJournalDigest } from '../journal-digest';
 import type { DailyBars, MarketBrief } from '../market-data';
-import { DailyReview, DailyReviewQuestions, Trade, TradingDay } from '../../../types';
+import { DailyReview, DailyReviewQuestions, LevelTouch, Trade, TradingDay } from '../../../types';
 import { DEFAULT_INSTRUMENTS } from '../../trading/instruments';
 
 const ALL_YES: DailyReviewQuestions = {
@@ -545,6 +545,143 @@ describe('form mode', () => {
   it('rejects a form read with no trend in it', () => {
     const { trendRead, ...rest } = formJson;
     expect(() => parseCoachResponse('form', rest)).toThrow(/trendRead/);
+  });
+});
+
+/**
+ * The level-touch record is easy for a model to read as a forecast or as a win rate, so
+ * what is asserted here is the honesty scaffolding around it: the section only appears when
+ * there are touches, the thin buckets carry counts rather than a percentage, and the
+ * guardrails that say so are attached whenever the record is in the prompt.
+ */
+describe('the level-touch record in the prompt', () => {
+  function touch(overrides: Partial<LevelTouch> = {}): LevelTouch {
+    return {
+      id: 'lt1',
+      userId: 'u1',
+      tradingDayId: 'd1',
+      tradeDate: '2026-09-18',
+      instrumentId: 'mes',
+      kind: 'support',
+      price: 5000,
+      zonePoints: 4,
+      touchedAt: '2026-09-18T09:00:00.000Z',
+      session: 'Overnight',
+      outcome: 'watching',
+      checks: 0,
+      createdAt: '2026-09-18T09:00:00.000Z',
+      updatedAt: '2026-09-18T09:00:00.000Z',
+      ...overrides,
+    };
+  }
+
+  const held = (count: number, extra: Partial<LevelTouch> = {}) =>
+    Array.from({ length: count }, (_, i) =>
+      touch({
+        id: `lt${i}-${extra.session ?? 'Overnight'}`,
+        outcome: 'never-returned',
+        touchedAt: `2026-09-${String(i + 1).padStart(2, '0')}T09:00:00.000Z`,
+        ...extra,
+      })
+    );
+
+  it('leaves the section out entirely when nothing has been logged', () => {
+    expect(formatDigestForPrompt(digestFor())).not.toContain('LEVEL TOUCHES');
+  });
+
+  it('renders the record and the hold rate once a sample exists', () => {
+    const text = formatDigestForPrompt(digestFor({ levelTouches: held(5) }));
+
+    expect(text).toContain('LEVEL TOUCHES');
+    expect(text).toContain('Hold rate: 100% of 5 decided touch(es).');
+    expect(text).toContain('Overnight support: 100% hold over 5 decided touch(es)');
+  });
+
+  it('reports a thin record as counts and refuses to quote a rate', () => {
+    const text = formatDigestForPrompt(digestFor({ levelTouches: held(2) }));
+
+    expect(text).toContain('THIN: only 2 decided touch(es)');
+    expect(text).not.toContain('Hold rate:');
+  });
+
+  it('separates what is logged from what is readable', () => {
+    const text = formatDigestForPrompt(
+      digestFor({
+        levelTouches: [
+          ...held(5),
+          touch({ id: 'thin', session: 'Premarket', kind: 'resistance', outcome: 'never-returned' }),
+        ],
+      })
+    );
+
+    expect(text).toContain('NOT yet readable');
+    expect(text).toContain('Premarket resistance: 1 touch(es), 1 decided');
+  });
+
+  it('adds the level-edge guardrails only when the record is in the prompt', () => {
+    expect(buildCoachPrompt('brief', digestFor()).systemInstruction).toBe(COACH_GUARDRAILS);
+
+    const { systemInstruction } = buildCoachPrompt('brief', digestFor({ levelTouches: held(5) }));
+    expect(systemInstruction).toContain('NO MARKET DATA');
+    expect(systemInstruction).toContain('ONLY READ A RATE THAT IS MARKED READABLE');
+    expect(systemInstruction).toContain('A HOLD IS NOT A PROFIT');
+  });
+});
+
+/**
+ * The edge mode is the dedicated finder: it reports which conditions the trader's own
+ * record supports and, just as importantly, which are still too thin to name.
+ */
+describe('edge mode', () => {
+  const edgeJson = {
+    headline: 'Overnight holds, the session does not',
+    bestCondition: 'Overnight support held 5 of 5 decided touches.',
+    conditions: [
+      { condition: 'Overnight support', holdRate: '100% of 5 decided', evidence: '5 held, 0 came back' },
+    ],
+    notYetReadable: ['Premarket resistance: 1 touch, 1 decided'],
+    whatItMeans: 'Your overnight levels have not been revisited in the recorded sample.',
+    nextStep: 'Log every overnight touch, even the ones that come straight back.',
+    motivation: 'Five touches logged without a gap is what makes this readable.',
+  };
+
+  it('is not a market-opinion mode', () => {
+    expect(allowsMarketOpinion('edge')).toBe(false);
+  });
+
+  it('asks for the readable conditions and forbids a rate on the thin ones', () => {
+    const shape = COACH_RESPONSE_SHAPES.edge;
+    expect(shape).toContain('"bestCondition"');
+    expect(shape).toContain('"notYetReadable"');
+    expect(shape).toContain('Never quote a rate for a condition listed as not yet readable');
+    expect(shape).toContain('A hold means price never came back, not that the trade paid');
+
+    const { userPrompt } = buildCoachPrompt('edge', digestFor());
+    expect(userPrompt).toContain("Find this trader's break-and-run edge");
+  });
+
+  it('parses an edge read, and reads an absent thin list as empty', () => {
+    const parsed = parseCoachResponse('edge', { ...edgeJson, notYetReadable: undefined }) as {
+      conditions: Array<{ condition: string }>;
+      notYetReadable: string[];
+    };
+
+    expect(parsed.conditions[0].condition).toBe('Overnight support');
+    expect(parsed.notYetReadable).toEqual([]);
+  });
+
+  it('drops condition entries with no condition named', () => {
+    const parsed = parseCoachResponse('edge', {
+      ...edgeJson,
+      conditions: [{ condition: '  ' }, { holdRate: 'x' }, { condition: 'Overnight support' }],
+    }) as { conditions: Array<{ condition: string }> };
+
+    expect(parsed.conditions).toEqual([{ condition: 'Overnight support', holdRate: '', evidence: '' }]);
+  });
+
+  it('rejects an edge read with no next step', () => {
+    const { nextStep, ...rest } = edgeJson;
+    expect(() => parseCoachResponse('edge', rest)).toThrow(/nextStep/);
   });
 });
 

@@ -87,6 +87,7 @@ import {
   TradeExecutionReview,
   TradeManagement,
   PatternStudy,
+  LevelTouch,
 } from './types';
 import type { SyncStatus } from './components/layout/SyncStatusBadge';
 import { storage, dismissStorageFailure, measureJournalBytes } from './lib/storage';
@@ -196,6 +197,11 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   const [patternStudies, setPatternStudies] = useState<PatternStudy[]>(() =>
     storage.getPatternStudies()
   );
+  // The break-and-run journal. Held with the rest of the state so every touch is
+  // persisted locally and carried to the cloud by the same debounced save.
+  const [levelTouches, setLevelTouches] = useState<LevelTouch[]>(() =>
+    storage.getLevelTouches()
+  );
 
   const [activeTab, setActiveTab] = useState<NavTab>('today');
 
@@ -274,9 +280,10 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       trades,
       reviews,
       patternStudies,
+      levelTouches,
       lessonAck,
     }),
-    [profile, instruments, setups, tradingDays, trades, reviews, patternStudies, lessonAck]
+    [profile, instruments, setups, tradingDays, trades, reviews, patternStudies, levelTouches, lessonAck]
   );
 
   // Keep the latest state reachable from the sign-out handler without re-running effects.
@@ -307,6 +314,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       setTrades(next.trades);
       setReviews(next.reviews);
       setPatternStudies(next.patternStudies ?? []);
+      setLevelTouches(next.levelTouches ?? []);
       setLessonAck(next.lessonAck ?? null);
     },
     [userId]
@@ -1088,6 +1096,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       tradingDays: [],
       trades: [],
       reviews: [],
+      levelTouches: [],
     };
 
     if (cloudEnabled && cloudReady) {
@@ -1611,6 +1620,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             todayTradeDate={todayTradingDay.tradeDate}
             timezone={profile.timezone}
             maxDrawdown={profile.maxDrawdown ?? null}
+            levelTouches={levelTouches}
           />
         );
 
@@ -1646,6 +1656,16 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             onSavePatternStudy={handleSavePatternStudy}
             focusPatternId={playbookFocusPattern}
             onOpenPattern={handleOpenPattern}
+            edgeFinder={{
+              trades,
+              tradingDays,
+              reviews,
+              instruments,
+              todayTradeDate: todayTradingDay.tradeDate,
+              timezone: profile.timezone,
+              maxDrawdown: profile.maxDrawdown ?? null,
+              levelTouches,
+            }}
           />
         );
 

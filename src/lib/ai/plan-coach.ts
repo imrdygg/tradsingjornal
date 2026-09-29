@@ -2,6 +2,7 @@ import type {
   DailyReview,
   ImportantLevel,
   Instrument,
+  LevelTouch,
   MarketBias,
   Setup,
   Trade,
@@ -46,6 +47,8 @@ export interface PlanCoachContext {
   tradingDays: TradingDay[];
   reviews: DailyReview[];
   timezone: string;
+  /** The level-touch log, when the caller has it, so the coach can find the edge. */
+  levelTouches?: LevelTouch[];
 }
 
 export function buildPlanCoachDigest(context: PlanCoachContext): JournalDigest {
@@ -58,6 +61,7 @@ export function buildPlanCoachDigest(context: PlanCoachContext): JournalDigest {
     instruments: context.instruments,
     todayTradeDate: context.day.tradeDate,
     timezone: context.timezone,
+    levelTouches: context.levelTouches,
   });
 }
 

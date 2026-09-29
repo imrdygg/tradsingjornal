@@ -25,6 +25,14 @@ async function gotoPlaybook(page: Page) {
   await expect(
     page.getByRole('heading', { name: /Trading Setups & Playbook Library/i })
   ).toBeVisible();
+  await revealAllSetups(page);
+}
+
+/** The library opens trimmed to the two focus setups; these tests are about the catalog. */
+async function revealAllSetups(page: Page) {
+  const toggle = page.locator('#playbook-focus-toggle');
+  await expect(toggle).toBeVisible();
+  if ((await toggle.textContent())?.includes('Show all setups')) await toggle.click();
 }
 
 async function gotoTab(page: Page, tab: string, heading: RegExp) {

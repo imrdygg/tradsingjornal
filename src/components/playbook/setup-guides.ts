@@ -18,6 +18,46 @@ export interface SetupGuide {
 }
 
 export const SETUP_GUIDES: Record<string, SetupGuide> = {
+  // The trader's two set-ups lead the catalog. They are the same break-and-run pattern in
+  // two sessions, so the guides differ by when the break happens rather than by shape.
+  'Overnight Break & Run': {
+    summary:
+      'The overnight session breaks a level and never looks back: price leaves the level and does not return to it.',
+    formation: [
+      'A support or resistance level from the prior session, or an edge of the overnight range, is approached and touched during the overnight session.',
+      'Price breaks cleanly away from the level — below a support, or above a resistance — instead of stalling on it.',
+      'Price keeps away: after the break, no candle trades back inside the level\u2019s zone.',
+      'The session hands over with price still on the break side, leaving the level untested behind it.',
+    ],
+    howToTrade: [
+      'Log the touch the moment price reaches the level, before deciding anything — the setup is the level plus what price does next.',
+      'The break is the confirmation: price has to clear the zone (the level price plus or minus the width you marked). Until then the touch is still forming.',
+      'A return into the zone is the setup failing, not a wobble. Mark it returned and move on rather than waiting for a second chance.',
+      'The edge lives in the levels that are never revisited, so the journal matters more than the entry: record every overnight touch, including the ones that come straight back.',
+    ],
+    invalidation:
+      'Price trading back inside the level\u2019s zone at any point after the break — the level was revisited, so this was not a break-and-run.',
+  },
+
+  'Session Break & Run': {
+    summary:
+      'The regular session breaks a level and never revisits it: price leaves the level and holds the break into the close.',
+    formation: [
+      'A level carried into the regular session — prior day high or low, an overnight extreme, or an established shelf from earlier in the session — is touched.',
+      'Price breaks away from the level on the side it was leaning, and the move holds rather than stalling on the level.',
+      'No return: after the break, price does not trade back inside the level\u2019s zone.',
+      'The session trends away from the level, leaving it behind instead of retesting it.',
+    ],
+    howToTrade: [
+      'Record the touch as it happens, with the session marked, so the overnight and session variants can be told apart in the record.',
+      'Wait for the break to clear the zone before treating the touch as a signal in either direction.',
+      'A return into the zone ends the setup: log it as returned and move on.',
+      'Keep the zone width honest — a zone drawn too narrow makes almost every touch look like a clean break.',
+    ],
+    invalidation:
+      'Price returning inside the level\u2019s zone after the break. The level was revisited, so the break-and-run did not hold.',
+  },
+
   Engulfing: {
     summary:
       'A two-candle reversal pattern where one candle fully "swallows" the body of the previous one, signaling that control flipped hands.',

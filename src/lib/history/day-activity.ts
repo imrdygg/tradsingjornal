@@ -32,13 +32,13 @@ export interface DayActivityFacts {
  *
  * Kept deliberately narrow: only things the trader *did* count. Everything a lazily
  * created day is given for free — a neutral bias, one planned contract, the profile's
- * loss limit, the three default set-ups, an empty level list — is excluded, because none
- * of it was chosen by anyone. When in doubt this counts a day in, since hiding something
- * the trader actually wrote is worse than showing a sparse card.
+ * loss limit, the default set-ups, an empty level list — is excluded, because none of it
+ * was chosen by anyone. When in doubt this counts a day in, since hiding something the
+ * trader actually wrote is worse than showing a sparse card.
  *
  * `watchedSetups` is not consulted at all, and that is the one surprising rule here: a
- * fresh day already arrives holding three default set-up names, so an untouched plan's
- * list and a hand-picked one cannot be told apart from the day alone.
+ * fresh day already arrives holding the default set-up names, so an untouched plan's list
+ * and a hand-picked one cannot be told apart from the day alone.
  */
 export function dayHasRecordedActivity(
   day: TradingDay,

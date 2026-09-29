@@ -1,4 +1,15 @@
-import { DailyReview, Instrument, QuestionAnswer, Setup, Trade, TradingDay } from '../../types';
+import {
+  DailyReview,
+  Instrument,
+  LevelKind,
+  LevelTouch,
+  QuestionAnswer,
+  Setup,
+  TouchOutcome,
+  Trade,
+  TradingDay,
+  TradingSession,
+} from '../../types';
 import { calculateTradeRuleFollowing, DAILY_DISCIPLINE_RULES } from '../analytics/discipline';
 import { analyzeBehavior, BehaviorFacts } from '../analytics/behavior';
 import { instrumentSymbol } from '../trading/instruments';
@@ -6,6 +17,12 @@ import { hasAssumedRisk } from '../trading/risk-fixup';
 import { HIGH_DISCIPLINE_SCORE } from '../analytics/review-trend';
 import { assessRiskCapacity, type RiskCapacity } from '../analytics/risk-capacity';
 import { realizedPnL } from '../analytics/realized-pnl';
+import {
+  findLevelEdges,
+  MIN_DECIDED,
+  summarizeTouches,
+  type LevelEdgeBucket,
+} from '../analytics/level-edge';
 
 /**
  * The journal digest is the *only* factual basis the AI coach is allowed to use.
@@ -37,6 +54,60 @@ export interface DigestDay {
   trades: number;
   disciplineScore: number | null;
   rulesBroken: string[];
+}
+
+/** One level touch, reduced to the facts the coach may quote about it. */
+export interface DigestLevelTouch {
+  date: string;
+  symbol: string;
+  kind: LevelKind;
+  price: number;
+  /** Half-width of the level's zone, in points. */
+  zonePoints: number;
+  label: string | null;
+  session: TradingSession;
+  setupName: string | null;
+  outcome: TouchOutcome;
+  /** How far price ran away from the level after the break, in points. */
+  maxExcursionPoints: number | null;
+  /** How far price came back through the level, in points. Null while undecided. */
+  maxReturnPoints: number | null;
+  checks: number;
+  notes: string | null;
+}
+
+/**
+ * The break-and-run record: the trader's own forward observations of whether price came
+ * back to a level.
+ *
+ * This is the one section the coach reads when the trader asks what actually works. It is
+ * deliberately split into conditions with a readable sample and conditions that are still
+ * too thin, so the model cannot quote a hold rate from two touches. A hold means price
+ * never returned — not that a trade paid — and the prompt is told so explicitly.
+ */
+export interface LevelEdge {
+  /** Every touch logged, including the ones still being watched. */
+  touches: number;
+  /** Touches with a definite answer: never-returned plus returned. */
+  decided: number;
+  neverReturned: number;
+  returned: number;
+  watching: number;
+  invalid: number;
+  /** Share of decided touches where price never came back, or null while nothing is decided. */
+  holdRate: number | null;
+  /** True once `decided` reaches {@link minDecided}, so `holdRate` may be read as an edge. */
+  enoughData: boolean;
+  /** Decided touches a bucket needs before its rate means anything. */
+  minDecided: number;
+  /** Average run away from the level across decided touches, in points. */
+  avgExcursionPoints: number | null;
+  /** Conditions with a readable sample, ranked by hold rate. */
+  conditions: LevelEdgeBucket[];
+  /** Conditions logged but still too thin to read, so the coach reports counts, not rates. */
+  thinConditions: LevelEdgeBucket[];
+  /** The most recent touches, so the coach can talk about specific levels. */
+  recentTouches: DigestLevelTouch[];
 }
 
 /**
@@ -191,6 +262,11 @@ export interface JournalDigest {
    * because it only catches what the trader noticed and was willing to write down.
    */
   behavior: BehaviorFacts;
+  /**
+   * The trader's own record of level touches and whether price came back: the only place
+   * the coach can answer "which of my break-and-run conditions actually hold?".
+   */
+  levelEdge: LevelEdge;
   /** The trader's own words, trimmed. Lets the coach quote them back. */
   traderOwnWords: {
     entryReasons: string[];
@@ -228,6 +304,7 @@ export interface JournalDigest {
 const MAX_RECENT_DAYS = 14;
 const MAX_OWN_WORDS = 6;
 const MAX_WORD_LENGTH = 240;
+const MAX_RECENT_TOUCHES = 12;
 
 function round(value: number, dp = 2): number {
   if (!Number.isFinite(value)) return 0;
@@ -479,6 +556,72 @@ function tradeRuleBreaks(trade: Trade): string[] {
   return broken;
 }
 
+/**
+ * Turns the raw touch log into the held/returned record the coach reasons about.
+ *
+ * The two bucket lists are the whole point of splitting it: `conditions` holds only the
+ * buckets with a real decided sample, while `thinConditions` keeps the ones that are
+ * logged but not yet decidable. That separation is what lets the coach say "your
+ * overnight support is 80% over 5 decided touches" without also saying "your London
+ * resistance is 100% over one".
+ */
+function buildLevelEdge(
+  touches: LevelTouch[],
+  instruments: Instrument[],
+  setups: Setup[]
+): LevelEdge {
+  const stats = summarizeTouches(touches);
+
+  // Every bucket that has any data, then split by whether it carries a real sample. Built
+  // with a zero floor so the thin buckets are visible at all — `findLevelEdges` keeps only
+  // readable ones by default, which would hide exactly the counts worth reporting.
+  const allBuckets = findLevelEdges(touches, 0);
+  const conditions = allBuckets.filter((b) => b.stats.decided >= MIN_DECIDED);
+  const thinConditions = allBuckets
+    .filter((b) => b.stats.touches > 0 && b.stats.decided < MIN_DECIDED)
+    .sort((a, b) => b.stats.touches - a.stats.touches || b.stats.decided - a.stats.decided)
+    .slice(0, 8);
+
+  const setupNameById = new Map(setups.map((s) => [s.id, s.name]));
+  const recentTouches = [...touches]
+    .sort((a, b) => (b.touchedAt ?? b.createdAt).localeCompare(a.touchedAt ?? a.createdAt))
+    .slice(0, MAX_RECENT_TOUCHES)
+    .map((touch) => ({
+      date: touch.tradeDate,
+      symbol: instrumentSymbol(instruments, touch.instrumentId),
+      kind: touch.kind,
+      price: touch.price,
+      zonePoints: touch.zonePoints,
+      label: touch.label?.trim() || null,
+      session: touch.session,
+      setupName:
+        touch.setupName ?? (touch.setupId ? setupNameById.get(touch.setupId) ?? null : null),
+      outcome: touch.outcome,
+      maxExcursionPoints:
+        typeof touch.maxExcursionPoints === 'number' ? round(touch.maxExcursionPoints) : null,
+      maxReturnPoints:
+        typeof touch.maxReturnPoints === 'number' ? round(touch.maxReturnPoints) : null,
+      checks: touch.checks,
+      notes: trimWord(touch.notes),
+    }));
+
+  return {
+    touches: stats.touches,
+    decided: stats.decided,
+    neverReturned: stats.neverReturned,
+    returned: stats.returned,
+    watching: stats.watching,
+    invalid: stats.invalid,
+    holdRate: stats.holdRate,
+    enoughData: stats.enoughData,
+    minDecided: MIN_DECIDED,
+    avgExcursionPoints: stats.avgExcursionPoints,
+    conditions,
+    thinConditions,
+    recentTouches,
+  };
+}
+
 export function buildJournalDigest(input: {
   trades: Trade[];
   tradingDays: TradingDay[];
@@ -493,6 +636,12 @@ export function buildJournalDigest(input: {
    * the coach is told there is no limit set rather than being left to assume one.
    */
   maxDrawdown?: number | null;
+  /**
+   * The trader's level-touch log: levels they marked as touched and whether price ever
+   * came back. Optional so a caller with no touch data — and every older test — still
+   * builds a digest; absent is read as "nothing logged", never as a rate of zero.
+   */
+  levelTouches?: LevelTouch[];
 }): JournalDigest {
   const { trades, tradingDays, reviews, setups, instruments, todayTradeDate, timezone } = input;
 
@@ -682,6 +831,9 @@ export function buildJournalDigest(input: {
   if (reviewedTrades.length === 0) {
     caveats.push('No trade execution reviews completed, so per-trade rule following is unknown.');
   }
+  // ---- The break-and-run record -------------------------------------------
+  const levelEdge = buildLevelEdge(input.levelTouches ?? [], instruments, setups);
+
   const behavior = analyzeBehavior({ trades, tradingDays, timezone });
   const unreadableTimes = behavior.timeOfDay.unreadableEntries + behavior.holdTime.unreadable;
   if (unreadableTimes > 0) {
@@ -707,6 +859,18 @@ export function buildJournalDigest(input: {
       );
       break;
     }
+  }
+
+  // A level touch only becomes a result once price has broken the level and either
+  // returned or not, so a small decided count is the normal state early on. Said here, at
+  // the top, so the coach cannot quote a hold rate from two observations without the
+  // caveat in front of it.
+  if (levelEdge.touches > 0 && levelEdge.decided < MIN_DECIDED) {
+    caveats.push(
+      `Only ${levelEdge.decided} of ${levelEdge.touches} logged level touch(es) have a decided ` +
+        `outcome (price broke the level and was watched from there). ${MIN_DECIDED} decided ` +
+        `touches are needed before a hold rate means anything.`
+    );
   }
 
   return {
@@ -788,6 +952,7 @@ export function buildJournalDigest(input: {
     recentDays,
     recentForm,
     behavior,
+    levelEdge,
     traderOwnWords: {
       entryReasons: collectWords(closedNewestFirst.map((t) => t.entryReason)),
       tradeNotes: collectWords(closedNewestFirst.map((t) => t.notes)),

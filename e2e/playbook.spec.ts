@@ -5,8 +5,11 @@ import { DEFAULT_SETUPS } from '../src/lib/storage';
  * Smoke tests for the Playbook tab.
  *
  * The app boots local-only (no Supabase in the test env), so a fresh journal gets the
- * whole built-in catalog (DEFAULT_SETUPS — 32 setups) and a trading day whose
- * watchedSetups are ['Engulfing', 'Support', 'Resistance'].
+ * whole built-in catalog (DEFAULT_SETUPS) and a trading day whose watchedSetups are the
+ * two break-and-run setups the app is built around.
+ *
+ * The library opens trimmed to those two, so any test that needs one of the other
+ * built-ins has to reveal the full catalog first — that is what `revealAllSetups` is for.
  */
 
 /** One example chart, which draws its dashed level as a 4-3 line. */
@@ -39,6 +42,19 @@ async function gotoPlaybook(page: Page) {
   await expect(page.getByRole('heading', { name: /Trading Setups & Playbook Library/i })).toBeVisible();
 }
 
+/**
+ * The library opens on the two focus setups; most assertions here are about the rest of
+ * the catalog, so they reveal it first. Safe to call twice, or on a page that is already
+ * showing everything.
+ */
+async function revealAllSetups(page: Page) {
+  const toggle = page.locator('#playbook-focus-toggle');
+  // The control is present whenever any setup sits outside the focus pair. Waiting for it
+  // closes the gap after a reload, when the lazy-loaded tab has not painted yet.
+  await expect(toggle).toBeVisible();
+  if ((await toggle.textContent())?.includes('Show all setups')) await toggle.click();
+}
+
 test.beforeEach(async ({ page }) => {
   // Deterministic local state: a fresh journal for every test run.
   //
@@ -58,8 +74,24 @@ test.beforeEach(async ({ page }) => {
 });
 
 test.describe('Playbook tab', () => {
-  test('shows the library with all default setups', async ({ page }) => {
+  test('opens trimmed to the two break-and-run setups', async ({ page }) => {
     await gotoPlaybook(page);
+
+    // The app is built around the trader's two setups, so they lead the library...
+    for (const name of ['Overnight Break & Run', 'Session Break & Run']) {
+      await expect(page.getByTitle(name, { exact: true })).toBeVisible();
+    }
+
+    // ...and the rest of the catalog is behind the control rather than on screen. Addressed
+    // by title because a folded card keeps its guide in the DOM and the Support/Resistance
+    // diagrams label their level with the same word.
+    await expect(page.locator('#playbook-focus-bar')).toBeVisible();
+    await expect(page.getByTitle('Engulfing', { exact: true })).toHaveCount(0);
+  });
+
+  test('the focus control reveals the whole built-in catalog', async ({ page }) => {
+    await gotoPlaybook(page);
+    await revealAllSetups(page);
 
     for (const name of [
       'Engulfing',
@@ -70,19 +102,17 @@ test.describe('Playbook tab', () => {
       'Trend Continuation',
       'Other',
     ]) {
-      // Addressed by title rather than by text: a folded card keeps its study guide in
-      // the DOM, and the Support/Resistance diagrams label their dashed level with the
-      // same word, so a bare text match is ambiguous. The name element is what this
-      // asserts about, and it is the element that carries the title.
-      //
       // `exact` is required: a title match is a substring match, so plain 'Breakout'
       // also resolves to 'Opening Range Breakout' and 'Failed Breakout'.
       await expect(page.getByTitle(name, { exact: true })).toBeVisible();
     }
+    // And the two focus setups are still there, now listed first.
+    await expect(page.getByTitle('Overnight Break & Run', { exact: true })).toBeVisible();
   });
 
   test('the whole card toggles the study guide, not just its icon', async ({ page }) => {
     await gotoPlaybook(page);
+    await revealAllSetups(page);
 
     // Breakout has no dashed-level label that could collide with its name.
     const card = page
@@ -107,6 +137,7 @@ test.describe('Playbook tab', () => {
 
   test('expands a study guide with diagrams, formation and trading rules', async ({ page }) => {
     await gotoPlaybook(page);
+    await revealAllSetups(page);
 
     // Every setup card shows its always-visible summary line.
     await expect(page.getByText(ENGULFING_SUMMARY, { exact: false })).toBeVisible();
@@ -132,6 +163,7 @@ test.describe('Playbook tab', () => {
 
   test('every built-in setup draws both examples with its dashed level', async ({ page }) => {
     await gotoPlaybook(page);
+    await revealAllSetups(page);
 
     // Driven from the catalog rather than from a list written out here, so a setup added
     // later without a level line fails this test instead of shipping a chart that shows
@@ -149,6 +181,7 @@ test.describe('Playbook tab', () => {
 
   test('the added setups bring their guide and label the level they wait on', async ({ page }) => {
     await gotoPlaybook(page);
+    await revealAllSetups(page);
 
     const card = page
       .locator('div.rounded-2xl', { has: page.getByTitle('Gap and Go', { exact: true }) })
@@ -185,18 +218,20 @@ test.describe('Playbook tab', () => {
   test('default watched setups are highlighted with a clickable badge', async ({ page }) => {
     await gotoPlaybook(page);
 
-    // The seeded day watches Engulfing, Support and Resistance.
-    for (const name of ['Engulfing', 'Support', 'Resistance']) {
+    // The seeded day watches the two break-and-run setups, which are the two shown.
+    for (const name of ['Overnight Break & Run', 'Session Break & Run']) {
       const card = page.locator('div.rounded-2xl', { has: page.getByText(name, { exact: true }) }).first();
       await expect(card.getByText('Watched today')).toBeVisible();
     }
     // Unwatched setups must not show the badge.
-    await expect(page.getByText('Watched today')).toHaveCount(3);
+    await expect(page.getByText('Watched today')).toHaveCount(2);
 
     // The badge is a button that opens the study guide.
-    const supportCard = page.locator('div.rounded-2xl', { has: page.getByText('Support', { exact: true }) }).first();
-    await supportCard.getByText('Watched today').click();
-    await expect(supportCard.getByText('How this setup forms')).toBeVisible();
+    const card = page
+      .locator('div.rounded-2xl', { has: page.getByText('Overnight Break & Run', { exact: true }) })
+      .first();
+    await card.getByText('Watched today').click();
+    await expect(card.getByText('How this setup forms')).toBeVisible();
   });
 });
 
@@ -216,6 +251,7 @@ test.describe('Setup charts & video attachments', () => {
 
   async function openBreakoutEditor(page: Page) {
     await gotoPlaybook(page);
+    await revealAllSetups(page);
     const card = page
       .locator('div.rounded-2xl', { has: page.getByTitle('Breakout', { exact: true }) })
       .first();
@@ -252,9 +288,11 @@ test.describe('Setup charts & video attachments', () => {
     await expect(card.getByText(/Playbook Charts & Video \(1\)/)).toBeVisible();
 
     // The real test: it is in the journal, not just React state. A reload lands back on
-    // the Today tab, so the Playbook has to be reopened before the card exists again.
+    // the Today tab, so the Playbook has to be reopened — and its full catalog revealed —
+    // before the card exists again.
     await page.reload();
     await gotoPlaybook(page);
+    await revealAllSetups(page);
     const reloadedCard = page
       .locator('div.rounded-2xl', { has: page.getByTitle('Breakout', { exact: true }) })
       .first();
@@ -299,16 +337,18 @@ test.describe('Playbook deep-link', () => {
     await expandTodayAdvanced(page);
     await expect(page.getByRole('heading', { name: /Morning Plan/i })).toBeVisible();
 
-    // Watched setups are seeded as Engulfing/Support/Resistance; make the
-    // watch list deterministic by asserting the link exists, then click it.
+    // Watched setups are seeded as the two break-and-run setups; they are also the two the
+    // library shows, so the deep link focuses a card that is already on screen.
     await page.getByRole('button', { name: /Study in Playbook/i }).click();
 
     await expect(page.getByRole('heading', { name: /Trading Setups & Playbook Library/i })).toBeVisible();
 
     // The focused cards are expanded to their study guides and highlighted.
-    const engulfingCard = page.locator('div.rounded-2xl', { has: page.getByText('Engulfing', { exact: true }) }).first();
-    await expect(engulfingCard.getByText('How this setup forms')).toBeVisible();
-    await expect(engulfingCard.locator('svg[role="img"]')).toHaveCount(2);
+    const card = page
+      .locator('div.rounded-2xl', { has: page.getByText('Overnight Break & Run', { exact: true }) })
+      .first();
+    await expect(card.getByText('How this setup forms')).toBeVisible();
+    await expect(card.locator('svg[role="img"]')).toHaveCount(2);
   });
 
   test('watched-setups changes on the plan are reflected in the Playbook badge', async ({ page }) => {

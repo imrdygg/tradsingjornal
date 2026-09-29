@@ -18,7 +18,15 @@ import {
   MousePointerClick,
   PencilLine,
 } from 'lucide-react';
-import { Setup, PatternStudy } from '../../types';
+import {
+  DailyReview,
+  Instrument,
+  LevelTouch,
+  PatternStudy,
+  Setup,
+  Trade,
+  TradingDay,
+} from '../../types';
 import { ImageUploader } from '../common/ImageUploader';
 import { ImageLightboxModal } from '../common/ImageLightboxModal';
 import { ModalOverlay } from '../common/ModalOverlay';
@@ -26,6 +34,8 @@ import { Collapse } from '../common/Collapse';
 import { SetupDiagram } from './SetupDiagram';
 import { SetupGuide, resolveSetupGuide } from './setup-guides';
 import { ChartPatternsView } from './ChartPatternsView';
+import { EdgeFinderCard } from './EdgeFinderCard';
+import { isFocusSetup, splitFocusSetups } from '../../lib/playbook/focus-setups';
 import { PATTERNS } from '../../lib/playbook/patterns';
 import { isVideoUrl } from '../../lib/media/media-utils';
 
@@ -56,6 +66,20 @@ interface PlaybookViewProps {
   focusPatternId?: string | null;
   /** Reports which pattern is open so the app can keep the URL in step. */
   onOpenPattern?: (patternId: string | null) => void;
+  /**
+   * The journal records the coach's break-and-run edge finder reads. Omitted hides the
+   * card, so the playbook still renders for a caller with no records to hand.
+   */
+  edgeFinder?: {
+    trades: Trade[];
+    tradingDays: TradingDay[];
+    reviews: DailyReview[];
+    instruments: Instrument[];
+    todayTradeDate: string;
+    timezone: string;
+    maxDrawdown?: number | null;
+    levelTouches: LevelTouch[];
+  };
 }
 
 /** Small labelled block used inside each setup's guide container. */
@@ -94,9 +118,23 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
   onSavePatternStudy,
   focusPatternId,
   onOpenPattern,
+  edgeFinder,
 }) => {
   const [newSetupName, setNewSetupName] = useState('');
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  // The catalog is trimmed to the two break-and-run set-ups by default; this reveals the
+  // rest. See the focus bar below for why the rest are hidden rather than removed.
+  const [showAllSetups, setShowAllSetups] = useState(false);
+
+  // The pair, and the rest of the catalog. A deep link or a watched setup outside the pair
+  // has to open the full list, or the card it points at would not exist; and a journal
+  // whose pair was deleted shows everything rather than a blank page.
+  const { focus: focusSetups, rest: otherSetups } = splitFocusSetups(setups);
+  const focusOutsidePair = [...(focusSetupNames ?? []), ...(watchedSetupNames ?? [])].some(
+    (name) => !isFocusSetup(name)
+  );
+  const showAll = showAllSetups || focusOutsidePair || focusSetups.length === 0;
+  const visibleSetups = showAll ? setups : focusSetups;
 
   /**
    * Two libraries live on this tab and they answer different questions, so they are
@@ -175,6 +213,8 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
         createdAt: new Date().toISOString(),
       };
       onAddSetup(created);
+      // A setup the trader just typed must not vanish behind the focus bar.
+      setShowAllSetups(true);
     }
 
     setIsSetupModalOpen(false);
@@ -193,6 +233,9 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
 
     onAddSetup(newSetup);
     setNewSetupName('');
+    // Adding a setup is the clearest signal the trader wants to see it, so the full list
+    // opens rather than leaving their new card hidden among the trimmed-away ones.
+    setShowAllSetups(true);
   };
 
   const toggleExpanded = (setupId: string) => {
@@ -330,6 +373,9 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
         </div>
       </div>
 
+      {/* The coach's break-and-run finder, fed by the level-touch journal. */}
+      {edgeFinder && <EdgeFinderCard setups={setups} {...edgeFinder} />}
+
       {/* Quick add setup form */}
       <form onSubmit={handleAddSetup} className="space-y-2">
         <label className="text-xs font-medium text-zinc-300 block">
@@ -363,9 +409,43 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
         </div>
       </form>
 
+      {/*
+        The focus bar. The app is built around the trader's two break-and-run set-ups, so
+        the Playbook leads with them and keeps the other ~30 built-ins one click away
+        rather than in the way. Nothing is deleted: a hidden setup is still selectable when
+        recording a trade and still comes back the moment the control is pressed.
+      */}
+      {otherSetups.length > 0 && (
+        <div
+          id="playbook-focus-bar"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-900/50 bg-emerald-950/20 px-4 py-3"
+        >
+          <div className="min-w-0">
+            <p className="text-xs font-semibold text-zinc-100">
+              {showAll
+                ? `Showing all ${setups.length} setups`
+                : `Showing your ${focusSetups.length} break-and-run setup(s)`}
+            </p>
+            <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-400">
+              {showAll
+                ? 'Your two set-ups are listed first; the rest of the catalog is below.'
+                : `${otherSetups.length} other setup(s) are hidden. They are one click away, and still available when recording a trade.`}
+            </p>
+          </div>
+          <button
+            type="button"
+            id="playbook-focus-toggle"
+            onClick={() => setShowAllSetups((prev) => !prev)}
+            className="shrink-0 rounded-xl border border-emerald-800/80 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-300 transition-colors hover:bg-emerald-500/20"
+          >
+            {showAll ? `Show only my ${focusSetups.length}` : `Show all setups (${setups.length})`}
+          </button>
+        </div>
+      )}
+
       {/* Setup Containers */}
       <div className="space-y-3">
-        {setups.map((s, index) => {
+        {visibleSetups.map((s, index) => {
           const setupImages = s.images || [];
           // The teaching material is keyed by the BUILT-IN name, so a setup the trader has
           // renamed keeps its guide and its example charts instead of falling back to the

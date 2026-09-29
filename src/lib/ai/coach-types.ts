@@ -17,6 +17,11 @@ export type CoachMode =
   | 'weekly'
   /** Which way the trader's numbers say they are heading: recent window against the one before. */
   | 'form'
+  /**
+   * The break-and-run finder: which sessions, level kinds or named levels the trader's own
+   * level-touch log says price did not come back to. Journal data only; no market opinion.
+   */
+  | 'edge'
   | 'trade'
   | 'prep'
   | 'postclose'
@@ -252,6 +257,38 @@ export interface AskResponse {
   nextStep: string;
 }
 
+/** One condition from the level-touch record, as the edge read reports it. */
+export interface EdgeCondition {
+  /** The session, level kind or named level the bucket covers. */
+  condition: string;
+  /** The hold rate and the counts it was drawn from, as text so the counts always travel with it. */
+  holdRate: string;
+  /** The held / came-back / watching numbers behind the rate. */
+  evidence: string;
+}
+
+/**
+ * The break-and-run edge read: what the trader's own touch log says about which conditions
+ * see price not come back, and what is still too thin to say.
+ *
+ * Every field is about the recorded sample, never a prediction: a hold is a fact about
+ * price, not about profit, and the fields are shaped so the counts cannot be dropped.
+ */
+export interface EdgeResponse {
+  headline: string;
+  /** The strongest readable condition, or a plain statement that nothing is readable yet. */
+  bestCondition: string;
+  /** Only conditions that carry a readable hold rate. */
+  conditions: EdgeCondition[];
+  /** Conditions that are logged but too thin to read, counts only. */
+  notYetReadable: string[];
+  /** What the record shows about their setups, stated as what has happened. */
+  whatItMeans: string;
+  /** One concrete thing to log or watch that would sharpen the record. */
+  nextStep: string;
+  motivation: string;
+}
+
 /**
  * Where the trader is heading right now, from the two windows in the digest's recent form.
  *
@@ -326,6 +363,7 @@ export type CoachResponse =
   | BriefResponse
   | WeeklyResponse
   | FormResponse
+  | EdgeResponse
   | AskResponse
   | TradeCritiqueResponse
   | PrepResponse

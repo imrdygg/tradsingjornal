@@ -62,6 +62,7 @@ describe('mode coverage', () => {
       [
         'brief',
         'form',
+        'edge',
         'planreview',
         'postclose',
         'prep',

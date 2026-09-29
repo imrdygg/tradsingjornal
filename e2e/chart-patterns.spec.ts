@@ -408,8 +408,9 @@ test.describe('Link from a trade', () => {
     await page.locator('#trade-exit-price').fill('7740');
     await page.getByRole('button', { name: /Save Completed Trade/i }).click();
 
-    // The seeded default setup is 'Engulfing', which is not a chart pattern here, so the
-    // button must be absent rather than pointing at a near-match.
+    // The trade gets whichever setup the form defaults to, and none of the catalog names
+    // is a chart pattern here, so the button must be absent rather than pointing at a
+    // near-match.
     await page.getByText('MES (1x)').first().click();
     await expect(page.locator('#trade-study-pattern')).toHaveCount(0);
   });

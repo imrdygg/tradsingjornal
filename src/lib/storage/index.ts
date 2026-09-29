@@ -9,9 +9,11 @@ import {
   PlanChange,
   PlanSnapshot,
   PatternStudy,
+  LevelTouch,
 } from '../../types';
 import { DEFAULT_INSTRUMENTS, INSTRUMENT_CATALOG_VERSION } from '../trading/instruments';
 import { DEFAULT_RISK_TIER_AMOUNTS } from '../trading/risk-tiers';
+import { FOCUS_SETUP_NAMES } from '../playbook/focus-setups';
 import { clearCachedNotes } from '../ai/checkpoints';
 import { getCurrentTradingDate } from './date-utils';
 
@@ -24,7 +26,8 @@ import { getCurrentTradingDate } from './date-utils';
  * Every name in this list has a study guide (setup-guides.ts) and bullish/bearish
  * examples (SetupDiagram.tsx) keyed to exactly this spelling. Renaming one here means
  * renaming it in both of those files, or the card falls back to the generic 'Other'
- * content.
+ * content. The two break-and-run set-ups at the top are the deliberate exception: they
+ * have no hand-drawn guide yet, so they show the generic examples until one is written.
  *
  * `since` marks the catalog version a setup arrived in, and it is what lets the catalog
  * grow for a journal that already exists: see `ensureSetupCatalog`. Entries without it
@@ -34,8 +37,11 @@ import { getCurrentTradingDate } from './date-utils';
 /**
  * The current built-in catalog version. Bump it, and tag the new setups with the new
  * number, when adding setups that existing journals should receive.
+ *
+ * Version 3 arrives the trader's two break-and-run set-ups, so a journal that already
+ * exists gets them rather than only a fresh install.
  */
-export const SETUP_CATALOG_VERSION = 2;
+export const SETUP_CATALOG_VERSION = 3;
 
 /**
  * Keeps a saved setup pointed at the built-in it came from.
@@ -63,6 +69,12 @@ function keepBuiltinLink(next: Setup, previous?: Setup): Setup {
   return direct ? { ...next, builtinName: direct.name } : next;
 }
 export const DEFAULT_SETUPS: Setup[] = [
+  // The trader's two set-ups lead the catalog. They are the same break-and-run pattern in
+  // two sessions, and they are what the Playbook shows by default and what a fresh day's
+  // plan watches — see `focus-setups.ts`.
+  { id: 'overnight-break-and-run', name: 'Overnight Break & Run', active: true, createdAt: '2026-09-29T00:00:00Z', since: 3 },
+  { id: 'session-break-and-run', name: 'Session Break & Run', active: true, createdAt: '2026-09-29T00:00:00Z', since: 3 },
+
   { id: 'engulfing', name: 'Engulfing', active: true, createdAt: '2026-01-01T00:00:00Z' },
   { id: 'support', name: 'Support', active: true, createdAt: '2026-01-01T00:00:00Z' },
   { id: 'resistance', name: 'Resistance', active: true, createdAt: '2026-01-01T00:00:00Z' },
@@ -128,6 +140,7 @@ const STORAGE_KEYS = {
   TRADES: 'ptj_trades_v1',
   REVIEWS: 'ptj_reviews_v1',
   PATTERN_STUDIES: 'ptj_pattern_studies_v1',
+  LEVEL_TOUCHES: 'ptj_level_touches_v1',
   SETUP_CATALOG: 'ptj_setup_catalog_v1',
   LESSON_ACK: 'ptj_lesson_ack_v1',
   RECOVERY: 'ptj_recovery_v1',
@@ -178,6 +191,15 @@ export interface StorageState {
    * reading it treats a missing list as empty rather than as an error.
    */
   patternStudies?: PatternStudy[];
+  /**
+   * The break-and-run journal: every level touch the trader logged, with what price
+   * did afterwards.
+   *
+   * Optional for the same reason as the pattern studies above — a snapshot saved
+   * before this feature existed must still load, and every reader treats a missing
+   * list as empty rather than as an error.
+   */
+  levelTouches?: LevelTouch[];
   /**
    * The carried-forward lesson the trader has acknowledged, if any.
    *
@@ -654,7 +676,9 @@ export const storage = {
       primaryInstrument: profile.defaultInstrument || 'MES',
       allowedSessions: ['Regular Session'],
       marketBias: 'neutral',
-      watchedSetups: ['Engulfing', 'Support', 'Resistance'],
+      // A fresh day watches the two set-ups the app is built around, rather than a mix of
+      // the old catalog: the plan should start pointed at the trader's own edge.
+      watchedSetups: [...FOCUS_SETUP_NAMES],
       // Trade #1 is the default slot, so recording a trade always has a risk attached.
       defaultRiskTier: 1,
       importantLevels: [],
@@ -945,6 +969,7 @@ export const storage = {
       trades: this.getTrades(),
       reviews: this.getReviews(),
       patternStudies: this.getPatternStudies(),
+      levelTouches: this.getLevelTouches(),
       lessonAck: this.getLessonAck(),
     };
     return JSON.stringify(state, null, 2);
@@ -962,6 +987,7 @@ export const storage = {
       // Only touched when the file actually carries it, so importing an older backup
       // cannot wipe study notes that are already here.
       if (parsed.patternStudies) setItem(STORAGE_KEYS.PATTERN_STUDIES, parsed.patternStudies);
+      if (parsed.levelTouches) setItem(STORAGE_KEYS.LEVEL_TOUCHES, parsed.levelTouches);
       // Written even when null (an explicit "nothing acknowledged"), so adopting a snapshot
       // carries that state across too. A backup taken before this existed has no key at
       // all and leaves what is here untouched.
@@ -997,6 +1023,40 @@ export const storage = {
     return next;
   },
 
+  getLevelTouches(): LevelTouch[] {
+    return getItem<LevelTouch[]>(STORAGE_KEYS.LEVEL_TOUCHES, []);
+  },
+
+  getLevelTouchesForDay(dayId: string): LevelTouch[] {
+    return this.getLevelTouches().filter((touch) => touch.tradingDayId === dayId);
+  },
+
+  /**
+   * Upserts one level touch, newest first.
+   *
+   * A touch is edited as it is watched — the outcome moves from `watching` to
+   * `never-returned` or `returned` as price either stays away or comes back — so this
+   * is both the create and the update path, keyed by id rather than a separate pair.
+   */
+  saveLevelTouch(touch: LevelTouch): LevelTouch {
+    const touches = this.getLevelTouches();
+    const index = touches.findIndex((existing) => existing.id === touch.id);
+    const updated: LevelTouch = { ...touch, updatedAt: new Date().toISOString() };
+    const next =
+      index >= 0
+        ? [...touches.slice(0, index), updated, ...touches.slice(index + 1)]
+        : [updated, ...touches];
+    setItem(STORAGE_KEYS.LEVEL_TOUCHES, next);
+    return updated;
+  },
+
+  deleteLevelTouch(id: string): void {
+    setItem(
+      STORAGE_KEYS.LEVEL_TOUCHES,
+      this.getLevelTouches().filter((touch) => touch.id !== id)
+    );
+  },
+
   /**
    * Clears every journal entry — trades, daily plans and reviews — while
    * keeping the trader's settings, instruments and playbook set-ups. This is
@@ -1014,6 +1074,9 @@ export const storage = {
       STORAGE_KEYS.DAYS,
       STORAGE_KEYS.TRADES,
       STORAGE_KEYS.REVIEWS,
+      // The touches are the record of what a level did; they go with the days they
+      // were taken on, unlike the playbook material that survives a reset.
+      STORAGE_KEYS.LEVEL_TOUCHES,
       STORAGE_KEYS.LESSON_ACK,
       // "Nothing can be undone" is the promise this reset makes, so the copy set aside
       // from before it goes too rather than becoming a way to undo it after all.
@@ -1042,6 +1105,7 @@ export const storage = {
       STORAGE_KEYS.TRADES,
       STORAGE_KEYS.REVIEWS,
       STORAGE_KEYS.PATTERN_STUDIES,
+      STORAGE_KEYS.LEVEL_TOUCHES,
       STORAGE_KEYS.SETUP_CATALOG,
       STORAGE_KEYS.LESSON_ACK,
       STORAGE_KEYS.RECOVERY,

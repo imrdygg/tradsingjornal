@@ -2,7 +2,7 @@
 // the function needs no third-party package. A failed import at load time would surface
 // as an HTML error page rather than JSON, which is indistinguishable from the function
 // not being deployed — hence keeping this dependency-free.
-import type { DigestStatLine, JournalDigest } from './journal-digest';
+import type { DigestLevelTouch, DigestStatLine, JournalDigest, LevelEdge } from './journal-digest';
 import type { BehaviorBucket as DigestBehaviorBucket } from '../analytics/behavior';
 import type {
   CoachExtras,
@@ -34,6 +34,11 @@ export const COACH_MODES: readonly CoachMode[] = [
   'brief',
   'weekly',
   'form',
+  /**
+   * The break-and-run finder: which sessions, level kinds or named levels the trader's
+   * own touch log says price did not come back to, from the recorded sample only.
+   */
+  'edge',
   'trade',
   'prep',
   'postclose',
@@ -81,15 +86,23 @@ export function allowsMarketOpinion(mode: CoachMode): boolean {
 /**
  * The system instruction for a coach call.
  *
- * The base guardrails ban market claims outright. Two narrow exceptions are appended,
+ * The base guardrails ban market claims outright. Three narrow additions are appended,
  * never substituted, so a prompt can never lose the core rules:
  *
+ * - `withLevelEdge`: the digest carries the trader's level-touch record, which is easy to
+ *   misread as a forecast or as profit, so it gets its own honesty rules whenever it is in
+ *   the prompt.
  * - `withMarketData`: the live sector read the plan-lock opinion quotes from.
  * - `withOpinion`: the trader has explicitly asked the coach for a directional call on
  *   their own instrument, which a strict reading of rule 2 would otherwise forbid.
  */
-export function coachGuardrails(withMarketData: boolean, withOpinion = false): string {
+export function coachGuardrails(
+  withMarketData: boolean,
+  withOpinion = false,
+  withLevelEdge = false
+): string {
   let text = COACH_GUARDRAILS;
+  if (withLevelEdge) text += LEVEL_EDGE_GUARDRAILS_SUFFIX;
   if (withMarketData) text += MARKET_GUARDRAILS_SUFFIX;
   if (withOpinion) text += OPINION_GUARDRAILS_SUFFIX;
   return text;
@@ -200,6 +213,136 @@ O7. CHECK THE ACCOUNT'S DRAWDOWN ROOM, NOT JUST THE DAY'S. RISK CAPACITY reports
 O7. Keep the opinion short and checkable. Quote the actual numbers you used.`;
 
 /**
+ * The rules for reading the level-touch record honestly.
+ *
+ * Appended whenever the digest carries level touches, in every mode, because the section
+ * is then in the prompt whether or not the trader asked about it. The risk this guards
+ * against is specific: a hold rate reads like a win rate, so the model is told it is
+ * neither a forecast nor a profit, and that a thin bucket is a tally rather than a rate.
+ */
+const LEVEL_EDGE_GUARDRAILS_SUFFIX = `\n\nTHE LEVEL-TOUCH RECORD — SPECIAL RULES FOR THIS REQUEST ONLY.
+The digest includes LEVEL TOUCHES: levels the trader logged and whether price ever came
+back to them. It is their own forward record, and it is easy to misread.
+
+L1. IT IS A COUNT OF WHAT ALREADY HAPPENED, NOT A PREDICTION. Never say a level "will"
+    hold, never forecast that price will or will not return, and never turn a hold rate
+    into an expectation about the next touch.
+L2. ONLY READ A RATE THAT IS MARKED READABLE. A condition listed as NOT yet readable has
+    too few decided touches: report its counts and say it is not yet a rate. Never quote a
+    percentage for it, and never rank one thin section against another.
+L3. A HOLD IS NOT A PROFIT. The record says price never came back; it says nothing about
+    whether any trade made money. Never imply that a high hold rate means the setup pays,
+    and never attach a dollar figure or an R-multiple to a touch.
+L4. THE LEVELS ARE THE TRADER'S OWN. The prices and labels in this section are levels they
+    recorded, not a live market read. You still have no other market data, and rule 1 above
+    holds in full.
+L5. Do not tell them to trade a session, a level kind or a labelled level more often. Point
+    at what their own record shows and hand the observation back to them.`;
+
+/** The trader's own words for what happened to a touch, so the prompt reads plainly. */
+function touchOutcomeWord(outcome: DigestLevelTouch['outcome']): string {
+  switch (outcome) {
+    case 'never-returned':
+      return 'price never came back';
+    case 'returned':
+      return 'price came back';
+    case 'watching':
+      return 'still being watched';
+    case 'invalid':
+      return 'void';
+  }
+}
+
+/**
+ * The level-touch record, rendered so the hold rate cannot be read as a forecast.
+ *
+ * Two things are stated in the text rather than left to the model: what "held" means, and
+ * which conditions are still too thin to carry a rate. Everything else is the trader's own
+ * counts, quoted back.
+ */
+function formatLevelEdgeForPrompt(edge: LevelEdge | undefined): string[] {
+  const lines: string[] = [];
+  // Optional because the endpoint only shallow-checks the digest a client sends: an older
+  // client will not have this section, and it must degrade to "nothing logged" rather than
+  // crash a public endpoint.
+  if (!edge || !edge.touches) return lines;
+
+  const rate = (value: number | null) => (value === null ? 'not readable yet' : `${value}%`);
+
+  lines.push('');
+  lines.push("=== LEVEL TOUCHES — THE BREAK-AND-RUN RECORD (the trader's own watching) ===");
+  lines.push(
+    'A touch is logged when price reaches a level the trader marked. It becomes DECIDED ' +
+      'only once price has broken the level; from then it either HELD (price never came back) ' +
+      'or CAME BACK (price returned inside the level). This is a count of what already ' +
+      'happened, not a forecast, and a hold is not a profit.'
+  );
+  lines.push(
+    `${edge.touches} touch(es) logged: ${edge.decided} decided (${edge.neverReturned} held, ` +
+      `${edge.returned} came back), ${edge.watching} still being watched, ${edge.invalid} void.`
+  );
+  if (edge.decided === 0) {
+    lines.push('No touch has a decided outcome yet, so no hold rate can be read at all.');
+  } else if (!edge.enoughData) {
+    lines.push(
+      `THIN: only ${edge.decided} decided touch(es); ${edge.minDecided} are needed before a ` +
+        'hold rate may be read as an edge. Report the counts, not a percentage.'
+    );
+  } else {
+    lines.push(`Hold rate: ${rate(edge.holdRate)} of ${edge.decided} decided touch(es).`);
+  }
+  if (edge.avgExcursionPoints !== null) {
+    lines.push(
+      `Average run away from the level on decided touches: ${edge.avgExcursionPoints} point(s).`
+    );
+  }
+
+  if (edge.conditions.length) {
+    lines.push('');
+    lines.push('Conditions with a readable hold rate (enough decided touches), best first:');
+    for (const bucket of edge.conditions) {
+      lines.push(
+        `- ${bucket.label}: ${rate(bucket.stats.holdRate)} hold over ${bucket.stats.decided} ` +
+          `decided touch(es) (${bucket.stats.watching} still watching)`
+      );
+    }
+  } else {
+    lines.push('');
+    lines.push('No condition has enough decided touches for a readable hold rate yet.');
+  }
+
+  if (edge.thinConditions.length) {
+    lines.push('');
+    lines.push('Logged, but NOT yet readable — report these as counts only, never as a rate:');
+    for (const bucket of edge.thinConditions) {
+      lines.push(
+        `- ${bucket.label}: ${bucket.stats.touches} touch(es), ${bucket.stats.decided} decided, ` +
+          `${bucket.stats.watching} still watching`
+      );
+    }
+  }
+
+  if (edge.recentTouches.length) {
+    lines.push('');
+    lines.push('Most recent touches (newest first):');
+    for (const touch of edge.recentTouches) {
+      lines.push(
+        `- ${touch.date} ${touch.symbol} ${touch.kind} at ${touch.price} ` +
+          `(zone ±${touch.zonePoints})` +
+          (touch.label ? `, marked "${touch.label}"` : '') +
+          `, ${touch.session} session` +
+          (touch.setupName ? `, setup ${touch.setupName}` : '') +
+          ` → ${touchOutcomeWord(touch.outcome)}` +
+          (touch.maxExcursionPoints !== null ? `, ran ${touch.maxExcursionPoints} point(s)` : '') +
+          (touch.checks ? `, checked ${touch.checks} time(s)` : '')
+      );
+    }
+  }
+
+  return lines;
+}
+
+/**
  * Renders the digest as compact text for the prompt. Deliberately explicit about
  * thin data so the model cannot mistake a small sample for a finding.
  */
@@ -255,6 +398,11 @@ export function formatDigestForPrompt(digest: JournalDigest): string {
         `windows. Do NOT call a change in form, in either direction, from this.`
     );
   }
+
+  // ---- The break-and-run record -------------------------------------------
+  // Only emitted when there are touches, which keeps the no-market vocabulary out of every
+  // prompt built from a journal that has never logged one.
+  for (const line of formatLevelEdgeForPrompt(digest.levelEdge)) lines.push(line);
 
   // ---- Risk capacity ------------------------------------------------------
   // The size question is answered here rather than inferred from how the last few trades
@@ -774,6 +922,19 @@ Give 1-4 patterns. If the evidence is thin, return fewer patterns and say so in 
   "motivation": "2 sentences. Specific to this trader and earned by their data. No slogans."
 }
 When the two windows are too thin to compare, say exactly that in trendRead, leave improved and declined empty, and make nextStep about logging more before judging form — never a performance claim.`,
+  edge: `Return exactly this JSON:
+{
+  "headline": "one sentence, under 16 words, on what the level-touch record shows",
+  "bestCondition": "the condition with the strongest readable hold rate, quoting its rate and the decided and watching counts behind it. When nothing is readable yet, say exactly that instead of picking one",
+  "conditions": [
+    { "condition": "a session, level kind or named level with a readable rate", "holdRate": "the rate and the counts it came from", "evidence": "the held / came-back / watching numbers behind it" }
+  ],
+  "notYetReadable": ["conditions that are logged but still too thin to read, each with its counts. Empty array when every condition has enough"],
+  "whatItMeans": "2-3 sentences on what their own record shows about their break-and-run setups, stated as what has happened, not what will",
+  "nextStep": "one concrete, checkable thing to log or watch that would sharpen this record",
+  "motivation": "2 sentences. Specific to this trader and earned by their data. No slogans."
+}
+Rank only conditions with a readable hold rate. Never quote a rate for a condition listed as not yet readable. A hold means price never came back, not that the trade paid.`,
   trade: `Return exactly this JSON:
 {
   "verdict": "2 sentences judging the decision and the execution separately",
@@ -982,6 +1143,14 @@ export function buildCoachPrompt(
         `record rather than of the change between the two windows does not belong here. ` +
         `If the windows are too thin to compare, say so plainly and ask for more logged ` +
         `trades instead of naming a direction.`
+      : mode === 'edge'
+      ? `Find this trader's break-and-run edge in LEVEL TOUCHES: the sessions, level kinds ` +
+        `and named levels whose own record shows price not coming back. Rank only the ` +
+        `conditions marked readable, quoting their rates and the decided and watching counts ` +
+        `they came from, and name separately what is logged but not yet decidable. Say what ` +
+        `the record shows has happened, never what it predicts will happen — and never call a ` +
+        `hold a profit. If nothing is readable yet, say exactly that and make nextStep about ` +
+        `logging more touches.`
       : mode === 'ask'
       ? `The trader typed you a question about their own trading. It is under THE TRADER'S ` +
         `QUESTION. Answer that question, from their records: quote their own figures, and use ` +
@@ -1050,7 +1219,14 @@ export function buildCoachPrompt(
     `\n\n=== YOUR TASK ===\n${task.replace('{instrument}', extras?.instrument || 'the instrument')}\n\n${COACH_RESPONSE_SHAPES[mode]}`;
 
   return {
-    systemInstruction: coachGuardrails(mode === 'planreview', allowsMarketOpinion(mode)),
+    systemInstruction: coachGuardrails(
+      mode === 'planreview',
+      allowsMarketOpinion(mode),
+      // Appended whenever the record is in the prompt, in every mode, so the hold rate is
+      // never read in a mode whose guardrails did not mention it. Optional for the same
+      // reason as the formatter: a digest that predates the record simply has none.
+      (digest.levelEdge?.touches ?? 0) > 0
+    ),
     userPrompt,
   };
 }
@@ -1203,6 +1379,30 @@ export function parseCoachResponse(
       improved: asTextList(obj.improved, 'improved'),
       declined: asTextList(obj.declined, 'declined'),
       holding: asTextList(obj.holding, 'holding'),
+      nextStep: asText(obj.nextStep, 'nextStep'),
+      motivation: asText(obj.motivation, 'motivation'),
+    };
+  }
+
+  if (mode === 'edge') {
+    const conditionsRaw = Array.isArray(obj.conditions) ? obj.conditions : [];
+    const conditions = conditionsRaw
+      .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+      .map((item) => ({
+        condition: typeof item.condition === 'string' ? item.condition.trim() : '',
+        holdRate: typeof item.holdRate === 'string' ? item.holdRate.trim() : '',
+        evidence: typeof item.evidence === 'string' ? item.evidence.trim() : '',
+      }))
+      .filter((item) => item.condition);
+
+    return {
+      headline: asText(obj.headline, 'headline'),
+      bestCondition: asText(obj.bestCondition, 'bestCondition'),
+      conditions,
+      notYetReadable: asTextList(obj.notYetReadable, 'notYetReadable'),
+      whatItMeans: asText(obj.whatItMeans, 'whatItMeans'),
+      // The step is required: the mode exists to point at what to log next, so an answer
+      // that only describes the record would leave the trader with nothing to do.
       nextStep: asText(obj.nextStep, 'nextStep'),
       motivation: asText(obj.motivation, 'motivation'),
     };

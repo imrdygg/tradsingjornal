@@ -164,7 +164,7 @@ test.describe('Undoing a plan lock', () => {
     const preview = page.getByRole('dialog');
     await expect(preview.getByText(/Important price levels/i)).toBeVisible();
     await expect(preview.getByText(/What am I waiting for\?/i)).toBeVisible();
-    await expect(preview.getByText('Engulfing, Support, Resistance')).toBeVisible();
+    await expect(preview.getByText('Overnight Break & Run, Session Break & Run')).toBeVisible();
 
     await page.locator('#plan-lock-confirm-btn').click();
 
@@ -256,9 +256,15 @@ test.describe('Starting fresh', () => {
     await gotoTab(page, 'today', /^Today$/);
     await expect(page.getByRole('heading', { name: /Trade Executions \(0\)/ })).toBeVisible();
 
-    // ...but the playbook set-ups survived.
+    // ...but the playbook set-ups survived. The library opens trimmed to the two focus
+    // setups, so the rest of the catalog has to be revealed to check them.
     await gotoTab(page, 'playbook', /Trading Setups & Playbook Library/i);
+    const focusToggle = page.locator('#playbook-focus-toggle');
+    await expect(focusToggle).toBeVisible();
+    if ((await focusToggle.textContent())?.includes('Show all setups')) await focusToggle.click();
     await expect(page.getByText('Engulfing', { exact: true })).toBeVisible();
     await expect(page.getByText('Trend Continuation', { exact: true })).toBeVisible();
+    // And the two the app is built around are still there.
+    await expect(page.getByText('Overnight Break & Run', { exact: true })).toBeVisible();
   });
 });

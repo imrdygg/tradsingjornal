@@ -410,3 +410,107 @@ export interface PatternStudy {
   entries: PatternStudyEntry[];
   updatedAt: string;
 }
+
+// ---------------------------------------------------------------------------
+// Level Watch — the break-and-run journal
+//
+// The whole app is organised around two set-ups, and both are the same idea read
+// at different times: a support or resistance level is touched and price does NOT
+// come back. That is a claim about the future, so a touch cannot be judged when it
+// happens. A touch is therefore recorded at the moment price reaches the level and
+// then left open, `watching`, while the app keeps asking whether price ever comes
+// back. A touch price never revisits is the signal this journal exists to find; a
+// touch price returns to is kept as the control that makes the rate mean something.
+// ---------------------------------------------------------------------------
+
+/** Which side of the level price approached from when it was touched. */
+export type LevelKind = 'support' | 'resistance';
+
+/**
+ * What price did after the level was touched.
+ *
+ * `watching` is the honest state for a fresh touch: it is only a break-and-run once
+ * enough time has passed with price never coming back, and until then the app must
+ * be able to say it does not know yet rather than call the touch a winner. `invalid`
+ * is for a touch the trader set aside — a mis-marked level, a data problem — so it is
+ * excluded from every rate instead of quietly counting as a return.
+ */
+export type TouchOutcome = 'watching' | 'never-returned' | 'returned' | 'invalid';
+
+export interface LevelTouch {
+  id: string;
+  userId: string;
+  /** The trading day the touch happened on. */
+  tradingDayId: string;
+  /**
+   * YYYY-MM-DD, carried on the touch itself.
+   *
+   * Denormalised on purpose: the stats group touches by session, set-up and level
+   * without needing to join each one back to its day, and a touch stays readable if
+   * its day is ever deleted.
+   */
+  tradeDate: string;
+  instrumentId: string;
+
+  /** The level price reached. */
+  kind: LevelKind;
+  price: number;
+  /**
+   * How wide the level is, in points, for judging whether price "came back".
+   *
+   * A level is a zone, not a tick. Price re-entering this band — the level price
+   * plus or minus half the width on each side — is a return; only a price that
+   * stays out of it is the break-and-run the set-ups are looking for.
+   */
+  zonePoints: number;
+  /** Where the level came from — "overnight high", "prior day low", "4h supply". */
+  label?: string;
+
+  /** When price first reached the level. */
+  touchedAt: string;
+  /**
+   * The session the touch fell in.
+   *
+   * This is the field the two set-ups differ by: an overnight level break and a
+   * regular-session one are the same pattern at different times of day, and the
+   * overnight read is the one the trader noticed first.
+   */
+  session: TradingSession;
+  /** The instrument's price as close to the touch as the app could read it. */
+  priceAtTouch?: number;
+
+  /** The set-up this touch was taken under — one of the trader's two. */
+  setupId?: string;
+  setupName?: string;
+
+  outcome: TouchOutcome;
+  /** Best excursion away from the level after the touch, in points (favourable). */
+  maxExcursionPoints?: number;
+  /**
+   * Deepest move back through the level after the touch, in points.
+   *
+   * Zero is the meaningful value: it is the record of price never returning, which
+   * is exactly what the two set-ups are betting on.
+   */
+  maxReturnPoints?: number;
+  /** When the outcome was last evaluated. */
+  checkedAt?: string;
+  /** The last price the evaluation saw, so a stale watch is visible as stale. */
+  checkedPrice?: number;
+  /** When price first came back through the level, for a `returned` touch. */
+  returnedAt?: string;
+  /**
+   * How many times this touch has been evaluated against price so far.
+   *
+   * A `watching` touch with many checks and no return is a stronger read than one
+   * that was only looked at once, and this is what lets the UI say which it is.
+   */
+  checks: number;
+
+  /** The trade this touch became, when the trader actually took it. */
+  tradeId?: string;
+  notes?: string;
+  images?: string[];
+  createdAt: string;
+  updatedAt: string;
+}

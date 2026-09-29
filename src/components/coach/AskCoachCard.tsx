@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { MessageSquare } from 'lucide-react';
-import { DailyReview, Instrument, Setup, Trade, TradingDay } from '../../types';
+import { DailyReview, Instrument, LevelTouch, Setup, Trade, TradingDay } from '../../types';
 import { buildJournalDigest } from '../../lib/ai/journal-digest';
 import type { AskResponse } from '../../lib/ai/coach-types';
 import { CoachErrorCode, CoachResult, requestCoach } from '../../lib/ai/coach-client';
@@ -39,10 +39,15 @@ interface AskCoachCardProps {
   todayTradeDate: string;
   timezone: string;
   maxDrawdown?: number | null;
+  /** The level-touch log, so a question like "what is my overnight hold rate?" is answerable. */
+  levelTouches?: LevelTouch[];
   /** Heading and blurb above the box, so the card can be labelled by its caller. */
   title?: string;
   description?: string;
 }
+
+/** A stable empty list, so an omitted prop does not rebuild the digest on every render. */
+const NO_TOUCHES: LevelTouch[] = [];
 
 interface AskState {
   loading: boolean;
@@ -66,6 +71,7 @@ export const AskCoachCard: React.FC<AskCoachCardProps> = ({
   todayTradeDate,
   timezone,
   maxDrawdown,
+  levelTouches = NO_TOUCHES,
   title,
   description,
 }) => {
@@ -86,8 +92,19 @@ export const AskCoachCard: React.FC<AskCoachCardProps> = ({
         todayTradeDate,
         timezone,
         maxDrawdown,
+        levelTouches,
       }),
-    [trades, tradingDays, reviews, setups, instruments, todayTradeDate, timezone, maxDrawdown]
+    [
+      trades,
+      tradingDays,
+      reviews,
+      setups,
+      instruments,
+      todayTradeDate,
+      timezone,
+      maxDrawdown,
+      levelTouches,
+    ]
   );
 
   const [state, setState] = useState<AskState>(IDLE);

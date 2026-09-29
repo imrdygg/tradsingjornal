@@ -3,6 +3,7 @@ import { Sparkles, AlertTriangle, TrendingUp, BookOpenCheck, Target, Activity } 
 import {
   DailyReview,
   Instrument,
+  LevelTouch,
   Setup,
   Trade,
   TradingDay,
@@ -50,6 +51,8 @@ interface CoachViewProps {
   timezone: string;
   /** The account drawdown the trader has agreed to, so the read can weigh risk capacity. */
   maxDrawdown?: number | null;
+  /** The level-touch log, so the coach can find the break-and-run edge. */
+  levelTouches: LevelTouch[];
 }
 
 interface RequestState {
@@ -90,6 +93,7 @@ export const CoachView: React.FC<CoachViewProps> = ({
   todayTradeDate,
   timezone,
   maxDrawdown,
+  levelTouches,
 }) => {
   const digest = useMemo(
     () =>
@@ -102,8 +106,19 @@ export const CoachView: React.FC<CoachViewProps> = ({
         todayTradeDate,
         maxDrawdown,
         timezone,
+        levelTouches,
       }),
-    [trades, tradingDays, reviews, setups, instruments, todayTradeDate, timezone, maxDrawdown]
+    [
+      trades,
+      tradingDays,
+      reviews,
+      setups,
+      instruments,
+      todayTradeDate,
+      timezone,
+      maxDrawdown,
+      levelTouches,
+    ]
   );
 
   const [briefState, setBriefState] = useState<RequestState>(IDLE);
@@ -335,6 +350,7 @@ export const CoachView: React.FC<CoachViewProps> = ({
         todayTradeDate={todayTradeDate}
         timezone={timezone}
         maxDrawdown={maxDrawdown}
+        levelTouches={levelTouches}
         title="Ask about my trading"
         description="Put your own question to the coach. It answers from your records — your figures, or nothing."
       />

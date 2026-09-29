@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { DailyReview, DailyReviewQuestions, Setup, Trade, TradingDay } from '../../../types';
+import { DailyReview, DailyReviewQuestions, LevelTouch, Setup, Trade, TradingDay } from '../../../types';
 import { buildJournalDigest } from '../journal-digest';
 import { DEFAULT_INSTRUMENTS } from '../../trading/instruments';
 
@@ -560,6 +560,151 @@ describe('buildJournalDigest', () => {
 
     expect(digest.overall.netPnL).toBe(10);
     expect(digest.planAdherence.tradesOutsideAllowedSessions).toBe(0);
+  });
+});
+
+/**
+ * The level-touch record is what lets the coach answer "which of my break-and-run
+ * conditions actually hold?". Its whole value is that it stops at a tally until there is
+ * a real sample, so those refusals are tested as carefully as the rates.
+ */
+describe('level touches', () => {
+  function makeTouch(overrides: Partial<LevelTouch> = {}): LevelTouch {
+    return {
+      id: 'lt1',
+      userId: 'u1',
+      tradingDayId: 'd1',
+      tradeDate: '2026-09-18',
+      instrumentId: 'mes',
+      kind: 'support',
+      price: 5000,
+      zonePoints: 4,
+      touchedAt: '2026-09-18T09:00:00.000Z',
+      session: 'Overnight',
+      outcome: 'watching',
+      checks: 0,
+      createdAt: '2026-09-18T09:00:00.000Z',
+      updatedAt: '2026-09-18T09:00:00.000Z',
+      ...overrides,
+    };
+  }
+
+  /** `count` touches with a decided outcome, spread across the same bucket. */
+  const decidedTouches = (count: number, outcome: LevelTouch['outcome'], extra: Partial<LevelTouch> = {}) =>
+    Array.from({ length: count }, (_, i) =>
+      makeTouch({
+        id: `lt${outcome}-${i}-${extra.session ?? 'Overnight'}`,
+        outcome,
+        touchedAt: `2026-09-${String(i + 1).padStart(2, '0')}T09:00:00.000Z`,
+        ...extra,
+      })
+    );
+
+  it('reads as empty, not as a zero rate, when nothing has been logged', () => {
+    const { levelEdge } = build();
+
+    expect(levelEdge.touches).toBe(0);
+    expect(levelEdge.decided).toBe(0);
+    expect(levelEdge.holdRate).toBeNull();
+    expect(levelEdge.enoughData).toBe(false);
+    expect(levelEdge.conditions).toEqual([]);
+  });
+
+  it('counts held and returned touches but withholds a rate below the sample', () => {
+    const { levelEdge } = build({
+      levelTouches: [
+        ...decidedTouches(1, 'never-returned'),
+        ...decidedTouches(1, 'returned'),
+      ],
+    });
+
+    expect(levelEdge.decided).toBe(2);
+    expect(levelEdge.neverReturned).toBe(1);
+    expect(levelEdge.holdRate).toBe(50);
+    // The counts are still reported; only the claim of an edge is withheld.
+    expect(levelEdge.enoughData).toBe(false);
+  });
+
+  it('warns at the top of the digest while the decided sample is thin', () => {
+    const digest = build({ levelTouches: decidedTouches(2, 'never-returned') });
+
+    expect(digest.dataSufficiency.caveats.join(' ')).toContain('decided');
+  });
+
+  it('reports a readable hold rate once enough touches are decided', () => {
+    const digest = build({ levelTouches: decidedTouches(5, 'never-returned') });
+
+    expect(digest.levelEdge.holdRate).toBe(100);
+    expect(digest.levelEdge.enoughData).toBe(true);
+    expect(digest.dataSufficiency.caveats.join(' ')).not.toContain('decided touch(es) have');
+  });
+
+  it('keeps void touches out of the record entirely', () => {
+    const { levelEdge } = build({
+      levelTouches: [
+        ...decidedTouches(5, 'never-returned'),
+        makeTouch({ id: 'void', outcome: 'invalid' }),
+      ],
+    });
+
+    expect(levelEdge.invalid).toBe(1);
+    expect(levelEdge.decided).toBe(5);
+    expect(levelEdge.holdRate).toBe(100);
+  });
+
+  it('ranks conditions by hold rate and keeps each one\u2019s own sample', () => {
+    const { levelEdge } = build({
+      levelTouches: [
+        ...decidedTouches(5, 'never-returned', { session: 'Overnight', kind: 'support' }),
+        ...decidedTouches(5, 'returned', { session: 'Regular Session', kind: 'resistance' }),
+      ],
+    });
+
+    // Enough decided touches, so the buckets are all readable and sorted best first.
+    expect(levelEdge.conditions[0].stats.holdRate).toBe(100);
+    expect(levelEdge.conditions.map((b) => b.label)).toContain('Overnight support');
+    expect(levelEdge.conditions.map((b) => b.label)).toContain('Regular Session resistance');
+    const worst = levelEdge.conditions.find((b) => b.label === 'Regular Session resistance');
+    expect(worst?.stats.holdRate).toBe(0);
+    expect(worst?.stats.decided).toBe(5);
+    // Every listed condition is decided enough to read; the thin ones live elsewhere.
+    expect(levelEdge.conditions.every((b) => b.stats.decided >= 5)).toBe(true);
+  });
+
+  it('lists logged-but-thin conditions separately instead of dropping them', () => {
+    const { levelEdge } = build({
+      levelTouches: [
+        ...decidedTouches(5, 'never-returned', { session: 'Overnight', kind: 'support' }),
+        makeTouch({ id: 'thin', session: 'Premarket', kind: 'resistance', outcome: 'never-returned' }),
+      ],
+    });
+
+    expect(levelEdge.thinConditions.map((b) => b.label)).toContain('Premarket resistance');
+    expect(levelEdge.conditions.map((b) => b.label)).not.toContain('Premarket resistance');
+  });
+
+  it('carries the most recent touches, with the instrument symbol resolved', () => {
+    const { levelEdge } = build({
+      levelTouches: [
+        makeTouch({
+          id: 'new',
+          touchedAt: '2026-09-18T12:00:00.000Z',
+          label: 'overnight low',
+          notes: 'clean rejection',
+          maxExcursionPoints: 12.5,
+        }),
+        makeTouch({
+          id: 'old',
+          tradeDate: '2026-09-17',
+          touchedAt: '2026-09-17T12:00:00.000Z',
+        }),
+      ],
+    });
+
+    expect(levelEdge.recentTouches[0].label).toBe('overnight low');
+    expect(levelEdge.recentTouches[0].symbol).toBe('MES');
+    expect(levelEdge.recentTouches[0].maxExcursionPoints).toBe(12.5);
+    expect(levelEdge.recentTouches[1].date).toBe('2026-09-17');
   });
 });
 

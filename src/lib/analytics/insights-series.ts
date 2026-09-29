@@ -313,13 +313,23 @@ export function buildWeekdayBreakdown(
     });
 }
 
-/** One step of the underwater curve: where the account stood against its own best. */
-export interface UnderwaterPoint {
+/**
+ * One trade in the sequence: where the record stood, and where its best had been.
+ *
+ * One shape serves two pictures. Plotted as `cumulative` it is the equity curve — the line
+ * every trading book has on its cover. Plotted as `drawdown` it is the underwater curve — how
+ * far behind the high-water mark the account was. They are the same record read from two
+ * directions, and building them from one pass is what stops the two charts disagreeing about
+ * what happened.
+ */
+export interface EquityPoint {
   /** 1-based position of the trade in the sequence. */
   index: number;
   date: string;
   /** The axis label: `#12`. */
   label: string;
+  /** That trade's own gross result, so a hover can name the step. */
+  pnl: number;
   /** Running gross P&L to this trade. */
   cumulative: number;
   /** The highest the running total had reached by this trade. */
@@ -328,26 +338,22 @@ export interface UnderwaterPoint {
   drawdown: number;
 }
 
-/** How many trades the underwater curve plots; past this it is a smear rather than a shape. */
-export const UNDERWATER_LENGTH = 150;
+/** How many trades the curves plot; past this they are a smear rather than a shape. */
+export const EQUITY_SEQUENCE_LENGTH = 150;
 
 /**
- * How far below its own best the record sat, trade by trade.
+ * The record as a sequence of trades, with the running total and the high-water mark.
  *
- * The equity curve shows a line that goes up and to the right; this shows what it felt like
- * to hold. A curve can double over a year while spending months underwater, and the two
- * readings are the same record — one is the destination, the other is the ride. Drawn below
- * zero because that is what it is: the depth by which the account was behind its high-water
- * mark, never above it.
- *
- * The deepest point is the one to read, which is why the peak is carried into each point
- * rather than only the running total: the depth cannot be recovered from the curve alone.
+ * The peak is carried into every point rather than being left to the reader, because the
+ * depth behind it cannot be recovered from the running total alone — and the depth is the
+ * half of this that nobody finds in their own record without being shown it. A curve can
+ * double over a year while spending four months underwater; both are true of the same trades.
  */
-export function buildUnderwaterCurve(
+export function buildEquitySequence(
   trades: Trade[],
   tradingDays: TradingDay[],
-  maxTrades = UNDERWATER_LENGTH
-): UnderwaterPoint[] {
+  maxTrades = EQUITY_SEQUENCE_LENGTH
+): EquityPoint[] {
   const closed = closedInOrder(trades, tradingDays);
   const window = maxTrades > 0 ? closed.slice(-maxTrades) : closed;
 
@@ -361,6 +367,7 @@ export function buildUnderwaterCurve(
       index: position + 1,
       date,
       label: `#${position + 1}`,
+      pnl: round2(trade.grossPnL),
       cumulative: round2(cumulative),
       peak: round2(peak),
       drawdown: round2(cumulative - peak),

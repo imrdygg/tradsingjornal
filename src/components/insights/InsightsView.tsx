@@ -34,6 +34,7 @@ import {
   ModeTile,
   RDistributionChart,
   ResultTape,
+  EquityCurveChart,
   ShareRing,
   TradeScatter,
   UnderwaterChart,
@@ -44,12 +45,12 @@ import {
 } from './insights-charts';
 import {
   buildDailyPnLSeries,
+  buildEquitySequence,
   buildHoldTime,
   buildHourlyBreakdown,
   buildRDistribution,
   buildResultTape,
   buildRiskVsResult,
-  buildUnderwaterCurve,
   buildWeekdayBreakdown,
   type SegmentRow,
 } from '../../lib/analytics/insights-series';
@@ -57,6 +58,15 @@ import {
 interface InsightsViewProps {
   trades: Trade[];
   tradingDays: TradingDay[];
+  /**
+   * Opens a set of trades in the trade log.
+   *
+   * Every observation on this tab is a statement about a group of trades, and the obvious
+   * next question is "which ones". Handing the ids to the log answers it in one click and
+   * keeps the two tabs honest about the same set: the log filters to exactly the ids this
+   * card counted, so the numbers cannot disagree.
+   */
+  onOpenTrades?: (label: string, tradeIds: string[]) => void;
 }
 
 /**
@@ -140,7 +150,11 @@ const SegmentGroup: React.FC<{ title: string; note: string; rows: SegmentRow[]; 
   </div>
 );
 
-export const InsightsView: React.FC<InsightsViewProps> = ({ trades, tradingDays }) => {
+export const InsightsView: React.FC<InsightsViewProps> = ({
+  trades,
+  tradingDays,
+  onOpenTrades,
+}) => {
   const insights = useMemo(
     () => generateDeterministicInsights(trades, tradingDays),
     [trades, tradingDays]
@@ -152,6 +166,8 @@ export const InsightsView: React.FC<InsightsViewProps> = ({ trades, tradingDays 
 
     // One row per segment, keyed by the id of the observation about it, so a bar and the card
     // underneath can never drift apart into two different buckets.
+    const targetSummary = summariseTargetExits(closed);
+
     const sessions: SegmentRow[] = calculateSessionBreakdown(closed)
       .filter((s) => s.tradesCount > 0)
       .map((s) => ({
@@ -189,6 +205,39 @@ export const InsightsView: React.FC<InsightsViewProps> = ({ trades, tradingDays 
     // Biggest first in every group: the row worth looking at should be the one at the top.
     const byMoney = (rows: SegmentRow[]) => [...rows].sort((a, b) => b.pnl - a.pnl);
 
+    /**
+     * The trades behind each observation, keyed by the observation's own id.
+     *
+     * A card says "Premarket trades generated $295" and the reader's next question is "which
+     * ones". The mapping is built from the same closed set the breakdowns were built from and
+     * with the same key spelling, so the log can only ever show exactly what the card counted
+     * — not a near-enough filter that quietly includes a trade the card left out.
+     */
+    const tradeIds: Record<string, string[]> = {};
+    const pushId = (key: string, id: string) => {
+      const list = tradeIds[key] ?? [];
+      list.push(id);
+      tradeIds[key] = list;
+    };
+
+    const normalDays = new Set(
+      tradingDays.filter((day) => day.riskMode === 'normal').map((day) => day.id)
+    );
+    const expandedDays = new Set(
+      tradingDays.filter((day) => day.riskMode === 'expanded').map((day) => day.id)
+    );
+
+    for (const trade of closed) {
+      pushId(`session-${trade.session}`, trade.id);
+      pushId(`setup-${trade.setupName || 'Unspecified'}`, trade.id);
+      pushId(`direction-${trade.direction}`, trade.id);
+      if (normalDays.has(trade.tradingDayId)) pushId('risk-mode-normal', trade.id);
+      if (expandedDays.has(trade.tradingDayId)) pushId('risk-mode-expanded', trade.id);
+    }
+    // The discipline observation is about the trades that had a target *and* a real stop, so
+    // its link has to be that measured set rather than every trade carrying a target.
+    for (const row of targetSummary.rows) pushId('target-exits-short', row.trade.id);
+
     return {
       closed,
       core,
@@ -200,7 +249,7 @@ export const InsightsView: React.FC<InsightsViewProps> = ({ trades, tradingDays 
       // reordered by which day happened to make the most money.
       weekdays: buildWeekdayBreakdown(closed, tradingDays),
       daily: buildDailyPnLSeries(closed, tradingDays),
-      underwater: buildUnderwaterCurve(closed, tradingDays),
+      equity: buildEquitySequence(closed, tradingDays),
       hours: buildHourlyBreakdown(closed),
       rDistribution: buildRDistribution(closed),
       tape: buildResultTape(closed, tradingDays),
@@ -208,6 +257,7 @@ export const InsightsView: React.FC<InsightsViewProps> = ({ trades, tradingDays 
       riskVsResult: buildRiskVsResult(closed),
       riskModes: calculateRiskModeComparison(closed, tradingDays, []),
       targets: summariseTargetExits(closed),
+      tradeIds,
     };
   }, [trades, tradingDays]);
 
@@ -220,7 +270,7 @@ export const InsightsView: React.FC<InsightsViewProps> = ({ trades, tradingDays 
     sides,
     weekdays,
     daily,
-    underwater,
+    equity,
     hours,
     rDistribution,
     tape,
@@ -228,6 +278,7 @@ export const InsightsView: React.FC<InsightsViewProps> = ({ trades, tradingDays 
     riskVsResult,
     riskModes,
     targets,
+    tradeIds,
   } = data;
 
   const holdPoints: ScatterPoint[] = holdTime.points.map((point) => ({
@@ -246,10 +297,8 @@ export const InsightsView: React.FC<InsightsViewProps> = ({ trades, tradingDays 
     label: point.label,
   }));
 
-  const worstDepth = underwater.reduce<number>(
-    (low, point) => Math.min(low, point.drawdown),
-    0
-  );
+  const worstDepth = equity.reduce<number>((low, point) => Math.min(low, point.drawdown), 0);
+  const peakTotal = equity.reduce<number>((top, point) => Math.max(top, point.cumulative), 0);
 
   /**
    * The meter under each observation.
@@ -404,10 +453,44 @@ export const InsightsView: React.FC<InsightsViewProps> = ({ trades, tradingDays 
       </section>
 
       {/*
-        Every day as a column, with the running total drawn over it.
+        The strip above, with its history behind it.
 
-        This is the tab's hero because it is the one picture that answers both of a trader's
-        first questions at once: how each day went, and what the days added up to.
+        Four figures say where the account is; this says how it got there, and the part that
+        matters is the part a total cannot show — the stretches where it went nowhere. The
+        line is drawn on the same gross basis as every other figure on the tab.
+      */}
+      {equity.length > 1 && (
+        <section id="insights-equity" className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <TrendingUp className="h-4 w-4 text-emerald-400" />
+              <h2 className="font-mono text-xs font-bold uppercase tracking-wider text-zinc-300">
+                Equity curve
+              </h2>
+            </div>
+            <span className="font-mono text-[10px] text-zinc-500">
+              {equity.length} closed trade{equity.length === 1 ? '' : 's'}, oldest first · peak{' '}
+              {signedMoney(peakTotal)}
+            </span>
+          </div>
+
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-3.5">
+            <EquityCurveChart points={equity} />
+            <p className="mt-2 text-[10px] leading-relaxed text-zinc-500">
+              Every closed trade in order, oldest on the left, P&L before fees. The dashed line
+              is your best point so far, so the gap between the curve and that line is what the
+              current stretch has cost you — the reading a total can never show.
+            </p>
+          </div>
+        </section>
+      )}
+
+      {/*
+        Every day as a column.
+
+        The running total used to be drawn over these on a second axis; it now lives in the
+        equity curve above, where it is the whole subject rather than a second reading on
+        someone else's chart. What is left answers one question well: how did each day go.
       */}
       {daily.length > 0 && (
         <section id="insights-daily" className="space-y-3">
@@ -419,17 +502,15 @@ export const InsightsView: React.FC<InsightsViewProps> = ({ trades, tradingDays 
               </h2>
             </div>
             <span className="font-mono text-[10px] text-zinc-500">
-              {daily.length} day{daily.length === 1 ? '' : 's'} · columns left, running total
-              right
+              {daily.length} day{daily.length === 1 ? '' : 's'} · one column per day
             </span>
           </div>
 
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-3.5">
             <DailyPnlChart points={daily} />
             <p className="mt-2 text-[10px] leading-relaxed text-zinc-500">
-              Each column is one day's whole result; the line is the running total across the
-              days shown, starting at zero on the left. A red column inside a rising line is
-              what a good month normally looks like.
+              Each column is one day's whole result, coloured by its own sign — a red column
+              inside a winning month is what a good month normally looks like.
             </p>
           </div>
         </section>
@@ -442,7 +523,7 @@ export const InsightsView: React.FC<InsightsViewProps> = ({ trades, tradingDays 
         the same trades. The equity line above says where it ended; this says what holding it
         cost, which is the half that decides whether a trader is still there at the bottom.
       */}
-      {underwater.length > 1 && (
+      {equity.length > 1 && (
         <section id="insights-underwater" className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
@@ -457,7 +538,7 @@ export const InsightsView: React.FC<InsightsViewProps> = ({ trades, tradingDays 
           </div>
 
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-3.5">
-            <UnderwaterChart points={underwater} />
+            <UnderwaterChart points={equity} />
             <p className="mt-2 text-[10px] leading-relaxed text-zinc-500">
               How far below its own best the record sat after each closed trade. Flat along the
               top is a record at a new high; the depth of a valley is what holding it cost.
@@ -834,6 +915,7 @@ export const InsightsView: React.FC<InsightsViewProps> = ({ trades, tradingDays 
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             {insights.map((item) => {
               const meter = meters.get(item.id);
+              const linked = tradeIds[item.id] ?? [];
               return (
                 <article
                   key={item.id}
@@ -846,13 +928,33 @@ export const InsightsView: React.FC<InsightsViewProps> = ({ trades, tradingDays 
                     <span className="rounded bg-zinc-800 px-2 py-0.5 font-mono text-[10px] font-bold uppercase text-zinc-400">
                       {item.category}
                     </span>
-                    <span
-                      className={`rounded border px-2 py-0.5 font-mono text-[10px] ${
-                        SAMPLE_CHIP[item.sampleVariant]
-                      }`}
-                    >
-                      {item.sampleLabel} · {item.sampleSize}
-                    </span>
+                    {/*
+                      The sample chip doubles as the way into the trades themselves.
+
+                      A finding is a statement about a group, and the group is the only thing
+                      worth checking it against — so the count opens the log filtered to
+                      exactly those trades rather than making the reader go and find them.
+                    */}
+                    {onOpenTrades && linked.length > 0 ? (
+                      <button
+                        type="button"
+                        id={`insight-trades-${item.id}`}
+                        onClick={() => onOpenTrades(item.title, linked)}
+                        title={`Show these ${linked.length} trades in the trade log`}
+                        className={`rounded border px-2 py-0.5 font-mono text-[10px] underline decoration-dotted underline-offset-2 transition-colors hover:brightness-125 ${SAMPLE_CHIP[item.sampleVariant]}`}
+                      >
+                        {item.sampleSize} trade{item.sampleSize === 1 ? '' : 's'} ·{' '}
+                        {item.sampleLabel} ↗
+                      </button>
+                    ) : (
+                      <span
+                        className={`rounded border px-2 py-0.5 font-mono text-[10px] ${
+                          SAMPLE_CHIP[item.sampleVariant]
+                        }`}
+                      >
+                        {item.sampleLabel} · {item.sampleSize}
+                      </span>
+                    )}
                   </div>
 
                   {/* The figure carries the card; the sentence explains it. */}

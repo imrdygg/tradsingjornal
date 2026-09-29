@@ -19,11 +19,11 @@ import {
 } from 'recharts';
 import type {
   DailyPnLPoint,
+  EquityPoint,
   HourlyRow,
   RDistributionBucket,
   SegmentRow,
   TapeEntry,
-  UnderwaterPoint,
 } from '../../lib/analytics/insights-series';
 
 /**
@@ -329,37 +329,113 @@ export const ModeTile: React.FC<{
 );
 
 /**
- * Every trading day as its own column, with the running total drawn over them.
+ * The record as one line, trade by trade.
  *
- * Two readings on one picture on purpose. The columns are how each day went — the question a
- * trader asks about a day — and the line is what those days added up to, which no single
- * column can answer. They sit on separate axes because a $400 day and a $400 total are the
- * same number and completely different news.
+ * This is the strip at the top of the tab with its history behind it: the four figures say
+ * where the account is, and this says how it got there — which includes the months spent
+ * going nowhere, and those are the part a trader cannot see from a total.
+ *
+ * The fill is a gradient on purpose rather than a flat wash: the curve gets heavier as the
+ * account gets further from zero, so the height of the line reads as money even with the axis
+ * hidden behind a glance.
+ */
+export const EquityCurveChart: React.FC<{ points: EquityPoint[] }> = ({ points }) => {
+  const best = points.reduce<EquityPoint | null>(
+    (top, point) => (!top || point.cumulative > top.cumulative ? point : top),
+    null
+  );
+
+  return (
+    <div id="insights-equity-chart" className="h-56 w-full">
+      <ResponsiveContainer width="100%" height="100%">
+        <AreaChart data={points} margin={{ top: 8, right: 12, bottom: 0, left: -14 }}>
+          <defs>
+            <linearGradient id="equityGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#10b981" stopOpacity={0.4} />
+              <stop offset="100%" stopColor="#10b981" stopOpacity={0.02} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+          <XAxis dataKey="label" stroke="#71717a" fontSize={10} tickLine={false} minTickGap={28} />
+          <YAxis
+            stroke="#71717a"
+            fontSize={10}
+            tickLine={false}
+            width={62}
+            tickFormatter={(value) => axisMoney(Number(value))}
+          />
+          <Tooltip
+            content={({ active, payload }) => {
+              if (!active || !payload || !payload.length) return null;
+              const point = payload[0]?.payload as EquityPoint | undefined;
+              if (!point) return null;
+              return (
+                <div className="space-y-0.5 rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 py-2 font-mono text-[11px] text-zinc-200">
+                  <div className="text-zinc-400">
+                    Trade {point.label} · {point.date}
+                  </div>
+                  <div className={moneyTone(point.pnl)}>
+                    {signedMoney(point.pnl)} on this trade
+                  </div>
+                  <div className="text-emerald-300">
+                    {signedMoney(point.cumulative)} in total
+                  </div>
+                  {point.drawdown < 0 && (
+                    <div className="text-rose-300">
+                      {signedMoney(point.drawdown)} behind the peak
+                    </div>
+                  )}
+                </div>
+              );
+            }}
+          />
+          <ReferenceLine y={0} stroke="#3f3f46" />
+          {/* Where the record peaked, so the current figure above has something to be read
+              against rather than floating free of it. */}
+          {best && (
+            <ReferenceLine
+              y={best.cumulative}
+              stroke="#f59e0b"
+              strokeDasharray="4 4"
+              strokeOpacity={0.5}
+            />
+          )}
+          <Area
+            type="monotone"
+            dataKey="cumulative"
+            stroke="#10b981"
+            strokeWidth={2}
+            fill="url(#equityGrad)"
+            dot={false}
+            isAnimationActive={false}
+          />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  );
+};
+
+/**
+ * Every trading day as its own column.
+ *
+ * The running total used to be drawn over these on a second axis; it now lives in the equity
+ * curve at the top of the tab, where it is the whole subject rather than a second reading on
+ * someone else's chart. What is left is one question answered well: how did each day go.
  *
  * A column is coloured by its own sign rather than the window's, so a losing day inside a
  * winning month still reads as a losing day.
  */
 export const DailyPnlChart: React.FC<{ points: DailyPnLPoint[] }> = ({ points }) => (
-  <div id="insights-daily-chart" className="h-56 w-full">
+  <div id="insights-daily-chart" className="h-48 w-full">
     <ResponsiveContainer width="100%" height="100%">
-      <ComposedChart data={points} margin={{ top: 8, right: 2, bottom: 0, left: -16 }}>
+      <ComposedChart data={points} margin={{ top: 8, right: 12, bottom: 0, left: -14 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
         <XAxis dataKey="label" stroke="#71717a" fontSize={10} tickLine={false} minTickGap={18} />
         <YAxis
-          yAxisId="day"
           stroke="#71717a"
           fontSize={10}
           tickLine={false}
           width={58}
-          tickFormatter={(value) => axisMoney(Number(value))}
-        />
-        <YAxis
-          yAxisId="total"
-          orientation="right"
-          stroke="#38bdf8"
-          fontSize={10}
-          tickLine={false}
-          width={62}
           tickFormatter={(value) => axisMoney(Number(value))}
         />
         <Tooltip
@@ -373,26 +449,16 @@ export const DailyPnlChart: React.FC<{ points: DailyPnLPoint[] }> = ({ points })
                   {point.date} · {point.trades} trade{point.trades === 1 ? '' : 's'}
                 </div>
                 <div className={moneyTone(point.pnl)}>{signedMoney(point.pnl)} that day</div>
-                <div className="text-sky-300">{signedMoney(point.cumulative)} running</div>
               </div>
             );
           }}
         />
-        <ReferenceLine yAxisId="day" y={0} stroke="#3f3f46" />
-        <Bar yAxisId="day" dataKey="pnl" radius={[3, 3, 0, 0]} maxBarSize={30}>
+        <ReferenceLine y={0} stroke="#3f3f46" />
+        <Bar dataKey="pnl" radius={[3, 3, 0, 0]} maxBarSize={30}>
           {points.map((point) => (
             <Cell key={point.date} fill={point.pnl >= 0 ? '#10b981' : '#f43f5e'} />
           ))}
         </Bar>
-        <Line
-          yAxisId="total"
-          type="monotone"
-          dataKey="cumulative"
-          stroke="#38bdf8"
-          strokeWidth={2}
-          dot={false}
-          isAnimationActive={false}
-        />
       </ComposedChart>
     </ResponsiveContainer>
   </div>
@@ -468,8 +534,8 @@ export const RDistributionChart: React.FC<{
  * high-water mark. The worst point is printed above it, since a shape without its scale is
  * just a colour.
  */
-export const UnderwaterChart: React.FC<{ points: UnderwaterPoint[] }> = ({ points }) => {
-  const worst = points.reduce<UnderwaterPoint | null>(
+export const UnderwaterChart: React.FC<{ points: EquityPoint[] }> = ({ points }) => {
+  const worst = points.reduce<EquityPoint | null>(
     (low, point) => (!low || point.drawdown < low.drawdown ? point : low),
     null
   );
@@ -499,7 +565,7 @@ export const UnderwaterChart: React.FC<{ points: UnderwaterPoint[] }> = ({ point
           <Tooltip
             content={({ active, payload }) => {
               if (!active || !payload || !payload.length) return null;
-              const point = payload[0]?.payload as UnderwaterPoint | undefined;
+              const point = payload[0]?.payload as EquityPoint | undefined;
               if (!point) return null;
               return (
                 <div className="space-y-0.5 rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 py-2 font-mono text-[11px] text-zinc-200">

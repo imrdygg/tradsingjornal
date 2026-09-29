@@ -277,7 +277,8 @@ test.describe('Logging a scale-in as its own trade', () => {
     await expect(page.locator('#trade-entry-price')).toHaveValue('7700');
     await expect(page.locator('#trade-contracts')).toHaveValue('5');
 
-    // The stop is intentionally left for the trader to decide.
+    // The add arrives with a plan stop for its own entry and size; the trader overrides it
+    // here with the level the position is actually wrong at.
     await page.locator('#trade-initial-stop').fill('7690');
     await page.getByRole('button', { name: /Save Open Trade/i }).click();
 

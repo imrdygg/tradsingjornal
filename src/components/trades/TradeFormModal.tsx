@@ -193,9 +193,9 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
           : ''
       );
     } else if (prefill) {
-      // Pre-filled from the break-even calculator's scale-in action. The stop is
-      // deliberately left as-is (usually blank) — the trader must choose the
-      // level that invalidates the new, larger position.
+      // Pre-filled from the break-even calculator's scale-in action. The add is a trade in
+      // its own right, so it gets a plan stop for its own entry and its own size like any
+      // other new one; a caller that hands over an explicit stop keeps that instead.
       const now = new Date();
       const localISO = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
         .toISOString()
@@ -275,10 +275,10 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
     // Only a fresh, hand-entered trade has its size derived from its slot. An edit keeps
     // the size that was actually filled, and a scale-in keeps the calculator's size.
     autoSizeRef.current = !editingTrade && !prefill;
-    // The stop follows the same rule: a fresh trade has it filled from the plan, an edit
-    // keeps the stop it was recorded with, and a scale-in keeps its stop blank until the
-    // trader picks the level that invalidates the larger position.
-    autoStopRef.current = !editingTrade && !prefill;
+    // The stop follows the same rule: a fresh trade has it filled from the plan and an edit
+    // keeps the stop it was recorded with. A scale-in counts as fresh — it is a new entry
+    // with its own size and its own risk — unless the caller already decided the level.
+    autoStopRef.current = !editingTrade && prefill?.initialStop === undefined;
   }, [isOpen, editingTrade, prefill, day]);
 
   // Live Calculations Preview
@@ -682,8 +682,9 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
               <Info className="h-4 w-4 shrink-0 text-emerald-400 mt-0.5" />
               <span className="leading-relaxed">
                 Pre-filled from the break-even calculator as a{' '}
-                <strong>separate open trade</strong>. Check the entry price and set the{' '}
-                <strong>initial stop</strong> for this add before saving.
+                <strong>separate open trade</strong>. Its stop is filled in for this add's
+                own entry and size — check it, and type your own level if the add is wrong
+                somewhere else.
               </span>
             </div>
           )}

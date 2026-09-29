@@ -2314,6 +2314,7 @@ async function handler(req, res) {
   }
 }
 export {
+  ENDPOINT_VERSION,
   authorize,
   bearerToken,
   clientIp,

@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import handler, {
+  ENDPOINT_VERSION,
   authorize,
   bearerToken,
   clientIp,
@@ -489,7 +490,10 @@ describe('the handler', () => {
     const anonymous = fakeRes();
     await handler({ method: 'GET' } as never, anonymous as never);
     expect(anonymous.statusCode).toBe(200);
-    expect(anonymous.body?.version).toBe(11);
+    // Checked against the constant rather than a restated number: the health check's job is to
+    // publish the version it is running, and a literal here only tested that someone had
+    // remembered to edit this line.
+    expect(anonymous.body?.version).toBe(ENDPOINT_VERSION);
     const access = anonymous.body?.access as Record<string, unknown>;
     expect(access.authRequired).toBe(false);
     expect(access.countersArePerInstance).toBe(true);

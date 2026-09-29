@@ -66,7 +66,15 @@ interface ApiResponse {
 }
 
 
-const ENDPOINT_VERSION = 13;
+/**
+ * The version this endpoint reports on its health check.
+ *
+ * Exported so it can be asserted against rather than restated: a test holding its own copy of
+ * the number has to be edited every time the endpoint changes, and a literal that nobody
+ * knows the meaning of gets updated without being read. Bump it when the request or response
+ * contract changes in a way a caller could notice.
+ */
+export const ENDPOINT_VERSION = 13;
 
 /** Total time to spend trying models before returning what we have. */
 const REQUEST_BUDGET_MS = 45_000;

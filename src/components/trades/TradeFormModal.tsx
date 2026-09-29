@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import {
   X,
   Plus,
@@ -385,10 +385,27 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
     });
   }, [targetRisk, entryPrice, initialStop, selectedInstrument.pointValue]);
 
-  // Sizes the position to the chosen slot as the numbers are typed. `autoSizeRef` is
-  // cleared by the contracts field itself, so a size typed by hand is never overwritten.
+  /**
+   * Sizes the position to the chosen slot once the trade has a stop of the trader's own.
+   *
+   * The two fields must not both be derived from each other. The plan's stop is worked out
+   * from the size, so re-deriving the size from that stop leaves each field chasing the
+   * other's last value: picking a slot changed the stop, which changed the size, which moved
+   * the stop again — and the stop was briefly the previous slot's, so the line under it
+   * flipped to "Use the plan stop" and back on the way. Nothing about that is a plan; it is
+   * two fields arguing about which of them is the input.
+   *
+   * So the size follows the slot only while the stop is a level the trader chose — which is
+   * the calculation the slot exists for, risk ÷ (stop distance × point value) — and while the
+   * stop is still the plan's, the size the trader has (or the day's planned size) is the
+   * input and the stop is the output. That is also what the form has always promised: enter
+   * the entry and the stop, and the size is set for the slot.
+   *
+   * `autoSizeRef` still has the final say, in both directions: a size typed by hand is never
+   * overwritten, so a trader who takes the size over keeps it however the stop and slot move.
+   */
   useEffect(() => {
-    if (!autoSizeRef.current || !sizing) return;
+    if (!autoSizeRef.current || autoStopRef.current || !sizing) return;
     setContracts(String(sizing.contracts));
   }, [sizing, isOpen]);
 
@@ -443,10 +460,19 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
   /** True while the stop in the field is the one the plan puts there. */
   const stopOnPlan = plannedStop !== null && parseFloat(initialStop) === plannedStop.stopPrice;
 
-  // Fills the stop in from the plan as the entry, slot, size and instrument change.
-  // `autoStopRef` is cleared by the stop field itself, so a stop the trader typed is never
-  // overwritten — and clearing the entry takes the derived stop away with it.
-  useEffect(() => {
+  /**
+   * Fills the stop in from the plan as the entry, slot, size and instrument change.
+   *
+   * `autoStopRef` is cleared by the stop field itself, so a stop the trader typed is never
+   * overwritten — and clearing the entry takes the derived stop away with it.
+   *
+   * Laid out rather than deferred, because this write is a correction to a value that is
+   * already on screen: after a deferred effect the trader gets one painted frame holding the
+   * previous slot's stop, and in that frame the stop is no longer the plan's, so the line
+   * beneath it flashes the "Use the plan stop" button before the level catches up. Doing it
+   * before paint means the entry, the slot and the stop always read as one change.
+   */
+  useLayoutEffect(() => {
     if (!isOpen || !autoStopRef.current) return;
     setInitialStop(plannedStop ? String(plannedStop.stopPrice) : '');
   }, [plannedStop, isOpen]);

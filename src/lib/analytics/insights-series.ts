@@ -75,6 +75,39 @@ function shortDate(date: string): string {
   return `${Number(parts[1])}/${Number(parts[2])}`;
 }
 
+const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const MONTH_SHORT = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+];
+
+/**
+ * `2026-09-22` as `Tue 22 Sep`, for the equity curve's scrub readout.
+ *
+ * Assembled from the parts in UTC rather than handed to `new Date`: the string is a calendar
+ * date with no clock behind it, and reading it as one moves the day backwards for anybody
+ * west of Greenwich — which would put "Fri 29 Sep" on a Friday that was a Thursday.
+ */
+export function scrubDate(date: string): string {
+  const parts = date.split('-').map(Number);
+  if (parts.length < 3 || parts.some((n) => !Number.isFinite(n))) return date;
+  const [year, month, day] = parts;
+  const weekday = WEEKDAY_SHORT[new Date(Date.UTC(year, month - 1, day)).getUTCDay()];
+  const monthName = MONTH_SHORT[month - 1];
+  if (!weekday || !monthName) return date;
+  return `${weekday} ${day} ${monthName}`;
+}
+
 /** Which trading day each trade belongs to, by date rather than by when it was typed. */
 function datesByDayId(tradingDays: TradingDay[]): Map<string, string> {
   return new Map(tradingDays.map((day) => [day.id, day.tradeDate]));

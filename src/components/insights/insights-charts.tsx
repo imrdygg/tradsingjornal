@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Info } from 'lucide-react';
 import {
   Area,
@@ -17,6 +17,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import { scrubDate } from '../../lib/analytics/insights-series';
 import type {
   DailyPnLPoint,
   EquityPoint,
@@ -329,26 +330,136 @@ export const ModeTile: React.FC<{
 );
 
 /**
- * The record as one line, trade by trade.
+ * The record as one line, trade by trade — and the line can be scrubbed.
  *
  * This is the strip at the top of the tab with its history behind it: the four figures say
  * where the account is, and this says how it got there — which includes the months spent
  * going nowhere, and those are the part a trader cannot see from a total.
+ *
+ * Running the pointer along the curve pins a readout above it to the trade underneath, so the
+ * question a curve actually raises — which day was that, and what did the account stand at —
+ * is answered by pointing rather than by estimating off an axis of tick marks. The crosshair
+ * and the dot are recharts' own, drawn on its active index, which is what keeps them on the
+ * line instead of beside it; the box they usually carry is switched off because the readout
+ * above already says more than it could.
+ *
+ * None of it is hover-only. With the pointer away — on a phone, or simply not moving — the
+ * readout holds the final trade, so the panel still answers "where did this end up".
  *
  * The fill is a gradient on purpose rather than a flat wash: the curve gets heavier as the
  * account gets further from zero, so the height of the line reads as money even with the axis
  * hidden behind a glance.
  */
 export const EquityCurveChart: React.FC<{ points: EquityPoint[] }> = ({ points }) => {
+  /** The trade under the pointer, or null while the pointer is away from the curve. */
+  const [cursor, setCursor] = useState<number | null>(null);
+
   const best = points.reduce<EquityPoint | null>(
     (top, point) => (!top || point.cumulative > top.cumulative ? point : top),
     null
   );
 
+  /**
+   * Follow recharts' own active index rather than measuring the pointer ourselves — it has
+   * already snapped the position to a datum, which is what keeps the readout and the dot
+   * agreeing on which trade is being described.
+   *
+   * Typed structurally rather than imported from recharts' internals, and read through
+   * `Number` because recharts hands the index back as a *string* on a categorical axis (and
+   * as `null` the moment the pointer leaves). Nothing here trusts it to be in range either:
+   * an index pointing at a trade that is not in `points` simply stops the scrub.
+   */
+  const scrub = (state: { activeTooltipIndex?: number | string | null }) => {
+    const raw = state?.activeTooltipIndex;
+    if (raw === null || raw === undefined || raw === '') {
+      setCursor(null);
+      return;
+    }
+    const index = Number(raw);
+    setCursor(Number.isInteger(index) && index >= 0 && index < points.length ? index : null);
+  };
+
+  const hovered = cursor === null ? undefined : points[cursor];
+  // What the readout describes: the trade under the pointer, and the last one otherwise.
+  const shown = hovered ?? (points.length ? points[points.length - 1] : null);
+
   return (
-    <div id="insights-equity-chart" className="h-56 w-full">
+    <div className="space-y-2">
+      {shown && (
+        <div
+          id="insights-equity-readout"
+          data-scrubbing={hovered ? 'true' : 'false'}
+          className={`rounded-2xl border px-3.5 py-2.5 transition-colors ${
+            hovered
+              ? 'border-emerald-800/70 bg-emerald-950/25'
+              : 'border-zinc-800 bg-zinc-900/50'
+          }`}
+        >
+          <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+            <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+              {hovered ? 'Running the curve' : 'Where the record ended'}
+            </span>
+            <span className="font-mono text-[9px] uppercase tracking-wider text-zinc-600">
+              {hovered
+                ? `trade ${shown.index} of ${points.length}`
+                : 'drag across the curve to read back'}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-x-4 gap-y-2.5 sm:grid-cols-4">
+            <div className="min-w-0">
+              <span className="block font-mono text-[9px] uppercase tracking-wider text-zinc-500">
+                Trading day
+              </span>
+              <span className="font-mono text-sm font-bold text-zinc-100">
+                {scrubDate(shown.date)}
+              </span>
+            </div>
+
+            <div className="min-w-0">
+              <span className="block font-mono text-[9px] uppercase tracking-wider text-zinc-500">
+                That trade
+              </span>
+              <span className={`font-mono text-sm font-bold ${moneyTone(shown.pnl)}`}>
+                {signedMoney(shown.pnl)}
+              </span>
+            </div>
+
+            <div className="min-w-0">
+              <span className="block font-mono text-[9px] uppercase tracking-wider text-zinc-500">
+                Total by then
+              </span>
+              <span className={`font-mono text-sm font-bold ${moneyTone(shown.cumulative)}`}>
+                {signedMoney(shown.cumulative)}
+              </span>
+            </div>
+
+            <div className="min-w-0">
+              <span className="block font-mono text-[9px] uppercase tracking-wider text-zinc-500">
+                Versus the peak
+              </span>
+              <span
+                className={`font-mono text-sm font-bold ${
+                  shown.drawdown === 0 ? 'text-amber-300' : 'text-rose-300'
+                }`}
+              >
+                {shown.drawdown === 0 ? 'at the high' : signedMoney(shown.drawdown)}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div id="insights-equity-chart" className="h-56 w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={points} margin={{ top: 8, right: 12, bottom: 0, left: -14 }}>
+        <AreaChart
+          data={points}
+          margin={{ top: 8, right: 12, bottom: 0, left: -14 }}
+          onMouseMove={scrub}
+          onMouseLeave={() => setCursor(null)}
+          onTouchMove={scrub}
+          onTouchEnd={() => setCursor(null)}
+        >
           <defs>
             <linearGradient id="equityGrad" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="#10b981" stopOpacity={0.4} />
@@ -364,31 +475,9 @@ export const EquityCurveChart: React.FC<{ points: EquityPoint[] }> = ({ points }
             width={62}
             tickFormatter={(value) => axisMoney(Number(value))}
           />
-          <Tooltip
-            content={({ active, payload }) => {
-              if (!active || !payload || !payload.length) return null;
-              const point = payload[0]?.payload as EquityPoint | undefined;
-              if (!point) return null;
-              return (
-                <div className="space-y-0.5 rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 py-2 font-mono text-[11px] text-zinc-200">
-                  <div className="text-zinc-400">
-                    Trade {point.label} · {point.date}
-                  </div>
-                  <div className={moneyTone(point.pnl)}>
-                    {signedMoney(point.pnl)} on this trade
-                  </div>
-                  <div className="text-emerald-300">
-                    {signedMoney(point.cumulative)} in total
-                  </div>
-                  {point.drawdown < 0 && (
-                    <div className="text-rose-300">
-                      {signedMoney(point.drawdown)} behind the peak
-                    </div>
-                  )}
-                </div>
-              );
-            }}
-          />
+          {/* The box is off and the cursor is on: the readout above carries the numbers, and
+              the cursor and the dot on the line are what show which trade they describe. */}
+          <Tooltip content={() => null} cursor={{ stroke: '#52525b', strokeDasharray: '3 3' }} />
           <ReferenceLine y={0} stroke="#3f3f46" />
           {/* Where the record peaked, so the current figure above has something to be read
               against rather than floating free of it. */}
@@ -407,10 +496,12 @@ export const EquityCurveChart: React.FC<{ points: EquityPoint[] }> = ({ points }
             strokeWidth={2}
             fill="url(#equityGrad)"
             dot={false}
+            activeDot={{ r: 4, fill: '#10b981', stroke: '#022c22', strokeWidth: 2 }}
             isAnimationActive={false}
           />
         </AreaChart>
       </ResponsiveContainer>
+      </div>
     </div>
   );
 };

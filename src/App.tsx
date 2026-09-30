@@ -1663,6 +1663,20 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             // trades that observation was counted from.
             focus={tradeFocus}
             onClearFocus={() => setTradeFocus(null)}
+            // The picture search lives with the log: hand it a chart, get back the trades
+            // in this same history that look like it.
+            chartMatch={{
+              trades,
+              tradingDays,
+              reviews,
+              setups,
+              instruments,
+              todayTradeDate: todayTradingDay.tradeDate,
+              timezone: profile.timezone,
+              maxDrawdown: profile.maxDrawdown ?? null,
+              levelTouches,
+              onViewTrade: (t) => setViewingTradeId(t.id),
+            }}
           />
         );
 
@@ -1788,6 +1802,20 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               timezone: profile.timezone,
               onSave: handleSaveLevelTouch,
               onDelete: handleDeleteLevelTouch,
+            }}
+            // The same picture search the log carries, so a setup found here can be chased
+            // back through the trades that produced it without leaving the playbook.
+            chartMatch={{
+              trades,
+              tradingDays,
+              reviews,
+              setups,
+              instruments,
+              todayTradeDate: todayTradingDay.tradeDate,
+              timezone: profile.timezone,
+              maxDrawdown: profile.maxDrawdown ?? null,
+              levelTouches,
+              onViewTrade: (t) => setViewingTradeId(t.id),
             }}
           />
         );

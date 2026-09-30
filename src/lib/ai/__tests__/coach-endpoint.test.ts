@@ -64,6 +64,7 @@ describe('mode coverage', () => {
         'form',
         'edge',
         'learn',
+        'match',
         'extremes',
         'extremecall',
         'setups',

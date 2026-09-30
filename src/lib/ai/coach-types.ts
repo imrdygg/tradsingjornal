@@ -35,6 +35,14 @@ export type CoachMode =
    */
   | 'learn'
   /**
+   * The picture search: the trader hands over a chart and asks which of their OWN logged
+   * trades resemble it. The uploaded chart is read into a price-free pattern — what it looks
+   * like, never what it will do — and that pattern is matched against their own trade record
+   * and, where they exist, the screenshots attached to those trades. It returns their trades,
+   * not a market opinion.
+   */
+  | 'match'
+  /**
    * The clock read: where the trader's own logged session extremes printed, and how often
    * the regular session kept an overnight extreme that printed in a given hour. Journal data
    * only — the log is what they recorded, not a live market read, and no hour is ever
@@ -450,6 +458,52 @@ export interface LearnedSetup {
 }
 
 /**
+ * One of the trader's own logged trades that resembles the chart they uploaded.
+ *
+ * The recorded fields are quoted straight from the journal so the client can resolve the
+ * match back to the real trade and open it. The resemblance is a likeness in setup, not a
+ * claim that the trade will work, and `compared` says what the likeness rests on so a
+ * written-record match is never passed off as a picture comparison.
+ */
+export interface MatchItem {
+  /** The trade's date, exactly as the digest records it. */
+  date: string;
+  symbol: string;
+  direction: string;
+  /** The setup that trade was logged under, or null when it was left blank. */
+  setupName: string | null;
+  /** Why this trade resembles the uploaded chart, in the trader's own terms. */
+  why: string;
+  /**
+   * What the resemblance rests on: the trade's written record, or a screenshot of it that
+   * was actually sent alongside the uploaded chart.
+   */
+  compared: 'written-record' | 'their-screenshot';
+  confidence: 'low' | 'medium' | 'high';
+}
+
+/**
+ * The picture search: the uploaded chart read back, and the trader's own trades that
+ * resemble it.
+ *
+ * The uploaded chart is described structurally and never numerically — the model has no
+ * market data and no price scale it may read off a picture. An empty `matches` array is a
+ * real answer: it is what a chart resembling nothing in the record deserves.
+ */
+export interface MatchResponse {
+  headline: string;
+  /** What the uploaded chart shows in plain structure — never a price, level or forecast. */
+  patternRead: string;
+  /** The trader's own trades that resemble it, closest first. Empty when none does. */
+  matches: MatchItem[];
+  /** What the record does not hold that would have sharpened the search. */
+  notInJournal: string;
+  /** One concrete thing to log that would make the next picture search better. */
+  nextStep: string;
+  motivation: string;
+}
+
+/**
  * The setups the coach read out of the trader's own trade history.
  *
  * Drafts, never pronouncements: they are written into the trader's playbook for them to
@@ -549,6 +603,7 @@ export type CoachResponse =
   | ExtremeCallResponse
   | SetupsResponse
   | LearnResponse
+  | MatchResponse
   | AskResponse
   | TradeCritiqueResponse
   | PrepResponse

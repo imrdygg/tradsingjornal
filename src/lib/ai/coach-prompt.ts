@@ -19,6 +19,7 @@ import type {
   CoachResponse,
   CoachTradeFacts,
   LearnedSetup,
+  MatchItem,
   PlannedLevel,
   PlanFieldName,
   WeeklyPattern,
@@ -60,6 +61,12 @@ export const COACH_MODES: readonly CoachMode[] = [
    * trades and the entry charts attached to them.
    */
   'learn',
+  /**
+   * The picture search: the trader hands over a chart and asks which of their OWN logged
+   * trades resemble it. The chart is read structurally and matched against the trade record
+   * and the screenshots attached to it — their trades, never a market opinion.
+   */
+  'match',
   /**
    * The clock read: where the trader's own logged session extremes printed, and how often
    * the regular session kept an overnight extreme that printed in a given hour.
@@ -131,6 +138,9 @@ export function allowsMarketOpinion(mode: CoachMode): boolean {
  * - `withLearn`: the model is asked to name setups from the trader's own trades and may be
  *   shown their chart screenshots — the one request that carries an image, so it is the one
  *   place it could describe a chart it was never given.
+ * - `withMatch`: the trader has uploaded a chart and asked which of their own trades look
+ *   like it. Two pictures may be in play — the chart they uploaded and screenshots of their
+ *   own trades — so the rules say which is which and forbid reading a price off either.
  * - `withMarketData`: the live sector read the plan-lock opinion quotes from.
  * - `withOpinion`: the trader has explicitly asked the coach for a directional call on
  *   their own instrument, which a strict reading of rule 2 would otherwise forbid.
@@ -140,10 +150,12 @@ export function coachGuardrails(
   withOpinion = false,
   withLevelEdge = false,
   withLearn = false,
-  withExtremes = false
+  withExtremes = false,
+  withMatch = false
 ): string {
   let text = COACH_GUARDRAILS;
   if (withLearn) text += LEARN_GUARDRAILS_SUFFIX;
+  if (withMatch) text += MATCH_GUARDRAILS_SUFFIX;
   if (withLevelEdge) text += LEVEL_EDGE_GUARDRAILS_SUFFIX;
   if (withExtremes) text += EXTREMES_GUARDRAILS_SUFFIX;
   if (withMarketData) text += MARKET_GUARDRAILS_SUFFIX;
@@ -346,6 +358,34 @@ S4. THESE ARE DRAFTS FOR THEIR OWN PLAYBOOK. They are written in for the trader 
 S5. NAME THEM AS THEY WOULD. Prefer a short, specific name drawn from what they actually do
     over a generic textbook label. If a proposed setup is the same behaviour as one they
     already log, say so rather than inventing a second name for it.`;
+
+const MATCH_GUARDRAILS_SUFFIX = `\n\nTHE PICTURE SEARCH — SPECIAL RULES FOR THIS REQUEST ONLY.
+The trader has handed you ONE chart to search their own history with. You have their logged
+trades, and where one was attached, a screenshot of that trade. You are finding which of
+their OWN trades resemble the chart — nothing else.
+
+M1. THE UPLOADED CHART HAS NO PRICE SCALE YOU MAY READ. Describe what it shows only in
+    structure — trend, shape, whether the move is extended or in a range, roughly where the
+    trader entered inside it. Never state, estimate, guess, round or imply a price, a level,
+    an index level, or a time. Rule 1 above holds in full.
+M2. NEVER PREDICT DIRECTION. The picture is of something that already happened. Say what it
+    resembles in their record; never say what the market will do, and never turn a resemblance
+    into a trade to take.
+M3. MATCH ONLY TRADES YOU WERE GIVEN. Every match must be a trade from TRADE SAMPLES, quoted
+    with its own date, symbol, direction and logged setup. Never invent a trade, a result or
+    a screenshot that is not there.
+M4. SAY WHAT THE RESEMBLANCE RESTS ON. When a screenshot of the matched trade was actually
+    attached, the comparison is a picture against a picture and you may say so. When it was
+    not, the match is on the written record alone — mark it so, and never imply you saw a
+    picture you were not shown.
+M5. A RESEMBLANCE IS NOT EVIDENCE IT WORKS. Report what those trades did, in their own
+    numbers, and hand the observation back. Never say the pattern pays, will repeat, or is
+    an edge.
+M6. THIN IS AN ANSWER. A single resembling trade is the closest one, not a pattern — say so.
+    Return an empty matches array when nothing in the record resembles the chart, and make
+    nextStep about logging the chart so a future search has something to find.
+M7. NAME ONLY THE TRADER'S OWN SETUPS. Never label a match with a textbook pattern name they
+    do not use, and never name a setup their record does not show.`;
 
 /** The trader's own words for what happened to a touch, so the prompt reads plainly. */
 function touchOutcomeWord(outcome: DigestLevelTouch['outcome']): string {
@@ -781,6 +821,54 @@ export function formatImageBlockForPrompt(labels: string[] | undefined): string 
 }
 
 /**
+ * Names the pictures attached to a picture search, in order.
+ *
+ * Unlike the setup learner, this request carries a chart of the trader's OWN choosing as its
+ * first image, and possibly screenshots of their logged trades after it. The two are not the
+ * same kind of thing — one is a chart they are asking about, the others are records of what
+ * they did — so the text says which is which and where each match may look for its evidence.
+ */
+export function formatMatchImagesForPrompt(labels: string[] | undefined): string {
+  const list = labels ?? [];
+  if (!list.length) {
+    // The endpoint refuses a picture search with no picture, so this is a guard for a caller
+    // that reached the prompt some other way rather than a state the UI produces.
+    return (
+      '\n\n=== THE PICTURES ATTACHED TO THIS REQUEST ===\n' +
+      'No chart was attached, so there is nothing to search with. Say exactly that rather ' +
+      'than describing a chart you were not given.'
+    );
+  }
+
+  const tradeScreenshots = Math.max(0, list.length - 1);
+  const lines: string[] = [];
+  lines.push('');
+  lines.push('=== THE PICTURES ATTACHED TO THIS REQUEST ===');
+  lines.push(
+    'The pictures follow this text in the order listed. IMAGE 1 is THE CHART THE TRADER IS ' +
+      'ASKING ABOUT: a chart they are looking at now, which they want searched against their ' +
+      'own history. It is not a picture of any logged trade, and it carries no price scale you ' +
+      'may read.'
+  );
+  if (tradeScreenshots > 0) {
+    lines.push(
+      `${tradeScreenshots} screenshot(s) of the trader's OWN logged trades follow it. Each ` +
+        'labels the trade it belongs to, and each is a picture taken when that trade was ' +
+        'logged — not a live chart. A match whose trade appears in this list may be compared ' +
+        'picture against picture; a match whose trade does not was found from the written ' +
+        'record alone.'
+    );
+  } else {
+    lines.push(
+      'No screenshot of any logged trade was attached, so every match rests on the written ' +
+        'record alone — never imply you compared pictures.'
+    );
+  }
+  list.forEach((label, index) => lines.push(`- IMAGE ${index + 1}: ${label}`));
+  return `\n\n${lines.join('\n').trim()}`;
+}
+
+/**
  * Renders the digest as compact text for the prompt. Deliberately explicit about
  * thin data so the model cannot mistake a small sample for a finding.
  *
@@ -852,7 +940,9 @@ export function formatDigestForPrompt(digest: JournalDigest, mode?: CoachMode): 
   for (const line of formatExtremeReadForPrompt(digest.extremeRead)) lines.push(line);
 
   // ---- The setup learner's raw material -----------------------------------
-  if (mode === 'learn') {
+  // The picture search reads the same rows: it names the trades that resemble the uploaded
+  // chart, so it needs the per-trade record rather than the grouped stats.
+  if (mode === 'learn' || mode === 'match') {
     for (const line of formatTradeSamplesForPrompt(digest.tradeSamples)) lines.push(line);
   }
 
@@ -1453,6 +1543,26 @@ The bracketed verdict on each setup in THE WEEK is the digest's conclusion from 
   "motivation": "2 sentences. Specific to this trader and earned by their data. No slogans."
 }
 Return 1-3 setups, best supported first. Return an empty setups array when the record is too thin to show a repeated pattern, and say exactly that in method — never pad the list to look useful. These are drafts for the trader's own playbook: describe what their record shows, never what will pay.`,
+  match: `Return exactly this JSON:
+{
+  "headline": "one sentence, under 16 words, on what you found in their own trades",
+  "patternRead": "2-3 sentences describing the uploaded chart in plain structure \u2014 the trend, the shape, whether it is extended or ranging, and roughly where the entry sits inside it. NO price, level, index level or time may appear here",
+  "matches": [
+    {
+      "date": "the matched trade's date, copied from TRADE SAMPLES",
+      "symbol": "the matched trade's symbol, copied from TRADE SAMPLES",
+      "direction": "the matched trade's direction, copied from TRADE SAMPLES",
+      "setupName": "the setup it was logged under, or null when it had none",
+      "why": "1-2 sentences on what makes this trade resemble the uploaded chart, in their own terms",
+      "compared": "written-record, or their-screenshot when a picture of this trade was actually attached and you compared it",
+      "confidence": "one of low, medium, high \u2014 how close the resemblance really is"
+    }
+  ],
+  "notInJournal": "what the record does not hold that would have sharpened the search. Empty string when nothing was missing",
+  "nextStep": "one concrete, checkable thing to log that would make the next picture search better",
+  "motivation": "2 sentences. Specific to this trader and earned by their data. No slogans."
+}
+Return 0-5 matches, closest first. Every match must be a trade that appears in TRADE SAMPLES \u2014 never invent one, and never name a textbook pattern the trader does not use. Copy each match's date, symbol and direction exactly as they appear. Return an empty matches array when nothing in the record resembles the chart and say so in patternRead. Never predict direction, never state a price or level, and never call a resemblance a reason to trade it.`,
   trade: `Return exactly this JSON:
 {
   "verdict": "2 sentences judging the decision and the execution separately",
@@ -1722,6 +1832,18 @@ export function buildCoachPrompt(
         `behind each. Say plainly when the sample is too thin to name anything. Write each one ` +
         `as a draft for their own playbook that they can edit or delete, never as a rule to ` +
         `follow.`
+      : mode === 'match'
+      ? `The trader has handed you a chart and wants to see the trades in their OWN history ` +
+        `that look like it. First describe the uploaded chart in plain structure — read under ` +
+        `THE PICTURES ATTACHED TO THIS REQUEST — with no prices, levels, times or forecast. ` +
+        `Then search the TRADE SAMPLES for the trades that resemble it and return them, ` +
+        `closest first, quoting each one's own date, symbol, direction and logged setup and ` +
+        `saying why it resembles the chart. Where a matched trade's screenshot was attached, ` +
+        `compare picture against picture and say so; where it was not, mark the match as ` +
+        `resting on the written record alone. This is a search of what they have already ` +
+        `done, never a signal for what to take. Return an empty list when nothing in the ` +
+        `record resembles the chart, and make nextStep about logging the chart so a future ` +
+        `search has something to find.`
       : mode === 'ask'
       ? `The trader typed you a question about their own trading. It is under THE TRADER'S ` +
         `QUESTION. Answer that question, from their records: quote their own figures, and use ` +
@@ -1785,9 +1907,16 @@ export function buildCoachPrompt(
       ? `\n\n${formatDailyBarsForPrompt(extras.chartSeries)}`
       : '';
 
-  // The chart screenshots only the learn mode is shown. They are listed here as text and
-  // attached to the same request as inline image parts, in the same order.
-  const imagesBlock = mode === 'learn' ? formatImageBlockForPrompt(extras?.imageLabels) : '';
+  // The chart screenshots only the two image modes are shown. They are listed here as text
+  // and attached to the same request as inline image parts, in the same order. The picture
+  // search reads one uploaded chart plus any trade screenshots, so it gets its own wording:
+  // the first image there is not a logged trade and must not be treated as one.
+  const imagesBlock =
+    mode === 'learn'
+      ? formatImageBlockForPrompt(extras?.imageLabels)
+      : mode === 'match'
+      ? formatMatchImagesForPrompt(extras?.imageLabels)
+      : '';
 
   const userPrompt =
     `${context}${marketBlock}${instrumentBlock}${chartBlock}${imagesBlock}${tradeBlock}${positionBlock}${entryBlock}${fieldBlock}${questionBlock}` +
@@ -1807,7 +1936,11 @@ export function buildCoachPrompt(
       // Appended whenever the extreme log is in the prompt, the same way the level-touch
       // rules are: a held rate reads like a forecast, so it is never quoted in a mode whose
       // guardrails did not mention it.
-      (digest.extremeRead?.points ?? 0) > 0
+      (digest.extremeRead?.points ?? 0) > 0,
+      // Gated on the mode: a picture search is the one mode where the trader's uploaded chart
+      // and their own trade screenshots are both in play, so it is the one place the rules
+      // have to say which picture is which.
+      mode === 'match'
     ),
     userPrompt,
   };
@@ -2070,6 +2203,41 @@ export function parseCoachResponse(
       method: asText(obj.method, 'method'),
       // An omitted notInJournal means the record covered what it needed, which is not a
       // failure worth erroring on.
+      notInJournal: asLooseText(obj.notInJournal),
+      nextStep: asText(obj.nextStep, 'nextStep'),
+      motivation: asText(obj.motivation, 'motivation'),
+    };
+  }
+
+  if (mode === 'match') {
+    const matchesRaw = Array.isArray(obj.matches) ? obj.matches : [];
+    const matches: MatchItem[] = matchesRaw
+      .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+      .map((item) => ({
+        date: typeof item.date === 'string' ? item.date.trim() : '',
+        symbol: typeof item.symbol === 'string' ? item.symbol.trim() : '',
+        direction: typeof item.direction === 'string' ? item.direction.trim() : '',
+        setupName:
+          typeof item.setupName === 'string' && item.setupName.trim()
+            ? item.setupName.trim()
+            : null,
+        why: typeof item.why === 'string' ? item.why.trim() : '',
+        // Only a match labelled as picture-compared is allowed to claim it: anything else,
+        // including a missing field, is read as a match on the written record.
+        compared:
+          item.compared === 'their-screenshot'
+            ? ('their-screenshot' as const)
+            : ('written-record' as const),
+        confidence: asEnum(item.confidence, ['low', 'medium', 'high'] as const, 'low'),
+      }))
+      // A match the client cannot resolve to a real trade — no date, symbol or direction —
+      // would render as an empty card, so it is dropped rather than shown.
+      .filter((item) => item.date && item.symbol && item.direction);
+
+    return {
+      headline: asText(obj.headline, 'headline'),
+      patternRead: asText(obj.patternRead, 'patternRead'),
+      matches,
       notInJournal: asLooseText(obj.notInJournal),
       nextStep: asText(obj.nextStep, 'nextStep'),
       motivation: asText(obj.motivation, 'motivation'),

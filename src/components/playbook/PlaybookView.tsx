@@ -37,6 +37,7 @@ import { SetupGuide, resolveSetupGuide } from './setup-guides';
 import { ChartPatternsView } from './ChartPatternsView';
 import { EdgeFinderCard } from './EdgeFinderCard';
 import { CoachSetupsCard } from './CoachSetupsCard';
+import { ChartMatchCard } from '../trades/ChartMatchCard';
 import { LevelTouchLog } from './LevelTouchLog';
 import { isFocusSetup, splitFocusSetups } from '../../lib/playbook/focus-setups';
 import { PATTERNS } from '../../lib/playbook/patterns';
@@ -110,6 +111,22 @@ interface PlaybookViewProps {
     onSave: (touch: LevelTouch) => void;
     onDelete: (touchId: string) => void;
   };
+  /**
+   * The journal the picture search reads: hand it a chart, get back the trader's own trades
+   * that look like it. Omitted hides the card, the same way `coachSetups` does.
+   */
+  chartMatch?: {
+    trades: Trade[];
+    tradingDays: TradingDay[];
+    reviews: DailyReview[];
+    setups: Setup[];
+    instruments: Instrument[];
+    todayTradeDate: string;
+    timezone: string;
+    maxDrawdown?: number | null;
+    levelTouches?: LevelTouch[];
+    onViewTrade: (trade: Trade) => void;
+  };
 }
 
 /** Small labelled block used inside each setup's guide container. */
@@ -151,6 +168,7 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
   edgeFinder,
   coachSetups,
   levelTouchLog,
+  chartMatch,
 }) => {
   const [newSetupName, setNewSetupName] = useState('');
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
@@ -433,6 +451,9 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
           {...coachSetups}
         />
       )}
+
+      {/* The picture search: hand it a chart, get back the trader's own trades like it. */}
+      {chartMatch && <ChartMatchCard {...chartMatch} />}
 
       {/* Quick add setup form */}
       <form onSubmit={handleAddSetup} className="space-y-2">

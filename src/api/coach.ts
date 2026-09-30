@@ -74,7 +74,7 @@ interface ApiResponse {
  * knows the meaning of gets updated without being read. Bump it when the request or response
  * contract changes in a way a caller could notice.
  */
-export const ENDPOINT_VERSION = 15;
+export const ENDPOINT_VERSION = 16;
 
 /** Total time to spend trying models before returning what we have. */
 const REQUEST_BUDGET_MS = 45_000;
@@ -838,9 +838,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   if (!isCoachMode(mode)) {
     res.status(400).json({
       error:
-        'Unknown coach mode. Expected brief, weekly, setups, form, edge, learn, extremes, ' +
-        'extremecall, trade, prep, postclose, planreview, planfield, planbuild, scalein, ' +
-        'entrycall, chartread or ask.',
+        'Unknown coach mode. Expected brief, weekly, setups, form, edge, learn, match, ' +
+        'extremes, extremecall, trade, prep, postclose, planreview, planfield, planbuild, ' +
+        'scalein, entrycall, chartread or ask.',
     });
     return;
   }
@@ -912,13 +912,22 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     extras.question = question.slice(0, 800);
   }
 
-  // The chart screenshots the setup learner reads. Re-validated here, because a request body
-  // is untrusted input whatever the client did: a malformed or oversized image is dropped
-  // rather than forwarded, and only the labels ever reach the prompt text.
+  // The chart images the two image modes read. Re-validated here, because a request body is
+  // untrusted input whatever the client did: a malformed or oversized image is dropped rather
+  // than forwarded, and only the labels ever reach the prompt text.
   let imageParts: CoachImagePart[] = [];
-  if (mode === 'learn') {
+  if (mode === 'learn' || mode === 'match') {
     imageParts = readCoachImages(extrasRaw.images);
     extras.imageLabels = imageParts.map((part) => part.label);
+    // The picture search is meaningless without a picture to search with: an empty array
+    // would ask the model to describe a chart it was never given. The setup learner, by
+    // contrast, still has the trade record to work from when no screenshot was attached.
+    if (mode === 'match' && imageParts.length === 0) {
+      res.status(400).json({
+        error: 'Match mode needs the chart image to search the trade history with.',
+      });
+      return;
+    }
   }
 
   if (mode === 'chartread') {

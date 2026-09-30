@@ -11,7 +11,12 @@ import {
   isCoachMode,
   parseCoachResponse,
 } from '../coach-prompt';
-import type { ChartReadResponse, CoachTradeFacts, LearnedSetup } from '../coach-types';
+import type {
+  ChartReadResponse,
+  CoachTradeFacts,
+  LearnedSetup,
+  MatchResponse,
+} from '../coach-types';
 import { buildJournalDigest } from '../journal-digest';
 import type { DailyBars, MarketBrief } from '../market-data';
 import {
@@ -1026,6 +1031,101 @@ describe('learn mode', () => {
 
     const { nextStep, ...withoutStep } = learnJson;
     expect(() => parseCoachResponse('learn', withoutStep)).toThrow(/nextStep/);
+  });
+});
+
+/**
+ * The picture search is the one mode where the trader hands in a chart of their own and the
+ * answer is a list of their OWN trades. What is asserted here is that it stays a search of
+ * the record: the uploaded chart is the first image and described structurally, the trade
+ * samples travel with it, a match that cannot be resolved to a real trade is dropped, and a
+ * written-record match can never be dressed up as a picture comparison.
+ */
+describe('match mode', () => {
+  const matchJson = {
+    headline: 'Three of your reclaims look like this chart',
+    patternRead: 'A failed push above a level, then a reclaim and a hold.',
+    matches: [
+      {
+        date: '2026-09-18',
+        symbol: 'MES',
+        direction: 'long',
+        setupName: 'Support',
+        why: 'Same failed push and reclaim you took on the 18th.',
+        compared: 'their-screenshot',
+        confidence: 'high',
+      },
+      // No date: the client could not resolve this to a trade, so it must be dropped.
+      { date: '', symbol: 'MNQ', direction: 'long', why: 'unresolvable', confidence: 'low' },
+    ],
+    notInJournal: '',
+    nextStep: 'Log the chart you are looking at so a future search has something to find.',
+    motivation: 'Your own record is the only library this needs.',
+  };
+
+  it('is not a market-opinion mode', () => {
+    expect(allowsMarketOpinion('match')).toBe(false);
+  });
+
+  it('asks for a structural read and their own trades, and forbids a forecast', () => {
+    const shape = COACH_RESPONSE_SHAPES.match;
+    expect(shape).toContain('"patternRead"');
+    expect(shape).toContain('"matches"');
+    expect(shape).toContain('NO price, level, index level or time may appear here');
+    expect(shape).toContain('Never predict direction');
+    expect(shape).toContain('an empty matches array');
+
+    const { userPrompt } = buildCoachPrompt('match', digestFor());
+    expect(userPrompt).toContain('the trades in their OWN history');
+    expect(userPrompt).toContain('=== TRADE SAMPLES');
+  });
+
+  it('adds the picture-search guardrails for that mode and no other', () => {
+    const match = buildCoachPrompt('match', digestFor()).systemInstruction;
+    expect(match).toContain('THE PICTURE SEARCH');
+    expect(match).toContain('THE UPLOADED CHART HAS NO PRICE SCALE YOU MAY READ');
+    expect(match).toContain('NEVER PREDICT DIRECTION');
+    expect(match).toContain('A RESEMBLANCE IS NOT EVIDENCE IT WORKS');
+
+    expect(buildCoachPrompt('learn', digestFor()).systemInstruction).not.toContain(
+      'THE PICTURE SEARCH'
+    );
+  });
+
+  it('says which picture is the chart and which are the trader\u2019s own trades', () => {
+    const { userPrompt } = buildCoachPrompt('match', digestFor(), undefined, undefined, {
+      imageLabels: [
+        'THE CHART THE TRADER IS ASKING ABOUT',
+        '2026-09-18 MES LONG logged as Support, 1R',
+      ],
+    });
+
+    expect(userPrompt).toContain('IMAGE 1 is THE CHART THE TRADER IS ASKING ABOUT');
+    expect(userPrompt).toContain("screenshot(s) of the trader's OWN logged trades");
+    // The labels are text; the bytes are separate parts of the request, never in the prompt.
+    expect(userPrompt).not.toContain('base64');
+  });
+
+  it('parses the matches, dropping any the client could not resolve to a real trade', () => {
+    const parsed = parseCoachResponse('match', matchJson) as MatchResponse;
+
+    expect(parsed.matches).toHaveLength(1);
+    expect(parsed.matches[0]).toMatchObject({
+      date: '2026-09-18',
+      symbol: 'MES',
+      setupName: 'Support',
+      compared: 'their-screenshot',
+      confidence: 'high',
+    });
+  });
+
+  it('reads anything that is not a picture comparison as a written-record match', () => {
+    const parsed = parseCoachResponse('match', {
+      ...matchJson,
+      matches: [{ ...matchJson.matches[0], compared: 'something-else' }],
+    }) as MatchResponse;
+
+    expect(parsed.matches[0].compared).toBe('written-record');
   });
 });
 

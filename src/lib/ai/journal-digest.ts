@@ -167,6 +167,20 @@ export interface LevelEdge {
  * quote a percentage from two sessions.
  */
 export interface ExtremeRead {
+  /** One manually entered price observation from the session the digest is built for. */
+  todayObservations: Array<{
+    symbol: string;
+    date: string;
+    time: string;
+    price: number;
+    kind: string;
+    timeframe: string;
+    levelType: string;
+    ratings: Array<{ horizon: string; outcome: string; grade: number | null }>;
+    notes: string | null;
+  }>;
+  /** Number of current-session observations omitted from the prompt's bounded sample. */
+  todayObservationsOmitted: number;
   /** Symbol-and-date rows in the log, however many of their four slots are filled. */
   sessions: number;
   /** Individual extremes logged. */
@@ -758,8 +772,29 @@ export /**
  * high printed at 3am and the open kept it in 4 of 5 sessions" without also saying
  * "2 of 2" as if it were a rate.
  */
-function buildExtremeRead(extremes: SessionExtreme[]): ExtremeRead {
+function buildExtremeRead(extremes: SessionExtreme[], todayTradeDate: string): ExtremeRead {
   const summary = summarizeExtremes(extremes);
+  // Keep the newest observations from the active session available to the coach without
+  // letting a long-running or restored log make every prompt unbounded.
+  const todays = extremes
+    .filter((extreme) => extreme?.tradeDate === todayTradeDate && Number.isFinite(extreme.price))
+    .sort((a, b) => a.time.localeCompare(b.time) || a.id.localeCompare(b.id));
+  const maxTodayObservations = 60;
+  const todayObservations = todays.slice(-maxTodayObservations).map((extreme) => ({
+    symbol: extreme.symbol,
+    date: extreme.tradeDate,
+    time: extreme.time,
+    price: extreme.price,
+    kind: extreme.kind,
+    timeframe: extreme.timeframe ?? '1m',
+    levelType: extreme.levelType ?? (extreme.kind === 'high' ? 'resistance' : 'support'),
+    ratings: (extreme.ratings ?? []).map((rating) => ({
+      horizon: rating.horizon,
+      outcome: rating.outcome,
+      grade: typeof rating.grade === 'number' && Number.isFinite(rating.grade) ? rating.grade : null,
+    })),
+    notes: extreme.notes ? extreme.notes.slice(0, 160) : null,
+  }));
   // Read one chart at a time, then pooled: a print only means something inside the timeframe
   // it came off, so the pattern read never mixes two resolutions into one rate.
   const days = buildDaysByTimeframe(extremes);
@@ -770,6 +805,8 @@ function buildExtremeRead(extremes: SessionExtreme[]): ExtremeRead {
   const timeframes = [...new Set(days.map((day) => day.timeframe))].sort();
 
   return {
+    todayObservations,
+    todayObservationsOmitted: todays.length - todayObservations.length,
     sessions: summary.sessions,
     points: summary.points,
     symbols: summary.symbols,
@@ -1055,7 +1092,7 @@ export function buildJournalDigest(input: {
   const levelEdge = buildLevelEdge(input.levelTouches ?? [], instruments, setups);
 
   // ---- Where the session extremes printed --------------------------------
-  const extremeRead = buildExtremeRead(input.sessionExtremes ?? []);
+  const extremeRead = buildExtremeRead(input.sessionExtremes ?? [], todayTradeDate);
 
   // ---- The week, one setup at a time --------------------------------------
   // The same seven days read twice: what each setup's trades paid, and how its levels held.

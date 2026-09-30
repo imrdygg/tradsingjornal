@@ -370,6 +370,8 @@ export interface ExtremeResponse {
   patterns: ExtremeCondition[];
   /** Hours that are logged but too thin to read, counts only. */
   notYetReadable: string[];
+  /** Read of today's sparse manually entered points, never a price forecast. */
+  currentSessionRead: string;
   /**
    * What the trader's own ratings say about the levels they marked: the held rate and counts
    * behind each condition, with the grades reported apart from the outcomes. Empty when

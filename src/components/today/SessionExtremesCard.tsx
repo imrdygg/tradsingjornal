@@ -45,6 +45,12 @@ import {
   TIMEFRAME_LABEL,
 } from '../../lib/analytics/session-extremes';
 
+const SessionExtremePriceCharts = React.lazy(() =>
+  import('./SessionExtremePriceCharts').then((module) => ({
+    default: module.SessionExtremePriceCharts,
+  }))
+);
+
 /**
  * The session-extremes log.
  *
@@ -137,7 +143,7 @@ function withRating(
   const merged: ExtremeRating = {
     horizon,
     outcome: patch.outcome ?? current?.outcome ?? 'held',
-    grade: patch.grade ?? current?.grade,
+    grade: Object.prototype.hasOwnProperty.call(patch, 'grade') ? patch.grade : current?.grade,
     ratedAt: new Date().toISOString(),
   };
   const others = existing.filter((rating) => rating.horizon !== horizon);
@@ -582,6 +588,8 @@ export const SessionExtremesCard: React.FC<SessionExtremesCardProps> = ({
   const [error, setError] = useState('');
   /** Which chart the picture and the pattern read below are showing. */
   const [viewTimeframe, setViewTimeframe] = useState<ExtremeTimeframe>('1m');
+  const [chartDate, setChartDate] = useState(todayTradingDay.tradeDate);
+  const [showAllDates, setShowAllDates] = useState(false);
 
   const summary = useMemo(() => summarizeExtremes(extremes), [extremes]);
   const days = useMemo(
@@ -624,6 +632,10 @@ export const SessionExtremesCard: React.FC<SessionExtremesCardProps> = ({
         ),
       }));
   }, [extremes]);
+  const visibleDates = showAllDates ? dates : dates.slice(0, MAX_DATES);
+  const visibleChartDate = dates.some(({ date }) => date === chartDate)
+    ? chartDate
+    : dates[0]?.date ?? todayTradingDay.tradeDate;
 
   /** Changing the side of the range re-derives the default level type with it. */
   const pickKind = (next: ExtremeKind) => {
@@ -914,6 +926,55 @@ export const SessionExtremesCard: React.FC<SessionExtremesCardProps> = ({
             </span>
           </div>
 
+          <div
+            id="extremes-price-pattern"
+            className="space-y-2 rounded-xl border border-zinc-800 bg-zinc-950/50 p-3"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <span className="block text-[10px] font-mono uppercase font-bold text-zinc-300">
+                  Intraday price observations
+                </span>
+                <span className="text-[10px] text-zinc-500">
+                  {TIMEFRAME_LABEL[viewTimeframe]} chart · your high/low points · no connecting line or unlogged prices
+                </span>
+              </div>
+              {dates.length > 0 && (
+                <label className="flex items-center gap-2 text-[10px] text-zinc-500">
+                  Session
+                  <select
+                    id="extremes-chart-date"
+                    value={visibleChartDate}
+                    onChange={(event) => setChartDate(event.target.value)}
+                    className="rounded-lg border border-zinc-800 bg-zinc-900 px-2 py-1 font-mono text-[11px] text-zinc-200"
+                  >
+                    {dates.map(({ date }) => (
+                      <option key={date} value={date}>{date}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+            </div>
+            <React.Suspense
+              fallback={
+                <p className="py-8 text-center text-[10px] text-zinc-500">
+                  Loading price charts…
+                </p>
+              }
+            >
+              <SessionExtremePriceCharts
+                extremes={extremes}
+                tradeDate={visibleChartDate}
+                timeframe={viewTimeframe}
+                instruments={options}
+              />
+            </React.Suspense>
+            <p className="text-[10px] leading-relaxed text-zinc-600">
+              Separate price scales for MES, MNQ and MCL. Each dot is a manually logged session
+              extreme; gaps between dots are unknown, not interpolated.
+            </p>
+          </div>
+
           {/* One chart at a time: a rate read across two resolutions would mean nothing. */}
           <div
             id="extremes-tf-tabs"
@@ -1148,7 +1209,7 @@ export const SessionExtremesCard: React.FC<SessionExtremesCardProps> = ({
               Logged extremes
             </span>
 
-            {dates.slice(0, MAX_DATES).map(({ date, list }) => {
+            {visibleDates.map(({ date, list }) => {
               const ids = tradesForDate ? tradesForDate(date) : [];
               return (
                 <div key={date} className="space-y-1">
@@ -1182,10 +1243,22 @@ export const SessionExtremesCard: React.FC<SessionExtremesCardProps> = ({
             })}
 
             {dates.length > MAX_DATES && (
-              <p className="text-[10px] text-zinc-500">
-                Showing the {MAX_DATES} most recent of {dates.length} sessions. The rest still
-                count towards the picture above.
-              </p>
+              <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-zinc-500">
+                <span>
+                  {showAllDates
+                    ? `Showing all ${dates.length} sessions. Every observation remains editable.`
+                    : `Showing the ${MAX_DATES} most recent of ${dates.length} sessions.`}
+                </span>
+                <button
+                  type="button"
+                  id="extremes-show-all-dates"
+                  aria-expanded={showAllDates}
+                  onClick={() => setShowAllDates((visible) => !visible)}
+                  className="font-semibold text-violet-300 hover:text-violet-200"
+                >
+                  {showAllDates ? 'Show recent sessions' : 'Show all sessions'}
+                </button>
+              </div>
             )}
           </div>
         </div>

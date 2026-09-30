@@ -75,8 +75,7 @@ export const ExtremeReadCard: React.FC<ExtremeReadCardProps> = ({
             Where your overnight extremes print
           </h2>
           <p className="text-xs text-zinc-400 mt-0.5">
-            From the session extremes you log by hand: when an extreme printed in a given hour,
-            did the regular session keep it — and how often.
+            Your manually entered, time-stamped points and their outcomes. The chart shows sparse observations, not a live feed or a price forecast.
           </p>
         </div>
       </div>
@@ -273,6 +272,17 @@ export const ExtremeReadCard: React.FC<ExtremeReadCardProps> = ({
                       )}
                     </div>
                   ))}
+                </div>
+              )}
+
+              {answer.currentSessionRead && (
+                <div className="rounded-xl border border-violet-900/60 bg-violet-950/20 px-3 py-2.5">
+                  <span className="text-[10px] font-mono uppercase font-bold text-violet-300">
+                    Today’s entered price sequence
+                  </span>
+                  <p className="mt-1.5 text-xs text-zinc-300 leading-relaxed">
+                    {answer.currentSessionRead}
+                  </p>
                 </div>
               )}
 

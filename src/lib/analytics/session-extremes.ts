@@ -368,6 +368,110 @@ export function buildOvernightHourPatterns(
   });
 }
 
+/**
+ * The share of decided sessions a record must lean past before a heads-up names a side.
+ *
+ * Above this one way, below its mirror the other; in between the record is a coin toss and
+ * is reported as one rather than dressed up as a lean. Named rather than inline because it
+ * is the difference between "your log usually keeps this" and "this is noise".
+ */
+export const LEAN_THRESHOLD_PCT = 60;
+
+/** Which way a readable record leans, if it leans at all. */
+export type ExtremeLean = 'kept' | 'taken-out' | 'split';
+
+/** One of today's prints that lands in an hour the trader's own log has a record for. */
+export interface ExtremeMatch {
+  symbol: string;
+  kind: ExtremeKind;
+  /** The hour today's print landed in. */
+  hour: number;
+  /** Today's own clock time and price for the print. */
+  time: string;
+  price: number;
+  /** The readable hour record this print lands in. */
+  pattern: ExtremeHourPattern;
+  /** Which way that record leans; `split` means it does not. */
+  lean: ExtremeLean;
+  /**
+   * Today's regular-session extreme for this side, when it has already been logged.
+   * Null while it has not, which is the honest state before the session is written down.
+   */
+  todayRegularPrice: number | null;
+  /** Whether today's regular session has already traded past the overnight extreme. */
+  todayTakenOut: boolean | null;
+}
+
+/**
+ * Today's overnight prints that land in an hour the trader's own log can speak about.
+ *
+ * This is the on-the-day half of the log: the record is only useful while the session is
+ * still open, and the one moment it applies is when this morning's extreme prints in an
+ * hour that has already happened often enough to be readable. Only readable hours match — a
+ * tally of two sessions is not a heads-up — and the sample is every logged session,
+ * including today once its regular extreme is filled in, so the strip and the card beside it
+ * cannot disagree about the same hour.
+ *
+ * Nothing here is a forecast and nothing is a signal to trade: it reads the trader's own
+ * recorded sessions back to them and stops. The leaning is stated so a coin toss is never
+ * presented as a pattern.
+ */
+export function findExtremeMatches(
+  days: ExtremeDay[],
+  todayTradeDate: string,
+  options: { minSessions?: number } = {}
+): ExtremeMatch[] {
+  const minSessions = options.minSessions ?? MIN_PATTERN_SESSIONS;
+  const patterns = buildOvernightHourPatterns(days, { minSessions }).filter(
+    (pattern) => pattern.enoughData
+  );
+  const byKey = new Map(patterns.map((pattern) => [pattern.key, pattern]));
+
+  const today = days.find((day) => day.tradeDate === todayTradeDate);
+  if (!today) return [];
+
+  const matches: ExtremeMatch[] = [];
+  for (const kind of ['high', 'low'] as ExtremeKind[]) {
+    const overnight = kind === 'high' ? today.overnightHigh : today.overnightLow;
+    if (!overnight) continue;
+
+    const pattern = byKey.get(`${today.symbol}|${kind}|${overnight.hour}`);
+    if (!pattern || pattern.heldRate === null) continue;
+
+    const regular = kind === 'high' ? today.regularHigh : today.regularLow;
+    const todayTakenOut = regular
+      ? kind === 'high'
+        ? regular.price > overnight.price
+        : regular.price < overnight.price
+      : null;
+
+    matches.push({
+      symbol: today.symbol,
+      kind,
+      hour: overnight.hour,
+      time: overnight.time,
+      price: overnight.price,
+      pattern,
+      lean:
+        pattern.heldRate >= LEAN_THRESHOLD_PCT
+          ? 'kept'
+          : pattern.heldRate <= 100 - LEAN_THRESHOLD_PCT
+          ? 'taken-out'
+          : 'split',
+      todayRegularPrice: regular?.price ?? null,
+      todayTakenOut,
+    });
+  }
+
+  // A lean leads, and the direction it leans in leads: what the log has to say about this
+  // morning is more useful than the order the sides happen to be checked in.
+  return matches.sort((a, b) => {
+    const rank = (match: ExtremeMatch) => (match.lean === 'kept' ? 0 : match.lean === 'taken-out' ? 1 : 2);
+    if (rank(a) !== rank(b)) return rank(a) - rank(b);
+    return a.kind.localeCompare(b.kind);
+  });
+}
+
 /** One symbol's overnight extremes, counted by the hour they printed in. */
 export interface ExtremeHourHistogram {
   symbol: string;

@@ -5,7 +5,9 @@ import {
   buildExtremeHourHistogram,
   buildOvernightHourPatterns,
   clockHour,
+  findExtremeMatches,
   hourLabel,
+  LEAN_THRESHOLD_PCT,
   MIN_PATTERN_SESSIONS,
   parseClock,
   sessionWindowForTime,
@@ -276,6 +278,90 @@ describe('buildOvernightHourPatterns', () => {
       '2026-09-02',
       '2026-09-01',
     ]);
+  });
+});
+
+describe('findExtremeMatches', () => {
+  /** Sessions where the 3am overnight high was kept — the regular high stayed below it. */
+  const keptDays = (days: number[]) =>
+    days.flatMap((day) => session(day, 'MES', 'high', 3, 6000, 5990));
+
+  /** Sessions where the regular session extended past the same 3am high. */
+  const takenOutDays = (days: number[]) =>
+    days.flatMap((day) => session(day, 'MES', 'high', 3, 6000, 6030));
+
+  it('matches today’s print to the hour record and names the lean', () => {
+    const days = buildExtremeDays([...keptDays([1, 2, 3, 4]), ...keptDays([5])]);
+
+    const matches = findExtremeMatches(days, '2026-09-05');
+    expect(matches).toHaveLength(1);
+    expect(matches[0]).toMatchObject({
+      symbol: 'MES',
+      kind: 'high',
+      hour: 3,
+      time: '03:00',
+      price: 6000,
+      lean: 'kept',
+      todayTakenOut: false,
+      todayRegularPrice: 5990,
+    });
+    expect(matches[0].pattern.heldRate).toBe(100);
+  });
+
+  it('says nothing when today has no log at all, or no overnight print yet', () => {
+    const days = buildExtremeDays(keptDays([1, 2, 3, 4, 5]));
+    expect(findExtremeMatches(days, '2026-09-06')).toEqual([]);
+
+    // A day that exists but only carries its regular-session extreme has nothing to match.
+    const partial = buildExtremeDays([
+      ...keptDays([1, 2, 3, 4, 5]),
+      extreme({ tradeDate: '2026-09-06', kind: 'high', time: '11:00', price: 6001 }),
+    ]);
+    expect(findExtremeMatches(partial, '2026-09-06')).toEqual([]);
+  });
+
+  it('refuses to raise an hour that is still a tally', () => {
+    const days = buildExtremeDays([...keptDays([1, 2]), ...keptDays([3])]);
+    expect(findExtremeMatches(days, '2026-09-03')).toEqual([]);
+  });
+
+  it('names the other side when that is the way the log leans', () => {
+    const days = buildExtremeDays([...takenOutDays([1, 2, 3, 4]), ...takenOutDays([5])]);
+
+    const matches = findExtremeMatches(days, '2026-09-05');
+    expect(matches[0].lean).toBe('taken-out');
+    expect(matches[0].todayTakenOut).toBe(true);
+  });
+
+  it('calls a coin toss a split rather than a lean', () => {
+    const days = buildExtremeDays([
+      ...keptDays([1, 2, 3]),
+      ...takenOutDays([4, 5, 6]),
+    ]);
+
+    const matches = findExtremeMatches(days, '2026-09-06');
+    expect(matches[0].pattern.heldRate).toBe(50);
+    expect(matches[0].lean).toBe('split');
+    expect(LEAN_THRESHOLD_PCT).toBe(60);
+  });
+
+  it('leads with the lean, and reports today’s regular extreme when it exists', () => {
+    const days = buildExtremeDays([
+      // The 3am high was kept in all five sessions.
+      ...keptDays([1, 2, 3, 4, 5]),
+      // The 5am low was taken out in four of them and kept in the fifth, and today's own
+      // regular low has not gone under it.
+      ...[1, 2, 3, 4].flatMap((day) => session(day, 'MES', 'low', 5, 5980, 5970)),
+      ...session(5, 'MES', 'low', 5, 5980, 5990),
+    ]);
+
+    const matches = findExtremeMatches(days, '2026-09-05');
+    expect(matches.map((match) => `${match.kind}:${match.lean}`)).toEqual([
+      'high:kept',
+      'low:taken-out',
+    ]);
+    expect(matches[1]).toMatchObject({ todayTakenOut: false, todayRegularPrice: 5990 });
+    expect(matches[1].pattern.takenOut).toBe(4);
   });
 });
 

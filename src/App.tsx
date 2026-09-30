@@ -20,6 +20,7 @@ import { TradeDetailModal } from './components/trades/TradeDetailModal';
 import { DailyReviewModal } from './components/review/DailyReviewModal';
 import { LatestReviewCard } from './components/today/LatestReviewCard';
 import { SessionExtremesCard } from './components/today/SessionExtremesCard';
+import { ExtremeMatchStrip } from './components/today/ExtremeMatchStrip';
 import { askEntryCall, buildCoachPlanPatch, type PlanCoachContext } from './lib/ai/plan-coach';
 import type { CoachPlanFields, EntryCallResponse } from './lib/ai/coach-types';
 
@@ -1466,6 +1467,16 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               card's own picture is what the coach then reads back.
             */}
             <section id="today-extremes" className="space-y-3">
+              {/*
+                Whether this morning's print lands in an hour the log can speak about. Sits
+                directly above the log so the counts it quotes are one line away, and renders
+                nothing at all when there is nothing readable to say.
+              */}
+              <ExtremeMatchStrip
+                extremes={sessionExtremes}
+                todayTradeDate={todayTradingDay.tradeDate}
+              />
+
               <SessionExtremesCard
                 extremes={sessionExtremes}
                 todayTradingDay={todayTradingDay}

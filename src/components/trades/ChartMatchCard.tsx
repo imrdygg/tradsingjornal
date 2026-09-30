@@ -138,6 +138,17 @@ function scoreTone(score: number): string {
 /** How many of the closest matches are shown as the main answer. */
 export const CLOSEST_MATCH_COUNT = 3;
 
+/**
+ * The resemblance a match must reach to be shown by default.
+ *
+ * Below this the likeness is loose, and a loose match shown beside a close one invites the
+ * trader to read them as equally alike. The floor sits just above the 50 the prompt already
+ * refuses to list, so it filters what the coach judged borderline rather than second-guessing
+ * a real match. Hidden matches are kept, never dropped: the count is stated and one tap
+ * reveals them below the fold.
+ */
+export const MIN_MATCH_SCORE = 55;
+
 export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
   trades,
   tradingDays,
@@ -209,6 +220,8 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
   const [reading, setReading] = useState(false);
   const [pickError, setPickError] = useState<string | null>(null);
   const [state, setState] = useState<MatchState>(IDLE);
+  /** Whether the matches below the resemblance floor are revealed. */
+  const [showWeaker, setShowWeaker] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function handleFiles(files: FileList | File[] | null) {
@@ -247,6 +260,8 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
 
     const result = await requestCoach('match', digest, undefined, { images });
     if (result.ok) {
+      // A new answer starts folded: the weaker list is a choice about the last search.
+      setShowWeaker(false);
       setState({ loading: false, result, failure: null, writtenAt: new Date().toISOString() });
       return;
     }
@@ -294,8 +309,13 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
       .map((entry) => entry.match);
   }, [answer]);
 
-  const closestMatches = rankedMatches.slice(0, CLOSEST_MATCH_COUNT);
-  const alsoSimilar = rankedMatches.slice(CLOSEST_MATCH_COUNT);
+  // Only the genuinely close matches are shown by default; the weaker ones keep their place
+  // behind a toggle, so a loose resemblance never sits level with a close one.
+  const visibleMatches = rankedMatches.filter((match) => match.score >= MIN_MATCH_SCORE);
+  const weakerMatches = rankedMatches.filter((match) => match.score < MIN_MATCH_SCORE);
+
+  const closestMatches = visibleMatches.slice(0, CLOSEST_MATCH_COUNT);
+  const alsoSimilar = visibleMatches.slice(CLOSEST_MATCH_COUNT);
 
   /** One matched trade, rendered the same way in the closest list and the secondary one. */
   const renderMatchRow = (match: MatchItem, index: number) => {
@@ -570,12 +590,37 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
                   Nothing in your log resembles this chart yet. That is a real answer, not a
                   failure — {answer.nextStep}
                 </p>
+              ) : visibleMatches.length === 0 ? (
+                /*
+                  Every match the coach found is below the floor. Saying that is the honest
+                  answer: a resemblance this loose is not one, and padding the list with the
+                  best of a weak set would make the search look better than it was.
+                */
+                <div id="chart-match-weak-only" className="space-y-2">
+                  <p className="text-xs text-zinc-300 leading-relaxed">
+                    Nothing scored above {MIN_MATCH_SCORE}% alike, so nothing here is genuinely
+                    close. The strongest resemblance is {rankedMatches[0].score}% — loose enough
+                    that treating it as a match would be a stretch.
+                  </p>
+                  <button
+                    type="button"
+                    id="chart-match-show-weaker"
+                    onClick={() => setShowWeaker((prev) => !prev)}
+                    aria-expanded={showWeaker}
+                    className="rounded-lg border border-zinc-700 px-2.5 py-1 text-[11px] font-semibold text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+                  >
+                    {showWeaker ? 'Hide' : 'Show'} the {weakerMatches.length} weaker
+                    resemblance{weakerMatches.length === 1 ? '' : 's'}
+                  </button>
+                  {showWeaker &&
+                    weakerMatches.map((match, index) => renderMatchRow(match, index))}
+                </div>
               ) : (
                 <div id="chart-match-matches" className="space-y-3">
                   <div className="space-y-2">
                     <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
-                      Closest matches ({closestMatches.length} of {answer.matches.length}, ranked
-                      by how closely they resemble your chart)
+                      Closest matches ({closestMatches.length} of {answer.matches.length},
+                      ranked by how closely they resemble your chart)
                     </span>
                     {closestMatches.map((match, index) => renderMatchRow(match, index))}
                   </div>
@@ -587,6 +632,30 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
                       {alsoSimilar.map((match, index) =>
                         renderMatchRow(match, closestMatches.length + index)
                       )}
+                    </div>
+                  )}
+
+                  {/*
+                    The loose matches are hidden, not dropped. The count is always stated, so
+                    the trader knows the search found more and chose to rank it below the line.
+                  */}
+                  {weakerMatches.length > 0 && (
+                    <div className="space-y-2">
+                      <button
+                        type="button"
+                        id="chart-match-show-weaker"
+                        onClick={() => setShowWeaker((prev) => !prev)}
+                        aria-expanded={showWeaker}
+                        className="rounded-lg border border-zinc-700 px-2.5 py-1 text-[11px] font-semibold text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+                      >
+                        {showWeaker ? 'Hide' : 'Show'} {weakerMatches.length} weaker match
+                        {weakerMatches.length === 1 ? '' : 'es'} (below {MIN_MATCH_SCORE}%
+                        alike)
+                      </button>
+                      {showWeaker &&
+                        weakerMatches.map((match, index) =>
+                          renderMatchRow(match, visibleMatches.length + index)
+                        )}
                     </div>
                   )}
                 </div>

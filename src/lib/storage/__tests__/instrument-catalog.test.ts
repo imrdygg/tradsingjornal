@@ -154,10 +154,11 @@ describe('ensureInstrumentCatalog', () => {
   });
 
   it('gives micro WTI back to a journal whose marker had already passed it', () => {
-    // The reported case: the marker says the catalog is current and MCL is missing. Micro WTI
-    // is announced again in a later release precisely so this journal receives it, rather
-    // than reading the gap as a deliberate removal forever.
-    seedJournal([{ id: 'mes', symbol: 'MES' }], 3);
+    // The reported case: the marker says the catalog is current and MCL is missing, because
+    // an earlier attempt announced it under a version the marker had already passed. Micro WTI
+    // is announced again from a version this journal has not reached precisely so it receives
+    // it, rather than the gap reading as a deliberate removal forever.
+    seedJournal([{ id: 'mes', symbol: 'MES' }], 4);
 
     const result = storage.ensureInstrumentCatalog();
 

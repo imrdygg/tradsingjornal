@@ -23,8 +23,11 @@ import { Instrument } from '../../types';
  * 2 — micro WTI.
  * 3 — the rest of the index, metals and energy complexes, micro and full size.
  * 4 — micro WTI announced again, so a journal that is somehow missing it receives it.
+ * 5 — micro WTI announced once more, from a version a journal that somehow passed 4
+ *     without receiving it has not yet reached. The tag picks the version, not the wish:
+ *     announcing a contract in a version the journal's marker already passed is a no-op.
  */
-export const INSTRUMENT_CATALOG_VERSION = 4;
+export const INSTRUMENT_CATALOG_VERSION = 5;
 
 export const DEFAULT_INSTRUMENTS: Instrument[] = [
   {
@@ -153,11 +156,12 @@ export const DEFAULT_INSTRUMENTS: Instrument[] = [
   // Energy. Micro WTI is 100 barrels, so a $1.00 move in the barrel price is $100 per
   // contract — a tenth of full-size crude, which is the point of it.
   //
-  // Tagged at version 4 rather than the 2 it first arrived in: a journal whose catalog
+  // Tagged at version 5, two releases past the 2 it first arrived in: a journal whose catalog
   // marker had already passed micro WTI but which did not hold it was reaching a state the
-  // upgrade rule reads as a deliberate removal. Re-announcing it is the only way that
-  // journal receives it, and a journal that already has it is untouched — the merge skips
-  // anything already present by symbol or id.
+  // upgrade rule reads as a deliberate removal. Re-announcing it is the only way that journal
+  // receives it, and a journal that already has it is untouched — the merge skips anything
+  // already present by symbol or id. The version must be one the broken journal has not yet
+  // recorded, so each attempt advances the marker rather than reusing it.
   {
     id: 'mcl',
     symbol: 'MCL',
@@ -166,7 +170,7 @@ export const DEFAULT_INSTRUMENTS: Instrument[] = [
     tickSize: 0.01,
     tickValue: 1,
     active: true,
-    since: 4,
+    since: 5,
   },
   {
     id: 'cl',

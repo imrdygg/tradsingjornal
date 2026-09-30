@@ -44,6 +44,7 @@ import {
   CoachResultPanel,
 } from '../coach/coach-ui';
 import { COACH_WAIT_STEPS } from '../common/AiThinking';
+import { ImageLightboxModal } from '../common/ImageLightboxModal';
 import { formatTimestamp } from '../../lib/storage/date-utils';
 
 /**
@@ -342,6 +343,13 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
   const [reading, setReading] = useState(false);
   const [pickError, setPickError] = useState<string | null>(null);
   const [state, setState] = useState<MatchState>(IDLE);
+  /** The picture opened full-size, if any. Lets a result screenshot actually be read. */
+  const [lightbox, setLightbox] = useState<{
+    images: string[];
+    index: number;
+    title: string;
+    subtitle?: string;
+  } | null>(null);
   /** The score a match must reach to be shown. Remembered, and adjustable on the card. */
   const [resemblanceFloor, setResemblanceFloor] = useState(readStoredFloor);
   /** Whether the matches below the resemblance floor are revealed. */
@@ -349,6 +357,20 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
   /** Whether the whole search history is shown, rather than the strongest few. */
   const [showAllHistory, setShowAllHistory] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  /**
+   * Opens a picture the trader is looking at, at the size it deserves.
+   *
+   * The thumbnails on this card exist to say "there is a picture here"; they are far too
+   * small to read a chart from, and a match the trader cannot actually see is no evidence.
+   * Only usable data URLs are collected, so the arrows never land on an entry that cannot
+   * be drawn. Clicking is kept off the row's own open-the-trade handler.
+   */
+  const openLightbox = (images: string[], shot: string, title: string, subtitle?: string) => {
+    const usable = images.filter(isCoachImageDataUrl);
+    if (usable.length === 0) return;
+    setLightbox({ images: usable, index: Math.max(0, usable.indexOf(shot)), title, subtitle });
+  };
 
   async function handleFiles(files: FileList | File[] | null) {
     const file = files ? Array.from(files).find((f) => f.type.startsWith('image/')) : null;
@@ -535,11 +557,28 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
         title={openable ? 'Click to open this trade' : undefined}
       >
         {shot && (
-          <img
-            src={shot}
-            alt={`Screenshot of the ${match.date} ${match.symbol} trade`}
-            className="h-14 w-20 shrink-0 rounded-lg border border-zinc-800 bg-zinc-950 object-cover"
-          />
+          <button
+            type="button"
+            data-match-image={trade ? trade.id : `unresolved-${index}`}
+            onClick={(event) => {
+              // The row opens the trade; the picture opens the picture.
+              event.stopPropagation();
+              openLightbox(
+                trade?.images ?? [shot],
+                shot,
+                `${match.date} · ${match.symbol}`,
+                match.setupName ?? undefined
+              );
+            }}
+            className="h-14 w-20 shrink-0 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950 transition-all hover:border-sky-500/60 focus:outline-none focus:ring-2 focus:ring-sky-500/40"
+            title="Click to view this screenshot larger"
+          >
+            <img
+              src={shot}
+              alt={`Screenshot of the ${match.date} ${match.symbol} trade`}
+              className="h-full w-full object-cover"
+            />
+          </button>
         )}
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -606,12 +645,20 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
       >
         {queryImage ? (
           <div className="flex items-center gap-3">
-            <img
-              id="chart-match-preview"
-              src={queryImage}
-              alt="The chart you are searching with"
-              className="h-24 w-40 rounded-xl border border-zinc-800 bg-zinc-950 object-cover"
-            />
+            <button
+              type="button"
+              id="chart-match-preview-open"
+              onClick={() => openLightbox([queryImage], queryImage, 'The chart you searched with')}
+              className="shrink-0 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950 transition-all hover:border-sky-500/60 focus:outline-none focus:ring-2 focus:ring-sky-500/40"
+              title="Click to view this chart larger"
+            >
+              <img
+                id="chart-match-preview"
+                src={queryImage}
+                alt="The chart you are searching with"
+                className="h-24 w-40 object-cover"
+              />
+            </button>
             <div className="space-y-1.5">
               <p className="text-xs text-zinc-300">This is the chart the coach will search with.</p>
               <button
@@ -1101,6 +1148,15 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
           )}
         </div>
       )}
+
+      <ImageLightboxModal
+        isOpen={lightbox !== null}
+        onClose={() => setLightbox(null)}
+        images={lightbox?.images ?? []}
+        initialIndex={lightbox?.index ?? 0}
+        title={lightbox?.title}
+        subtitle={lightbox?.subtitle}
+      />
     </CoachCard>
   );
 };

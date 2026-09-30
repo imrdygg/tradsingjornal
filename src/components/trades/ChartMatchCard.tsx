@@ -22,6 +22,7 @@ import {
   CHART_MATCH_FLOOR,
   CHART_MATCH_GOOD,
   CHART_MATCH_STRONG,
+  chartMatchBand,
   rankChartSearchesByStrength,
   summarizeChartSearch,
   summarizeChartSearchHistory,
@@ -169,10 +170,10 @@ function scoreTone(score: number): string {
 }
 
 /** The fill for one match's bar in the distribution, banded the way the score chip is. */
-function scoreBarClass(score: number): string {
+function scoreBarClass(score: number, floor: number): string {
   if (score >= CHART_MATCH_STRONG) return 'bg-emerald-500';
   if (score >= CHART_MATCH_GOOD) return 'bg-sky-500';
-  if (score >= CHART_MATCH_FLOOR) return 'bg-amber-500';
+  if (score >= floor) return 'bg-amber-500';
   return 'bg-rose-500/70';
 }
 
@@ -181,6 +182,48 @@ export const CLOSEST_MATCH_COUNT = 3;
 
 /** How many past searches are shown before the history is folded. */
 export const HISTORY_PREVIEW = 5;
+
+/**
+ * The resemblance floor, made the trader's to set.
+ *
+ * The floor is the score a match must reach to be shown as one. Fifty-five was chosen as the
+ * default because it separates a real resemblance from a loose one, but "how close is close
+ * enough" is a judgement about the trader's own setups, not a fact the app owns — so it is a
+ * control rather than a constant. It is remembered under its own key so the same line holds
+ * on every tab and across visits, and it only ever changes what is shown, never the score.
+ */
+export const MIN_MATCH_FLOOR = 20;
+export const MAX_MATCH_FLOOR = 80;
+const FLOOR_STEP = 5;
+const FLOOR_STORAGE_KEY = 'ptj_chart_match_floor';
+
+/** Snaps a chosen floor onto the control's steps and inside its range. */
+function clampFloor(value: number): number {
+  if (!Number.isFinite(value)) return CHART_MATCH_FLOOR;
+  const snapped = Math.round(value / FLOOR_STEP) * FLOOR_STEP;
+  return Math.min(MAX_MATCH_FLOOR, Math.max(MIN_MATCH_FLOOR, snapped));
+}
+
+/** The remembered floor, or the default when nothing valid has been stored. */
+function readStoredFloor(): number {
+  if (typeof window === 'undefined') return CHART_MATCH_FLOOR;
+  try {
+    const stored = window.localStorage.getItem(FLOOR_STORAGE_KEY);
+    if (stored === null) return CHART_MATCH_FLOOR;
+    const parsed = Number(stored);
+    return Number.isFinite(parsed) ? clampFloor(parsed) : CHART_MATCH_FLOOR;
+  } catch {
+    return CHART_MATCH_FLOOR;
+  }
+}
+
+function writeStoredFloor(floor: number): void {
+  try {
+    window.localStorage.setItem(FLOOR_STORAGE_KEY, String(floor));
+  } catch {
+    // A blocked write just means the choice is not remembered; the control still works.
+  }
+}
 
 /** The four bands every distribution bar is drawn from, strongest first. */
 const BAND_SEGMENTS: { key: keyof Omit<ChartMatchBands, 'total'>; label: string; bar: string }[] =
@@ -299,6 +342,8 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
   const [reading, setReading] = useState(false);
   const [pickError, setPickError] = useState<string | null>(null);
   const [state, setState] = useState<MatchState>(IDLE);
+  /** The score a match must reach to be shown. Remembered, and adjustable on the card. */
+  const [resemblanceFloor, setResemblanceFloor] = useState(readStoredFloor);
   /** Whether the matches below the resemblance floor are revealed. */
   const [showWeaker, setShowWeaker] = useState(false);
   /** Whether the whole search history is shown, rather than the strongest few. */
@@ -412,8 +457,8 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
    * traded.
    */
   const historySummaries = useMemo(
-    () => (chartSearches ?? []).map((search) => summarizeChartSearch(search)),
-    [chartSearches]
+    () => (chartSearches ?? []).map((search) => summarizeChartSearch(search, resemblanceFloor)),
+    [chartSearches, resemblanceFloor]
   );
   const rankedHistory = useMemo(
     () => rankChartSearchesByStrength(historySummaries),
@@ -441,21 +486,24 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
       .map((entry) => entry.match);
   }, [answer]);
 
-  // Only the genuinely close matches are shown by default; the weaker ones keep their place
-  // behind a toggle, so a loose resemblance never sits level with a close one.
-  const visibleMatches = rankedMatches.filter((match) => match.score >= CHART_MATCH_FLOOR);
-  const weakerMatches = rankedMatches.filter((match) => match.score < CHART_MATCH_FLOOR);
+  // Only the matches at or above the trader's floor are shown by default; the weaker ones keep
+  // their place behind a toggle, so a loose resemblance never sits level with a close one.
+  const visibleMatches = rankedMatches.filter((match) => match.score >= resemblanceFloor);
+  const weakerMatches = rankedMatches.filter((match) => match.score < resemblanceFloor);
 
   const closestMatches = visibleMatches.slice(0, CLOSEST_MATCH_COUNT);
   const alsoSimilar = visibleMatches.slice(CLOSEST_MATCH_COUNT);
 
   // The shape of one search, said in numbers rather than left to be guessed from the rows.
-  const strongCount = rankedMatches.filter(
-    (match) => match.score >= CHART_MATCH_STRONG
-  ).length;
-  const goodCount = rankedMatches.filter(
-    (match) => match.score >= CHART_MATCH_GOOD && match.score < CHART_MATCH_STRONG
-  ).length;
+  // Counted through the same band function the history uses, so the header, the bars and the
+  // history's shape all read one set of lines — including the trader's own floor.
+  const bandCounts = useMemo(() => {
+    const counts = { strong: 0, good: 0, modest: 0, below: 0 };
+    for (const match of rankedMatches) counts[chartMatchBand(match.score, resemblanceFloor)] += 1;
+    return counts;
+  }, [rankedMatches, resemblanceFloor]);
+  const strongCount = bandCounts.strong;
+  const goodCount = bandCounts.good;
 
   /** One matched trade, rendered the same way in the closest list and the secondary one. */
   const renderMatchRow = (match: MatchItem, index: number) => {
@@ -691,6 +739,69 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
             </p>
           )}
 
+          {/*
+            The resemblance floor, as the trader's own line.
+
+            Everything below reads the same number: which matches are shown, the mark on the
+            distribution, and the bands the search history is counted into. Changing it only
+            changes what is shown — the coach's score for each match is untouched.
+          */}
+          <div
+            id="chart-match-floor-control"
+            className="space-y-1.5 rounded-xl border border-zinc-800 bg-zinc-900/50 px-3 py-2.5"
+          >
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <label
+                htmlFor="chart-match-floor"
+                className="text-[10px] font-mono uppercase font-bold text-zinc-400"
+              >
+                Resemblance floor
+              </label>
+              <span className="flex items-center gap-2">
+                {resemblanceFloor !== CHART_MATCH_FLOOR && (
+                  <button
+                    type="button"
+                    id="chart-match-floor-reset"
+                    onClick={() => {
+                      setResemblanceFloor(CHART_MATCH_FLOOR);
+                      writeStoredFloor(CHART_MATCH_FLOOR);
+                    }}
+                    className="text-[10px] font-semibold text-sky-400 underline decoration-sky-500/40 transition-colors hover:text-sky-300"
+                  >
+                    Reset to {CHART_MATCH_FLOOR}%
+                  </button>
+                )}
+                <span
+                  id="chart-match-floor-value"
+                  data-floor={resemblanceFloor}
+                  className="font-mono text-[11px] text-zinc-100"
+                >
+                  {resemblanceFloor}%
+                </span>
+              </span>
+            </div>
+            <input
+              id="chart-match-floor"
+              type="range"
+              min={MIN_MATCH_FLOOR}
+              max={MAX_MATCH_FLOOR}
+              step={FLOOR_STEP}
+              value={resemblanceFloor}
+              onChange={(e) => {
+                const next = clampFloor(Number(e.target.value));
+                setResemblanceFloor(next);
+                writeStoredFloor(next);
+              }}
+              aria-label="Resemblance floor"
+              className="w-full accent-sky-500"
+            />
+            <p className="text-[10px] leading-relaxed text-zinc-500">
+              A match must score at least this close to be shown as one. Lower it to see looser
+              resemblances, raise it to keep only the closest. It changes what is shown, never the
+              score.
+            </p>
+          </div>
+
           {state.loading && (
             <CoachLoading
               label="Reading the chart and searching your trades…"
@@ -740,7 +851,7 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
                     </span>
                     <span className="text-[10px] text-zinc-500">
                       {strongCount} strong · {goodCount} good · {weakerMatches.length} below the{' '}
-                      {CHART_MATCH_FLOOR}% floor
+                      {resemblanceFloor}% floor
                     </span>
                   </div>
                   <div className="space-y-1">
@@ -755,14 +866,14 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
                         </span>
                         <div className="relative h-2 flex-1 overflow-hidden rounded-full bg-zinc-800">
                           <div
-                            className={`h-full rounded-full ${scoreBarClass(match.score)}`}
+                            className={`h-full rounded-full ${scoreBarClass(match.score, resemblanceFloor)}`}
                             style={{ width: `${match.score}%` }}
                           />
                           {/* Where the floor sits, so a bar's length is judged against it. */}
                           <div
                             className="absolute inset-y-0 w-px bg-zinc-500/80"
-                            style={{ left: `${CHART_MATCH_FLOOR}%` }}
-                            title={`The ${CHART_MATCH_FLOOR}% floor`}
+                            style={{ left: `${resemblanceFloor}%` }}
+                            title={`The ${resemblanceFloor}% floor`}
                           />
                         </div>
                         <span className="w-9 shrink-0 text-right font-mono text-[10px] text-zinc-300">
@@ -773,7 +884,7 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
                   </div>
                   <p className="text-[10px] leading-relaxed text-zinc-500">
                     Each bar is one match's closeness score from the coach, longest first. The
-                    mark is the {CHART_MATCH_FLOOR}% floor — the bars shorter than it are the ones
+                    mark is the {resemblanceFloor}% floor — the bars shorter than it are the ones
                     kept below.
                   </p>
                 </div>
@@ -792,7 +903,7 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
                 */
                 <div id="chart-match-weak-only" className="space-y-2">
                   <p className="text-xs text-zinc-300 leading-relaxed">
-                    Nothing scored above {CHART_MATCH_FLOOR}% alike, so nothing here is genuinely
+                    Nothing scored above {resemblanceFloor}% alike, so nothing here is genuinely
                     close. The strongest resemblance is {rankedMatches[0].score}% — loose enough
                     that treating it as a match would be a stretch.
                   </p>
@@ -842,8 +953,8 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
                         aria-expanded={showWeaker}
                         className="rounded-lg border border-zinc-700 px-2.5 py-1 text-[11px] font-semibold text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
                       >
-                        {showWeaker ? 'Hide' : 'Show'} {weakerMatches.length} weaker match
-                        {weakerMatches.length === 1 ? '' : 'es'} (below {CHART_MATCH_FLOOR}%
+                        {showWeaker ? 'Hide' : 'Show'}                        {weakerMatches.length} weaker match
+                        {weakerMatches.length === 1 ? '' : 'es'} (below {resemblanceFloor}%
                         alike)
                       </button>
                       {showWeaker &&

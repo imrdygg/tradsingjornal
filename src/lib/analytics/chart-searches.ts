@@ -24,10 +24,13 @@ export const CHART_MATCH_GOOD = 60;
 export type ChartMatchBand = 'strong' | 'good' | 'modest' | 'below';
 
 export function chartMatchBand(score: number, floor = CHART_MATCH_FLOOR): ChartMatchBand {
+  // Below the floor first: the floor is the line that decides what the card shows, so a score
+  // under it is "below" whatever its absolute tier — which stays true when the trader raises
+  // the floor above the fixed good/strong bands.
+  if (score < floor) return 'below';
   if (score >= CHART_MATCH_STRONG) return 'strong';
   if (score >= CHART_MATCH_GOOD) return 'good';
-  if (score >= floor) return 'modest';
-  return 'below';
+  return 'modest';
 }
 
 /** How many matches of a search fell in each band. */

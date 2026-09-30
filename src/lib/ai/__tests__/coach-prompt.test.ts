@@ -14,7 +14,14 @@ import {
 import type { ChartReadResponse, CoachTradeFacts, LearnedSetup } from '../coach-types';
 import { buildJournalDigest } from '../journal-digest';
 import type { DailyBars, MarketBrief } from '../market-data';
-import { DailyReview, DailyReviewQuestions, LevelTouch, Trade, TradingDay } from '../../../types';
+import {
+  DailyReview,
+  DailyReviewQuestions,
+  LevelTouch,
+  SessionExtreme,
+  Trade,
+  TradingDay,
+} from '../../../types';
 import { DEFAULT_INSTRUMENTS } from '../../trading/instruments';
 
 const ALL_YES: DailyReviewQuestions = {
@@ -629,6 +636,90 @@ describe('the level-touch record in the prompt', () => {
 });
 
 /**
+ * The session-extreme log is the easiest thing in the digest to read as a forecast — it is a
+ * record about a time of day — so what is asserted here is the scaffolding around it: the
+ * section only appears when something is logged, a thin hour carries counts rather than a
+ * percentage, and the rules that forbid forecasting an hour ride along with it.
+ */
+describe('the session-extreme log in the prompt', () => {
+  function extreme(overrides: Partial<SessionExtreme> = {}): SessionExtreme {
+    const time = overrides.time ?? '03:00';
+    return {
+      id: `se-${overrides.tradeDate ?? '2026-09-18'}-${overrides.kind ?? 'high'}-${time}`,
+      userId: 'u1',
+      tradeDate: '2026-09-18',
+      instrumentId: 'mes',
+      symbol: 'MES',
+      kind: 'high',
+      time,
+      price: 6012,
+      window: time === '03:00' ? 'overnight' : 'regular',
+      createdAt: '2026-09-18T00:00:00.000Z',
+      updatedAt: '2026-09-18T00:00:00.000Z',
+      ...overrides,
+    };
+  }
+
+  /** One judged session: a 3am overnight high, and the regular high that followed it. */
+  function judged(day: number, regularPrice: number, kind: 'high' | 'low' = 'high'): SessionExtreme[] {
+    const tradeDate = `2026-09-${String(day).padStart(2, '0')}`;
+    const overnight = kind === 'high' ? 6012 : 5988;
+    return [
+      extreme({ tradeDate, kind, time: '03:00', price: overnight }),
+      extreme({ tradeDate, kind, time: '11:00', price: regularPrice }),
+    ];
+  }
+
+  it('leaves the section out entirely when nothing has been logged', () => {
+    expect(formatDigestForPrompt(digestFor())).not.toContain('SESSION EXTREMES');
+  });
+
+  it('renders the hour and its held rate once a sample exists', () => {
+    const text = formatDigestForPrompt(
+      digestFor({
+        sessionExtremes: [
+          ...[1, 2, 3, 4].flatMap((day) => judged(day, 6000)),
+          ...judged(5, 6030),
+        ],
+      })
+    );
+
+    expect(text).toContain('SESSION EXTREMES');
+    expect(text).toContain('80% held over 5 decided session(s)');
+    expect(text).toContain('4 held, 1 taken out');
+    expect(text).toContain('median 18 point(s) past it when taken out');
+  });
+
+  it('reports a thin hour as counts and refuses to quote a rate', () => {
+    const text = formatDigestForPrompt(
+      digestFor({ sessionExtremes: [1, 2].flatMap((day) => judged(day, 6000)) })
+    );
+
+    expect(text).toContain('NO HOUR HAS A READABLE RECORD YET');
+    expect(text).toContain('NOT yet readable');
+    expect(text).not.toContain('% held');
+  });
+
+  it('adds the extreme guardrails only when the log is in the prompt', () => {
+    expect(buildCoachPrompt('brief', digestFor()).systemInstruction).toBe(COACH_GUARDRAILS);
+
+    const { systemInstruction } = buildCoachPrompt(
+      'brief',
+      digestFor({ sessionExtremes: judged(1, 6000) })
+    );
+    expect(systemInstruction).toContain('NO MARKET DATA');
+    expect(systemInstruction).toContain('IT IS HISTORY, NOT A FORECAST');
+    expect(systemInstruction).toContain('ONLY READ A RATE THAT IS MARKED READABLE');
+    expect(systemInstruction).toContain('"HELD" IS NOT A PROFIT');
+  });
+
+  it('does not let the clock read claim a market opinion', () => {
+    expect(allowsMarketOpinion('extremes')).toBe(false);
+    expect(COACH_MODES).toContain('extremes');
+  });
+});
+
+/**
  * The edge mode is the dedicated finder: it reports which conditions the trader's own
  * record supports and, just as importantly, which are still too thin to name.
  */
@@ -682,6 +773,59 @@ describe('edge mode', () => {
   it('rejects an edge read with no next step', () => {
     const { nextStep, ...rest } = edgeJson;
     expect(() => parseCoachResponse('edge', rest)).toThrow(/nextStep/);
+  });
+});
+
+/**
+ * The clock read is the extremes counterpart of the edge finder: it reports which hours the
+ * trader's own log supports and which are still too thin to name, and never says an hour
+ * tends to do anything.
+ */
+describe('extremes mode', () => {
+  const extremesJson = {
+    headline: 'Your 3am high is the one the open keeps',
+    bestPattern: 'The MES overnight high printed at 3am and the open kept it in 4 of 5 sessions.',
+    patterns: [
+      {
+        condition: 'MES overnight high at 3am',
+        heldRate: '80% of 5 decided sessions',
+        evidence: '4 held, 1 taken out',
+      },
+    ],
+    notYetReadable: ['MNQ overnight low at 5am: 2 of 3 sessions judged'],
+    whatItMeans: 'In the sessions you logged, the 3am high was not extended by the open.',
+    nextStep: 'Log both windows for every session, so the sample covers them evenly.',
+    motivation: 'Five sessions logged by hand is what makes this readable.',
+  };
+
+  it('asks for readable hours and forbids a forecast about one', () => {
+    const shape = COACH_RESPONSE_SHAPES.extremes;
+    expect(shape).toContain('"bestPattern"');
+    expect(shape).toContain('"notYetReadable"');
+    expect(shape).toContain('Never quote a rate for an hour listed as not yet readable');
+    expect(shape).toContain('never say an hour "tends to" do anything');
+
+    const { userPrompt } = buildCoachPrompt('extremes', digestFor());
+    expect(userPrompt).toContain("Read this trader's SESSION EXTREMES");
+  });
+
+  it('parses a clock read, and reads an absent thin list as empty', () => {
+    const parsed = parseCoachResponse('extremes', {
+      ...extremesJson,
+      notYetReadable: undefined,
+    }) as { patterns: Array<{ condition: string }>; notYetReadable: string[] };
+
+    expect(parsed.patterns[0].condition).toBe('MES overnight high at 3am');
+    expect(parsed.notYetReadable).toEqual([]);
+  });
+
+  it('drops pattern entries with no condition named', () => {
+    const parsed = parseCoachResponse('extremes', {
+      ...extremesJson,
+      patterns: [{ condition: '  ' }, { heldRate: 'x' }],
+    }) as { patterns: unknown[] };
+
+    expect(parsed.patterns).toEqual([]);
   });
 });
 

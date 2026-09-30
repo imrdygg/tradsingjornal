@@ -19,6 +19,7 @@ import { RiskFixupModal } from './components/trades/RiskFixupModal';
 import { TradeDetailModal } from './components/trades/TradeDetailModal';
 import { DailyReviewModal } from './components/review/DailyReviewModal';
 import { LatestReviewCard } from './components/today/LatestReviewCard';
+import { SessionExtremesCard } from './components/today/SessionExtremesCard';
 import { askEntryCall, buildCoachPlanPatch, type PlanCoachContext } from './lib/ai/plan-coach';
 import type { CoachPlanFields, EntryCallResponse } from './lib/ai/coach-types';
 
@@ -85,6 +86,7 @@ import {
   TradeManagement,
   PatternStudy,
   LevelTouch,
+  SessionExtreme,
   ImportantLevel,
 } from './types';
 import type { SyncStatus } from './components/layout/SyncStatusBadge';
@@ -201,6 +203,11 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   const [levelTouches, setLevelTouches] = useState<LevelTouch[]>(() =>
     storage.getLevelTouches()
   );
+  // Where each session's extremes printed on the clock. The trader's own record, held with
+  // the rest of the state so it is saved and synced by the same debounced write.
+  const [sessionExtremes, setSessionExtremes] = useState<SessionExtreme[]>(() =>
+    storage.getSessionExtremes()
+  );
 
   const [activeTab, setActiveTab] = useState<NavTab>('today');
 
@@ -277,9 +284,21 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       reviews,
       patternStudies,
       levelTouches,
+      sessionExtremes,
       lessonAck,
     }),
-    [profile, instruments, setups, tradingDays, trades, reviews, patternStudies, levelTouches, lessonAck]
+    [
+      profile,
+      instruments,
+      setups,
+      tradingDays,
+      trades,
+      reviews,
+      patternStudies,
+      levelTouches,
+      sessionExtremes,
+      lessonAck,
+    ]
   );
 
   // Keep the latest state reachable from the sign-out handler without re-running effects.
@@ -311,6 +330,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       setReviews(next.reviews);
       setPatternStudies(next.patternStudies ?? []);
       setLevelTouches(next.levelTouches ?? []);
+      setSessionExtremes(next.sessionExtremes ?? []);
       setLessonAck(next.lessonAck ?? null);
     },
     [userId]
@@ -954,6 +974,40 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   };
 
   /**
+   * Records one session extreme.
+   *
+   * Storage upserts by slot as well as by id, so re-logging the same symbol, date, kind and
+   * window corrects that reading instead of adding a second one — a typo and its fix can
+   * never both sit in the record.
+   */
+  const handleSaveSessionExtreme = (extreme: SessionExtreme) => {
+    storage.saveSessionExtreme(extreme);
+    setSessionExtremes(storage.getSessionExtremes());
+  };
+
+  const handleDeleteSessionExtreme = (extremeId: string) => {
+    storage.deleteSessionExtreme(extremeId);
+    setSessionExtremes(storage.getSessionExtremes());
+  };
+
+  /**
+   * The trades taken on one session date, for linking a logged extreme back to what it led to.
+   *
+   * Read from the day records rather than from a stored link, so it stays right when a trade
+   * is added or deleted later — the logging card links a session, not a fixed set of ids.
+   */
+  const tradeIdsForDate = useCallback(
+    (date: string) => {
+      const day =
+        tradingDays.find((candidate) => candidate.tradeDate === date) ??
+        (todayTradingDay.tradeDate === date ? todayTradingDay : undefined);
+      if (!day) return [];
+      return trades.filter((trade) => trade.tradingDayId === day.id).map((trade) => trade.id);
+    },
+    [tradingDays, trades, todayTradingDay]
+  );
+
+  /**
    * What the journal already records under each setup name.
    *
    * Read from the trades and days themselves rather than from a counter kept on the setup,
@@ -1128,6 +1182,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       trades: [],
       reviews: [],
       levelTouches: [],
+      sessionExtremes: [],
     };
 
     if (cloudEnabled && cloudReady) {
@@ -1139,6 +1194,10 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
 
     setTrades([]);
     setReviews([]);
+    // The reset clears these two in storage as well, so the screen has to follow: a list
+    // still on screen after "start fresh" would look like it had survived the reset.
+    setLevelTouches([]);
+    setSessionExtremes([]);
     // Recreate today's (empty) planning day so the app has somewhere to land.
     storage.getOrCreateToday();
     setTradingDays(storage.getTradingDays());
@@ -1155,6 +1214,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       setTradingDays(storage.getTradingDays());
       setTrades(storage.getTrades());
       setReviews(storage.getReviews());
+      setSessionExtremes(storage.getSessionExtremes());
     }
   };
 
@@ -1396,6 +1456,27 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               </div>
             </section>
 
+            {/*
+              Where price went on the clock, logged by hand.
+
+              The other half of "what price did" beside today's levels: the levels are the
+              prices the trader marked before the session, and this is where the extremes
+              actually printed overnight and during it. Neither can be fetched — the live
+              quote has no clock on its range — so the record is theirs to keep, and the
+              card's own picture is what the coach then reads back.
+            */}
+            <section id="today-extremes" className="space-y-3">
+              <SessionExtremesCard
+                extremes={sessionExtremes}
+                todayTradingDay={todayTradingDay}
+                instruments={instruments}
+                onSave={handleSaveSessionExtreme}
+                onDelete={handleDeleteSessionExtreme}
+                tradesForDate={tradeIdsForDate}
+                onOpenTrades={handleOpenTrades}
+              />
+            </section>
+
             {yesterdayFocus && (
               <YesterdayFocusBanner
                 yesterdayFocus={yesterdayFocus}
@@ -1633,6 +1714,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             timezone={profile.timezone}
             maxDrawdown={profile.maxDrawdown ?? null}
             levelTouches={levelTouches}
+            sessionExtremes={sessionExtremes}
           />
         );
 

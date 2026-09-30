@@ -6,9 +6,11 @@ import type {
   DigestLevelTouch,
   DigestStatLine,
   DigestTradeSample,
+  ExtremeRead,
   JournalDigest,
   LevelEdge,
 } from './journal-digest';
+import { hourLabel } from '../analytics/session-extremes';
 import type { SetupDirection, SetupVerdict, SetupWeek } from '../analytics/setup-week';
 import type { BehaviorBucket as DigestBehaviorBucket } from '../analytics/behavior';
 import type {
@@ -58,6 +60,11 @@ export const COACH_MODES: readonly CoachMode[] = [
    * trades and the entry charts attached to them.
    */
   'learn',
+  /**
+   * The clock read: where the trader's own logged session extremes printed, and how often
+   * the regular session kept an overnight extreme that printed in a given hour.
+   */
+  'extremes',
   'trade',
   'prep',
   'postclose',
@@ -122,11 +129,13 @@ export function coachGuardrails(
   withMarketData: boolean,
   withOpinion = false,
   withLevelEdge = false,
-  withLearn = false
+  withLearn = false,
+  withExtremes = false
 ): string {
   let text = COACH_GUARDRAILS;
   if (withLearn) text += LEARN_GUARDRAILS_SUFFIX;
   if (withLevelEdge) text += LEVEL_EDGE_GUARDRAILS_SUFFIX;
+  if (withExtremes) text += EXTREMES_GUARDRAILS_SUFFIX;
   if (withMarketData) text += MARKET_GUARDRAILS_SUFFIX;
   if (withOpinion) text += OPINION_GUARDRAILS_SUFFIX;
   return text;
@@ -264,6 +273,37 @@ L5. Do not tell them to trade a session, a level kind or a labelled level more o
     at what their own record shows and hand the observation back to them.`;
 
 /**
+ * The rules for reading the session-extreme log honestly.
+ *
+ * Appended whenever the log is in the prompt, in every mode, for the same reason the level
+ * rules are: a held rate reads like a forecast, and this record's whole purpose is to answer
+ * a question about a time of day. The risk is a model turning "the 3am high held in 4 of 5
+ * sessions" into "3am highs usually hold", which is the one thing the record cannot say.
+ */
+const EXTREMES_GUARDRAILS_SUFFIX = `\n\nTHE SESSION-EXTREME LOG — SPECIAL RULES FOR THIS REQUEST ONLY.
+The digest includes SESSION EXTREMES: clock times the trader logged for where each session's
+high and low printed — overnight (6pm ET to 9:30am ET) and in the regular session (9:30am to
+4pm ET). It is their own record of what price has already done, and it is easy to misread as
+a forecast.
+
+X1. IT IS HISTORY, NOT A FORECAST. Never say an hour "tends to", "usually", "will" or is
+    "likely to" do anything next session. Report what the recorded sessions show, in the past
+    tense, and stop. Never turn a held rate into an expectation about the next print.
+X2. ONLY READ A RATE THAT IS MARKED READABLE. An hour listed as NOT yet readable has too few
+    decided sessions: give its counts and say no rate can be read from it. Never quote a
+    percentage for it, and never rank one thin hour against another.
+X3. "HELD" IS NOT A PROFIT AND NOT A TRADE. A held overnight high means the regular session
+    never traded above it; it says nothing about whether the trader made money and it is not
+    a reason to take anything. Never attach a dollar figure or an R-multiple to an extreme.
+X4. THE CLOCK TIMES AND PRICES ARE THE TRADER'S OWN ENTRIES. They are not a live market read
+    and not a chart you were given. You still have no other market data, and rule 1 above
+    holds in full: no other price, level, headline or event may be stated.
+X5. Do not tell them to trade an hour, avoid an hour, or size differently because of this
+    log. Point at what their own record shows and hand the observation back to them.
+X6. A session with no regular-session extreme logged could not be judged, so it is NOT a
+    session where the extreme held. Report it as not judged, never as a hold.`;
+
+/**
  * The rules for finding setups in the trader's own trades, screenshots included.
  *
  * This is the one request that carries an image, which makes it the one place the model
@@ -386,6 +426,85 @@ function formatLevelEdgeForPrompt(edge: LevelEdge | undefined): string[] {
           ` → ${touchOutcomeWord(touch.outcome)}` +
           (touch.maxExcursionPoints !== null ? `, ran ${touch.maxExcursionPoints} point(s)` : '') +
           (touch.checks ? `, checked ${touch.checks} time(s)` : '')
+      );
+    }
+  }
+
+  return lines;
+}
+
+/**
+ * The session-extreme log, rendered so a held rate cannot be read as a forecast.
+ *
+ * Three things are stated in the text rather than left to the model: what the two windows
+ * are, what "held" means, and which hours are still too thin to carry a rate. Everything
+ * else is the trader's own counts, quoted back.
+ */
+export function formatExtremeReadForPrompt(read: ExtremeRead | undefined): string[] {
+  const lines: string[] = [];
+  // Optional because the endpoint only shallow-checks the digest a client sends: an older
+  // client will not have this section, and it must degrade to "nothing logged" rather than
+  // crash a public endpoint.
+  if (!read || !read.points) return lines;
+
+  const rate = (value: number | null) => (value === null ? 'not readable yet' : `${value}%`);
+
+  lines.push('');
+  lines.push("=== SESSION EXTREMES — WHERE THE TRADER'S HIGHS AND LOWS PRINTED (their own log) ===");
+  lines.push(
+    'The trader logged the clock time (US Eastern) each session\'s overnight high and low ' +
+      'printed at, plus the regular session\'s own high and low. Overnight runs 6pm ET to ' +
+      '9:30am ET; the regular session is 9:30am to 4pm ET. HELD means the regular session ' +
+      'never traded past that overnight extreme — no higher high, no lower low. TAKEN OUT ' +
+      'means it did. This is a count of what already happened, not a forecast, and a hold is ' +
+      'not a profit.'
+  );
+  lines.push(
+    `${read.points} extreme(s) logged across ${read.sessions} session(s) for ` +
+      (read.symbols.length ? read.symbols.join(', ') : 'no named instrument') +
+      (read.firstDate && read.lastDate ? `, ${read.firstDate} to ${read.lastDate}.` : '.')
+  );
+  if (read.unreadable > 0) {
+    lines.push(
+      `${read.unreadable} logged extreme(s) had a missing or unreadable time, so they are ` +
+        'absent from every count below.'
+    );
+  }
+
+  if (read.patterns.length) {
+    lines.push('');
+    lines.push('Hours with a readable record (enough decided sessions), highest held rate first:');
+    for (const pattern of read.patterns) {
+      const decided = pattern.held + pattern.takenOut;
+      lines.push(
+        `- ${pattern.symbol} overnight ${pattern.kind} printed in the ${hourLabel(
+          pattern.hour
+        )} hour: ${rate(pattern.heldRate)} held over ${decided} decided session(s) ` +
+          `(${pattern.held} held, ${pattern.takenOut} taken out` +
+          (pattern.medianExtensionPoints !== null
+            ? `, median ${pattern.medianExtensionPoints} point(s) past it when taken out`
+            : '') +
+          (pattern.undecided > 0 ? `, ${pattern.undecided} not judged` : '') +
+          ')'
+      );
+    }
+  } else {
+    lines.push('');
+    lines.push(
+      'NO HOUR HAS A READABLE RECORD YET. Report the counts and say no rate can be read from them.'
+    );
+  }
+
+  if (read.thinPatterns.length) {
+    lines.push('');
+    lines.push('Logged, but NOT yet readable — report these as counts only, never as a rate:');
+    for (const pattern of read.thinPatterns) {
+      lines.push(
+        `- ${pattern.symbol} overnight ${pattern.kind} at ${hourLabel(pattern.hour)}: ` +
+          `${pattern.held + pattern.takenOut} of ${pattern.sessions} session(s) judged ` +
+          `(${pattern.held} held, ${pattern.takenOut} taken out` +
+          (pattern.undecided > 0 ? `, ${pattern.undecided} not judged` : '') +
+          `). ${read.minSessions} decided sessions are needed before this is a rate.`
       );
     }
   }
@@ -621,6 +740,11 @@ export function formatDigestForPrompt(digest: JournalDigest, mode?: CoachMode): 
   // Only emitted when there are touches, which keeps the no-market vocabulary out of every
   // prompt built from a journal that has never logged one.
   for (const line of formatLevelEdgeForPrompt(digest.levelEdge)) lines.push(line);
+
+  // ---- Where the session extremes printed ---------------------------------
+  // Emitted whenever the log holds anything, in every mode, so an extreme count is never
+  // quoted in a prompt whose guardrails did not cover it.
+  for (const line of formatExtremeReadForPrompt(digest.extremeRead)) lines.push(line);
 
   // ---- The setup learner's raw material -----------------------------------
   if (mode === 'learn') {
@@ -1165,6 +1289,19 @@ When the two windows are too thin to compare, say exactly that in trendRead, lea
   "motivation": "2 sentences. Specific to this trader and earned by their data. No slogans."
 }
 Rank only conditions with a readable hold rate. Never quote a rate for a condition listed as not yet readable. A hold means price never came back, not that the trade paid.`,
+  extremes: `Return exactly this JSON:
+{
+  "headline": "one sentence, under 16 words, on what the session-extreme log shows",
+  "bestPattern": "the hour with the strongest readable record, quoting its held rate and the held, taken-out and not-judged counts behind it. When nothing is readable yet, say exactly that instead of picking one",
+  "patterns": [
+    { "condition": "an hour from the log, e.g. the MES overnight high printing at 3am", "heldRate": "the held rate and the counts it came from", "evidence": "the held / taken-out / not-judged numbers behind it" }
+  ],
+  "notYetReadable": ["hours logged but still too thin to read, each with its counts. Empty array when every hour has enough"],
+  "whatItMeans": "2-3 sentences on what their own logged sessions show, stated as what has happened, never what will",
+  "nextStep": "one concrete, checkable thing to log that would sharpen this record",
+  "motivation": "2 sentences. Specific to this trader and earned by their data. No slogans."
+}
+Rank only hours with a readable held rate. Never quote a rate for an hour listed as not yet readable, and never say an hour "tends to" do anything. Held means the regular session never traded past the overnight extreme — not that the trade paid.`,
   setups: `Return exactly this JSON:
 {
   "headline": "one sentence, under 16 words, on which setup the week's own numbers say is working",
@@ -1420,6 +1557,15 @@ export function buildCoachPrompt(
         `the record shows has happened, never what it predicts will happen — and never call a ` +
         `hold a profit. If nothing is readable yet, say exactly that and make nextStep about ` +
         `logging more touches.`
+      : mode === 'extremes'
+      ? `Read this trader's SESSION EXTREMES: where each session's high and low printed on ` +
+        `their own clock, and whether the regular session kept an overnight extreme that ` +
+        `printed in a given hour. Rank only the hours marked readable, quoting the held rate ` +
+        `and the decided, taken-out and not-judged counts behind it, and name separately what ` +
+        `is logged but not yet readable. Say what the recorded sessions show has happened, ` +
+        `never what an hour will do next — and never call a hold a profit or a reason to ` +
+        `trade. If nothing is readable yet, say exactly that and make nextStep about logging ` +
+        `more sessions.`
       : mode === 'setups'
       ? `Read this trader's WEEK SETUP BY SETUP, from THE WEEK section: what each setup's own ` +
         `trades paid in the last seven days, and whether its levels held behind that. Every ` +
@@ -1521,7 +1667,11 @@ export function buildCoachPrompt(
       (digest.levelEdge?.touches ?? 0) > 0,
       // Gated on the mode, not on whether an image happened to arrive: the rules about
       // naming setups from the record apply even when the trader attached no screenshot.
-      mode === 'learn'
+      mode === 'learn',
+      // Appended whenever the extreme log is in the prompt, the same way the level-touch
+      // rules are: a held rate reads like a forecast, so it is never quoted in a mode whose
+      // guardrails did not mention it.
+      (digest.extremeRead?.points ?? 0) > 0
     ),
     userPrompt,
   };
@@ -1699,6 +1849,28 @@ export function parseCoachResponse(
       whatItMeans: asText(obj.whatItMeans, 'whatItMeans'),
       // The step is required: the mode exists to point at what to log next, so an answer
       // that only describes the record would leave the trader with nothing to do.
+      nextStep: asText(obj.nextStep, 'nextStep'),
+      motivation: asText(obj.motivation, 'motivation'),
+    };
+  }
+
+  if (mode === 'extremes') {
+    const patternsRaw = Array.isArray(obj.patterns) ? obj.patterns : [];
+    const patterns = patternsRaw
+      .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+      .map((item) => ({
+        condition: typeof item.condition === 'string' ? item.condition.trim() : '',
+        heldRate: typeof item.heldRate === 'string' ? item.heldRate.trim() : '',
+        evidence: typeof item.evidence === 'string' ? item.evidence.trim() : '',
+      }))
+      .filter((item) => item.condition);
+
+    return {
+      headline: asText(obj.headline, 'headline'),
+      bestPattern: asText(obj.bestPattern, 'bestPattern'),
+      patterns,
+      notYetReadable: asTextList(obj.notYetReadable, 'notYetReadable'),
+      whatItMeans: asText(obj.whatItMeans, 'whatItMeans'),
       nextStep: asText(obj.nextStep, 'nextStep'),
       motivation: asText(obj.motivation, 'motivation'),
     };

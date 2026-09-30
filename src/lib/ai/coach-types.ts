@@ -34,6 +34,13 @@ export type CoachMode =
    * repeat. Journal data and those images only; no market opinion.
    */
   | 'learn'
+  /**
+   * The clock read: where the trader's own logged session extremes printed, and how often
+   * the regular session kept an overnight extreme that printed in a given hour. Journal data
+   * only — the log is what they recorded, not a live market read, and no hour is ever
+   * forecast forward.
+   */
+  | 'extremes'
   | 'trade'
   | 'prep'
   | 'postclose'
@@ -323,6 +330,39 @@ export interface EdgeResponse {
   motivation: string;
 }
 
+/** One hour from the session-extreme log, as the clock read reports it. */
+export interface ExtremeCondition {
+  /** The hour the bucket covers, e.g. "MES overnight high at 3am". */
+  condition: string;
+  /** The held rate and the counts it was drawn from, as text so the counts always travel with it. */
+  heldRate: string;
+  /** The held / taken-out / not-judged numbers behind the rate. */
+  evidence: string;
+}
+
+/**
+ * The clock read: what the trader's own session-extreme log says about the hours their
+ * overnight extremes print in, and what is still too thin to say.
+ *
+ * Every field is about the recorded sessions, never a forecast. The log says where price
+ * already printed and whether the regular session reached past it; it says nothing about
+ * what any hour will do next, and the fields are shaped so the counts cannot be dropped.
+ */
+export interface ExtremeResponse {
+  headline: string;
+  /** The strongest readable hour, or a plain statement that nothing is readable yet. */
+  bestPattern: string;
+  /** Only hours that carry a readable held rate. */
+  patterns: ExtremeCondition[];
+  /** Hours that are logged but too thin to read, counts only. */
+  notYetReadable: string[];
+  /** What the log shows has happened, stated as what has happened. */
+  whatItMeans: string;
+  /** One concrete thing to log that would sharpen the record. */
+  nextStep: string;
+  motivation: string;
+}
+
 /**
  * The weekly setup read: which of the trader's setups the last seven days say is working.
  *
@@ -460,6 +500,7 @@ export type CoachResponse =
   | WeeklyResponse
   | FormResponse
   | EdgeResponse
+  | ExtremeResponse
   | SetupsResponse
   | LearnResponse
   | AskResponse

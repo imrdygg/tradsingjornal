@@ -11,6 +11,7 @@ import {
   DailyReview,
   Instrument,
   LevelTouch,
+  SessionExtreme,
   Setup,
   Trade,
   TradingDay,
@@ -19,6 +20,7 @@ import { buildJournalDigest } from '../../lib/ai/journal-digest';
 import type {
   BriefResponse,
   CoachMode,
+  ExtremeResponse,
   FormResponse,
   SetupsResponse,
   WeeklyResponse,
@@ -41,6 +43,7 @@ import { ApproachAlertCard } from './ApproachAlertCard';
 import { COACH_WAIT_STEPS } from '../common/AiThinking';
 import { BehaviorCard } from './BehaviorCard';
 import { RecentFormCard } from './RecentFormCard';
+import { ExtremeReadCard } from './ExtremeReadCard';
 import { SetupWeekCard } from './SetupWeekCard';
 import { instrumentSymbol } from '../../lib/trading/instruments';
 import { formatTimestamp } from '../../lib/storage/date-utils';
@@ -62,6 +65,8 @@ interface CoachViewProps {
   maxDrawdown?: number | null;
   /** The level-touch log, so the coach can find the break-and-run edge. */
   levelTouches: LevelTouch[];
+  /** The session-extreme log, so the coach can read where the highs and lows printed. */
+  sessionExtremes: SessionExtreme[];
 }
 
 interface RequestState {
@@ -104,6 +109,7 @@ export const CoachView: React.FC<CoachViewProps> = ({
   timezone,
   maxDrawdown,
   levelTouches,
+  sessionExtremes,
 }) => {
   const digest = useMemo(
     () =>
@@ -117,6 +123,7 @@ export const CoachView: React.FC<CoachViewProps> = ({
         maxDrawdown,
         timezone,
         levelTouches,
+        sessionExtremes,
       }),
     [
       trades,
@@ -128,6 +135,7 @@ export const CoachView: React.FC<CoachViewProps> = ({
       timezone,
       maxDrawdown,
       levelTouches,
+      sessionExtremes,
     ]
   );
 
@@ -135,6 +143,7 @@ export const CoachView: React.FC<CoachViewProps> = ({
   const [weeklyState, setWeeklyState] = useState<RequestState>(IDLE);
   const [formState, setFormState] = useState<RequestState>(IDLE);
   const [setupsState, setSetupsState] = useState<RequestState>(IDLE);
+  const [extremesState, setExtremesState] = useState<RequestState>(IDLE);
 
   /**
    * Runs one of the reads this tab keeps.
@@ -174,6 +183,9 @@ export const CoachView: React.FC<CoachViewProps> = ({
   /** The week read, once one has come back. Null keeps the block from rendering at all. */
   const setupsRead =
     setupsState.result?.ok ? (setupsState.result.data as SetupsResponse) : null;
+  /** The clock read, once one has come back. Null keeps the result block from rendering. */
+  const extremesRead =
+    extremesState.result?.ok ? (extremesState.result.data as ExtremeResponse) : null;
 
   return (
     <div className="space-y-5">
@@ -322,6 +334,23 @@ export const CoachView: React.FC<CoachViewProps> = ({
           </CoachResultPanel>
         )}
       </CoachCard>
+
+      {/*
+        Where the session extremes printed, read from the trader's own log.
+
+        Placed straight after the weekly setup read because it is the same kind of thing: a
+        deterministic count from their own records, with the coach's writing as an explanation
+        of it rather than a replacement for it.
+      */}
+      <ExtremeReadCard
+        read={digest.extremeRead}
+        timezone={timezone}
+        loading={extremesState.loading}
+        failure={extremesState.failure}
+        answer={extremesRead}
+        writtenAt={extremesState.writtenAt}
+        onRun={() => run('extremes', setExtremesState)}
+      />
 
       {/* What the coach is allowed to know. Shown up front so the advice can be judged. */}
       <CoachCard className="space-y-2">

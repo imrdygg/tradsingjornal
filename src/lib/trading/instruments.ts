@@ -173,6 +173,30 @@ export const DEFAULT_INSTRUMENTS: Instrument[] = [
   },
 ];
 
+/**
+ * The instruments whose session extremes the trader logs.
+ *
+ * Deliberately their own short list rather than every contract in the catalog: the log
+ * exists to answer a question about the two index micros and the one energy micro they
+ * actually trade, and a picker with fifteen contracts on it turns a ten-second entry into
+ * a search. Matched by symbol, so a journal that has renamed or deactivated one still
+ * offers the others.
+ */
+export const TRACKED_EXTREME_SYMBOLS: readonly string[] = ['MES', 'MNQ', 'MCL'];
+
+/**
+ * The tracked instruments a catalog actually holds, in catalog order.
+ *
+ * Falls back to the whole catalog when it holds none of them — a trader who deleted all
+ * three should still be able to log an extreme for something, rather than meet a picker
+ * with nothing in it.
+ */
+export function trackedExtremeInstruments(instruments: Instrument[]): Instrument[] {
+  const wanted = new Set(TRACKED_EXTREME_SYMBOLS.map((symbol) => symbol.toUpperCase()));
+  const tracked = instruments.filter((instrument) => wanted.has(instrument.symbol.toUpperCase()));
+  return tracked.length ? tracked : instruments;
+}
+
 export function findInstrument(instruments: Instrument[], symbolOrId: string): Instrument {
   const match = instruments.find(
     (i) =>

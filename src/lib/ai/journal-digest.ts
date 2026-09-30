@@ -4,6 +4,7 @@ import {
   LevelKind,
   LevelTouch,
   QuestionAnswer,
+  SessionExtreme,
   Setup,
   TouchOutcome,
   Trade,
@@ -27,6 +28,13 @@ import {
   summarizeTouches,
   type LevelEdgeBucket,
 } from '../analytics/level-edge';
+import {
+  buildExtremeDays,
+  buildOvernightHourPatterns,
+  MIN_PATTERN_SESSIONS,
+  summarizeExtremes,
+  type ExtremeHourPattern,
+} from '../analytics/session-extremes';
 
 /**
  * The journal digest is the *only* factual basis the AI coach is allowed to use.
@@ -140,6 +148,36 @@ export interface LevelEdge {
   thinConditions: LevelEdgeBucket[];
   /** The most recent touches, so the coach can talk about specific levels. */
   recentTouches: DigestLevelTouch[];
+}
+
+/**
+ * The session-extreme log, reduced to what the coach may quote about it.
+ *
+ * The trader logs where each session's high and low printed on the clock; this is the
+ * tally that comes back out — when the overnight extreme printed in a given hour, did the
+ * regular session keep it, and how often. It is a count over their own recorded sessions
+ * and nothing else: the same split as the level-touch record, into hours with a readable
+ * sample and hours that are logged but still too thin to carry a rate, so the model cannot
+ * quote a percentage from two sessions.
+ */
+export interface ExtremeRead {
+  /** Symbol-and-date rows in the log, however many of their four slots are filled. */
+  sessions: number;
+  /** Individual extremes logged. */
+  points: number;
+  /** Instruments the log covers. */
+  symbols: string[];
+  /** The oldest and newest session dates, or null when the log is empty. */
+  firstDate: string | null;
+  lastDate: string | null;
+  /** Records whose time could not be read, so they are absent from the tally. */
+  unreadable: number;
+  /** Decided sessions an hour needs before its rate may be read as a pattern. */
+  minSessions: number;
+  /** Hours with a readable sample, best held rate first. */
+  patterns: ExtremeHourPattern[];
+  /** Hours logged but still too thin to read, so the coach reports counts, not rates. */
+  thinPatterns: ExtremeHourPattern[];
 }
 
 /**
@@ -306,6 +344,12 @@ export interface JournalDigest {
    * trader can still act on, with the verdict computed here rather than by the model.
    */
   setupWeek: SetupWeek;
+  /**
+   * Where each session's high and low printed on the clock, as the trader logged them:
+   * the one place the coach can answer "when my overnight extreme prints at 3am, has the
+   * open kept it?".
+   */
+  extremeRead: ExtremeRead;
   /**
    * The most recent closed trades, one entry each, newest first.
    *
@@ -676,6 +720,32 @@ function buildLevelEdge(
   };
 }
 
+export /**
+ * Turns the raw session-extreme log into the hour tally the coach reasons about.
+ *
+ * The two lists are the whole point of splitting it, exactly as the level-touch record is
+ * split: `patterns` holds only the hours with a real decided sample, `thinPatterns` keeps
+ * the ones that are logged but not yet decidable, so the coach can say "the MES overnight
+ * high printed at 3am and the open kept it in 4 of 5 sessions" without also saying
+ * "2 of 2" as if it were a rate.
+ */
+function buildExtremeRead(extremes: SessionExtreme[]): ExtremeRead {
+  const summary = summarizeExtremes(extremes);
+  const all = buildOvernightHourPatterns(buildExtremeDays(extremes));
+
+  return {
+    sessions: summary.sessions,
+    points: summary.points,
+    symbols: summary.symbols,
+    firstDate: summary.firstDate,
+    lastDate: summary.lastDate,
+    unreadable: summary.unreadable,
+    minSessions: MIN_PATTERN_SESSIONS,
+    patterns: all.filter((pattern) => pattern.enoughData),
+    thinPatterns: all.filter((pattern) => !pattern.enoughData).slice(0, 8),
+  };
+}
+
 export function buildJournalDigest(input: {
   trades: Trade[];
   tradingDays: TradingDay[];
@@ -696,6 +766,15 @@ export function buildJournalDigest(input: {
    * builds a digest; absent is read as "nothing logged", never as a rate of zero.
    */
   levelTouches?: LevelTouch[];
+  /**
+   * The trader's session-extreme log: where each session's high and low printed on the
+   * clock, overnight and regular, for the instruments they trade.
+   *
+   * Optional for the same reason as the touches above: a caller with no extreme data — and
+   * every older test — still builds a digest, and absent is read as "nothing logged", never
+   * as a finding.
+   */
+  sessionExtremes?: SessionExtreme[];
 }): JournalDigest {
   const { trades, tradingDays, reviews, setups, instruments, todayTradeDate, timezone } = input;
 
@@ -913,6 +992,9 @@ export function buildJournalDigest(input: {
   // ---- The break-and-run record -------------------------------------------
   const levelEdge = buildLevelEdge(input.levelTouches ?? [], instruments, setups);
 
+  // ---- Where the session extremes printed --------------------------------
+  const extremeRead = buildExtremeRead(input.sessionExtremes ?? []);
+
   // ---- The week, one setup at a time --------------------------------------
   // The same seven days read twice: what each setup's trades paid, and how its levels held.
   // Built here rather than per mode so the numbers the coach writes about are the numbers
@@ -961,6 +1043,17 @@ export function buildJournalDigest(input: {
       `Only ${levelEdge.decided} of ${levelEdge.touches} logged level touch(es) have a decided ` +
         `outcome (price broke the level and was watched from there). ${MIN_DECIDED} decided ` +
         `touches are needed before a hold rate means anything.`
+    );
+  }
+
+  // The same warning for the session-extreme log, for the same reason: an hour that has
+  // been logged a few times is a tally, and the coach must not dress it up as a pattern.
+  if (extremeRead.points > 0 && extremeRead.patterns.length === 0) {
+    caveats.push(
+      `No session-extreme hour has a readable sample yet: ${extremeRead.sessions} session(s) ` +
+        `logged, and ${MIN_PATTERN_SESSIONS} decided sessions are needed for any hour before ` +
+        `it means anything. The extreme counts are a tally of what was logged so far, not a ` +
+        `pattern.`
     );
   }
 
@@ -1044,6 +1137,7 @@ export function buildJournalDigest(input: {
     recentForm,
     behavior,
     levelEdge,
+    extremeRead,
     setupWeek,
     tradeSamples,
     traderOwnWords: {

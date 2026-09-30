@@ -10,6 +10,7 @@ import {
   PlanSnapshot,
   PatternStudy,
   LevelTouch,
+  SessionExtreme,
 } from '../../types';
 import { DEFAULT_INSTRUMENTS, INSTRUMENT_CATALOG_VERSION } from '../trading/instruments';
 import { DEFAULT_RISK_TIER_AMOUNTS } from '../trading/risk-tiers';
@@ -106,6 +107,7 @@ const STORAGE_KEYS = {
   REVIEWS: 'ptj_reviews_v1',
   PATTERN_STUDIES: 'ptj_pattern_studies_v1',
   LEVEL_TOUCHES: 'ptj_level_touches_v1',
+  SESSION_EXTREMES: 'ptj_session_extremes_v1',
   SETUP_CATALOG: 'ptj_setup_catalog_v1',
   LESSON_ACK: 'ptj_lesson_ack_v1',
   RECOVERY: 'ptj_recovery_v1',
@@ -165,6 +167,16 @@ export interface StorageState {
    * list as empty rather than as an error.
    */
   levelTouches?: LevelTouch[];
+  /**
+   * The trader's own record of where each session's high and low printed on the clock,
+   * for the instruments they trade.
+   *
+   * Optional for the same reason as the lists above — a snapshot saved before this feature
+   * existed must still load, and every reader treats a missing list as empty rather than as
+   * an error. It is journal data, not playbook material, so a reset clears it with the days
+   * it belongs to.
+   */
+  sessionExtremes?: SessionExtreme[];
   /**
    * The carried-forward lesson the trader has acknowledged, if any.
    *
@@ -936,6 +948,7 @@ export const storage = {
       reviews: this.getReviews(),
       patternStudies: this.getPatternStudies(),
       levelTouches: this.getLevelTouches(),
+      sessionExtremes: this.getSessionExtremes(),
       lessonAck: this.getLessonAck(),
     };
     return JSON.stringify(state, null, 2);
@@ -954,6 +967,7 @@ export const storage = {
       // cannot wipe study notes that are already here.
       if (parsed.patternStudies) setItem(STORAGE_KEYS.PATTERN_STUDIES, parsed.patternStudies);
       if (parsed.levelTouches) setItem(STORAGE_KEYS.LEVEL_TOUCHES, parsed.levelTouches);
+      if (parsed.sessionExtremes) setItem(STORAGE_KEYS.SESSION_EXTREMES, parsed.sessionExtremes);
       // Written even when null (an explicit "nothing acknowledged"), so adopting a snapshot
       // carries that state across too. A backup taken before this existed has no key at
       // all and leaves what is here untouched.
@@ -1023,6 +1037,43 @@ export const storage = {
     );
   },
 
+  getSessionExtremes(): SessionExtreme[] {
+    return getItem<SessionExtreme[]>(STORAGE_KEYS.SESSION_EXTREMES, []);
+  },
+
+  /**
+   * Upserts one session extreme, newest first.
+   *
+   * Keyed by slot as well as by id, because a slot holds one print: logging the same
+   * symbol, date, kind and window again is a correction of that reading rather than a
+   * second one, and storing both would let a typo and its fix sit side by side in the
+   * record. A record moved to a different slot — the time edited from 3am to 11am — is
+   * replaced there too, so the same extreme can never be counted twice.
+   */
+  saveSessionExtreme(extreme: SessionExtreme): SessionExtreme {
+    const extremes = this.getSessionExtremes();
+    const updated: SessionExtreme = { ...extreme, updatedAt: new Date().toISOString() };
+    const next = extremes.filter(
+      (existing) =>
+        existing.id !== extreme.id &&
+        !(
+          existing.symbol === extreme.symbol &&
+          existing.tradeDate === extreme.tradeDate &&
+          existing.kind === extreme.kind &&
+          existing.window === extreme.window
+        )
+    );
+    setItem(STORAGE_KEYS.SESSION_EXTREMES, [updated, ...next]);
+    return updated;
+  },
+
+  deleteSessionExtreme(id: string): void {
+    setItem(
+      STORAGE_KEYS.SESSION_EXTREMES,
+      this.getSessionExtremes().filter((extreme) => extreme.id !== id)
+    );
+  },
+
   /**
    * Clears every journal entry — trades, daily plans and reviews — while
    * keeping the trader's settings, instruments and playbook set-ups. This is
@@ -1043,6 +1094,9 @@ export const storage = {
       // The touches are the record of what a level did; they go with the days they
       // were taken on, unlike the playbook material that survives a reset.
       STORAGE_KEYS.LEVEL_TOUCHES,
+      // The extremes are the same kind of thing: a record of one session, not material
+      // about the trader's setups.
+      STORAGE_KEYS.SESSION_EXTREMES,
       STORAGE_KEYS.LESSON_ACK,
       // "Nothing can be undone" is the promise this reset makes, so the copy set aside
       // from before it goes too rather than becoming a way to undo it after all.
@@ -1072,6 +1126,7 @@ export const storage = {
       STORAGE_KEYS.REVIEWS,
       STORAGE_KEYS.PATTERN_STUDIES,
       STORAGE_KEYS.LEVEL_TOUCHES,
+      STORAGE_KEYS.SESSION_EXTREMES,
       STORAGE_KEYS.SETUP_CATALOG,
       STORAGE_KEYS.LESSON_ACK,
       STORAGE_KEYS.RECOVERY,

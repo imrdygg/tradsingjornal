@@ -142,6 +142,62 @@ export interface TradingDay {
   updatedAt: string;
 }
 
+// ---------------------------------------------------------------------------
+// Session extremes — where each session's high and low printed on the clock
+//
+// The trader logs the extremes of the instruments they trade by hand: when the
+// overnight high printed, when the overnight low did, and the same again for the
+// regular session. Nothing in the app can fetch those times (the quote read gives a
+// day's high and low with no clock on them), so the log is the trader's own record,
+// exactly like the level-touch log beside it.
+//
+// Two windows, because the question being asked is about the open: an extreme that
+// prints at 3am is a different fact from one that prints at 11am, and only the first
+// says anything about how the regular session started.
+// ---------------------------------------------------------------------------
+
+/** The two windows an extreme can print in, in the order they happen. */
+export type SessionWindow = 'overnight' | 'regular';
+
+/** Which end of the range a logged extreme is. */
+export type ExtremeKind = 'high' | 'low';
+
+export interface SessionExtreme {
+  id: string;
+  userId: string;
+  /**
+   * YYYY-MM-DD — the session this extreme belongs to, in the trader's own calendar.
+   *
+   * Denormalised on purpose, like a level touch's date: the stats group extremes by
+   * symbol, date and window without joining back to a day record, and a logged extreme
+   * stays readable even if its day is ever deleted.
+   */
+  tradeDate: string;
+  instrumentId: string;
+  /**
+   * The instrument's symbol at the time it was logged (`MES`, `MNQ`, `MCL`).
+   *
+   * Carried on the record rather than resolved from `instrumentId` so a renamed or
+   * deleted instrument cannot quietly move a session's history onto something else.
+   */
+  symbol: string;
+  kind: ExtremeKind;
+  /** ET clock time the extreme printed at, `HH:MM`. */
+  time: string;
+  price: number;
+  /**
+   * Which window `time` falls in, derived when it was logged and then stored.
+   *
+   * Stored rather than recomputed so that a later change to the window boundaries
+   * cannot silently reclassify a record the trader already made. `time` is still the
+   * source of the clock hour the stats read.
+   */
+  window: SessionWindow;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface TradeExecutionReview {
   id: string;
   tradeId: string;

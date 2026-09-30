@@ -26,8 +26,11 @@ import { Instrument } from '../../types';
  * 5 — micro WTI announced once more, from a version a journal that somehow passed 4
  *     without receiving it has not yet reached. The tag picks the version, not the wish:
  *     announcing a contract in a version the journal's marker already passed is a no-op.
+ * 6 — micro WTI announced again, because the 5 tag could not reach a journal whose marker
+ *     had already recorded 5 without holding it. No journal can have recorded 6 yet, so
+ *     this reaches every one; a journal that already holds MCL is untouched.
  */
-export const INSTRUMENT_CATALOG_VERSION = 5;
+export const INSTRUMENT_CATALOG_VERSION = 6;
 
 export const DEFAULT_INSTRUMENTS: Instrument[] = [
   {
@@ -156,12 +159,12 @@ export const DEFAULT_INSTRUMENTS: Instrument[] = [
   // Energy. Micro WTI is 100 barrels, so a $1.00 move in the barrel price is $100 per
   // contract — a tenth of full-size crude, which is the point of it.
   //
-  // Tagged at version 5, two releases past the 2 it first arrived in: a journal whose catalog
-  // marker had already passed micro WTI but which did not hold it was reaching a state the
-  // upgrade rule reads as a deliberate removal. Re-announcing it is the only way that journal
-  // receives it, and a journal that already has it is untouched — the merge skips anything
-  // already present by symbol or id. The version must be one the broken journal has not yet
-  // recorded, so each attempt advances the marker rather than reusing it.
+  // Tagged at version 6, three releases past the 2 it first arrived in: a journal whose
+  // catalog marker had already passed micro WTI but which did not hold it was reaching a
+  // state the upgrade rule reads as a deliberate removal. Re-announcing it is the only way
+  // that journal receives it, and a journal that already has it is untouched — the merge
+  // skips anything already present by symbol or id. The version must be one the journal has
+  // not yet recorded, so each attempt advances the marker rather than reusing it.
   {
     id: 'mcl',
     symbol: 'MCL',
@@ -170,7 +173,7 @@ export const DEFAULT_INSTRUMENTS: Instrument[] = [
     tickSize: 0.01,
     tickValue: 1,
     active: true,
-    since: 5,
+    since: 6,
   },
   {
     id: 'cl',
@@ -196,15 +199,32 @@ export const DEFAULT_INSTRUMENTS: Instrument[] = [
 export const TRACKED_EXTREME_SYMBOLS: readonly string[] = ['MES', 'MNQ', 'MCL'];
 
 /**
- * The tracked instruments a catalog actually holds, in catalog order.
+ * The tracked instruments to offer in the extremes log, in the order they are logged.
  *
- * Falls back to the whole catalog when it holds none of them — a trader who deleted all
- * three should still be able to log an extreme for something, rather than meet a picker
- * with nothing in it.
+ * The journal's own entry is used whenever the catalog holds it, so a trader who corrected a
+ * point value or deactivated one of the three sees their version. When the catalog does not
+ * hold one, the built-in definition is used rather than leaving a gap: this log exists to
+ * record these three contracts specifically, and it must not depend on a catalog migration
+ * having delivered them — the failure that left micro WTI out of the trade form is exactly
+ * the case this covers.
+ *
+ * Falls back to the whole catalog only when the list is unusable, so the picker is never
+ * empty for a trader who has removed all three from their own catalog.
  */
 export function trackedExtremeInstruments(instruments: Instrument[]): Instrument[] {
-  const wanted = new Set(TRACKED_EXTREME_SYMBOLS.map((symbol) => symbol.toUpperCase()));
-  const tracked = instruments.filter((instrument) => wanted.has(instrument.symbol.toUpperCase()));
+  const bySymbol = new Map<string, Instrument>();
+  for (const instrument of instruments) {
+    bySymbol.set(instrument.symbol.trim().toUpperCase(), instrument);
+  }
+
+  const tracked: Instrument[] = [];
+  for (const symbol of TRACKED_EXTREME_SYMBOLS) {
+    const key = symbol.toUpperCase();
+    const chosen =
+      bySymbol.get(key) ?? DEFAULT_INSTRUMENTS.find((item) => item.symbol.toUpperCase() === key);
+    if (chosen && !tracked.some((existing) => existing.id === chosen.id)) tracked.push(chosen);
+  }
+
   return tracked.length ? tracked : instruments;
 }
 

@@ -205,6 +205,18 @@ export interface StorageState {
    * acknowledgement is about the lesson, not about the device it was read on.
    */
   lessonAck?: LessonAcknowledgement | null;
+  /**
+   * The built-in catalog version this copy of the journal has been brought up to.
+   *
+   * It travels with the instruments because the two must agree: the merge adds a contract
+   * only when its `since` is newer than this number, so a snapshot that carries an
+   * instrument list without the marker it was brought to would keep reintroducing the very
+   * contract it is missing — the marker stays current on the device and the merge returns
+   * early. Optional for the same reason as the lists above; a snapshot without it is read
+   * as version 1, which brings the whole built-in catalog up to date rather than trusting
+   * a marker that would skip it.
+   */
+  instrumentCatalogVersion?: number;
 }
 
 /**
@@ -405,6 +417,12 @@ export const storage = {
    * returned and only the version marker is written — the list itself lands in storage the
    * first time the trader actually changes it.
    */
+  /** The catalog version this device has been brought up to, or 1 before it was recorded. */
+  getInstrumentCatalogVersion(): number {
+    const stored = getItem<number>(STORAGE_KEYS.INSTRUMENT_CATALOG, 1);
+    return Number.isFinite(stored) && stored > 0 ? stored : 1;
+  },
+
   ensureInstrumentCatalog(): Instrument[] {
     const stored = getItem<Instrument[] | null>(STORAGE_KEYS.INSTRUMENTS, null);
     const current = getItem<number>(STORAGE_KEYS.INSTRUMENT_CATALOG, 1);
@@ -963,6 +981,7 @@ export const storage = {
     const state: StorageState = {
       profile: this.getProfile(),
       instruments: this.getInstruments(),
+      instrumentCatalogVersion: this.getInstrumentCatalogVersion(),
       setups: this.getSetups(),
       tradingDays: this.getTradingDays(),
       trades: this.getTrades(),
@@ -980,7 +999,20 @@ export const storage = {
     try {
       const parsed = JSON.parse(jsonStr) as Partial<StorageState>;
       if (parsed.profile) setItem(STORAGE_KEYS.PROFILE, parsed.profile);
-      if (parsed.instruments) setItem(STORAGE_KEYS.INSTRUMENTS, parsed.instruments);
+      if (parsed.instruments) {
+        setItem(STORAGE_KEYS.INSTRUMENTS, parsed.instruments);
+        // The version must move with the instruments, or the merge in
+        // `ensureInstrumentCatalog` reads the device's own current marker against a list
+        // that never reached it and skips exactly the contracts the snapshot is missing.
+        // A snapshot that carries no version predates the field, so it is read as 1 and
+        // the whole built-in catalog is brought up to date.
+        const version =
+          typeof parsed.instrumentCatalogVersion === 'number' &&
+          parsed.instrumentCatalogVersion > 0
+            ? parsed.instrumentCatalogVersion
+            : 1;
+        setItem(STORAGE_KEYS.INSTRUMENT_CATALOG, version);
+      }
       if (parsed.setups) setItem(STORAGE_KEYS.SETUPS, parsed.setups);
       if (parsed.tradingDays) setItem(STORAGE_KEYS.DAYS, parsed.tradingDays);
       if (parsed.trades) setItem(STORAGE_KEYS.TRADES, parsed.trades);

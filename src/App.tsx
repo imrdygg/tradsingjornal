@@ -284,6 +284,9 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     () => ({
       profile,
       instruments,
+      // Kept with the instruments it describes, so a cloud copy carries the version the
+      // list was brought to and the adopting device does not re-run a merge that skips it.
+      instrumentCatalogVersion: storage.getInstrumentCatalogVersion(),
       setups,
       tradingDays,
       trades,

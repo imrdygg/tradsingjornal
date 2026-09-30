@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { DailyReview, DailyReviewQuestions, LevelTouch, Setup, Trade, TradingDay } from '../../../types';
-import { buildJournalDigest } from '../journal-digest';
+import { buildJournalDigest, FULL_HISTORY_TRADE_SAMPLES } from '../journal-digest';
 import { DEFAULT_INSTRUMENTS } from '../../trading/instruments';
 
 const ALL_YES: DailyReviewQuestions = {
@@ -903,5 +903,24 @@ describe('trade samples', () => {
     );
 
     expect(build({ trades }).tradeSamples).toHaveLength(20);
+  });
+
+  it('lets the picture search read the whole history, bounded on both ends', () => {
+    const trades = Array.from({ length: 60 }, (_, i) =>
+      makeTrade({
+        id: `t${i}`,
+        exitTime: `2026-08-${String((i % 28) + 1).padStart(2, '0')}T15:00:00.000Z`,
+      })
+    );
+
+    // The default window is unchanged, so every other mode reads what it always did.
+    expect(build({ trades }).tradeSamples).toHaveLength(20);
+    // The search reads all sixty — the whole history is what it is for.
+    expect(
+      build({ trades, tradeSampleLimit: FULL_HISTORY_TRADE_SAMPLES }).tradeSamples
+    ).toHaveLength(60);
+    // A caller cannot ask past the ceiling, nor for fewer than one.
+    expect(build({ trades, tradeSampleLimit: 10_000 }).tradeSamples).toHaveLength(60);
+    expect(build({ trades, tradeSampleLimit: 0 }).tradeSamples).toHaveLength(1);
   });
 });

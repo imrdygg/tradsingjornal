@@ -422,6 +422,17 @@ const MAX_RECENT_TOUCHES = 12;
  */
 const MAX_TRADE_SAMPLES = 20;
 
+/**
+ * The whole-history window the picture search reads.
+ *
+ * A search is retrieval, not pattern-finding: the trader hands in one chart and wants back
+ * the trades that resemble it, so recall rises with every row and the older trades are
+ * exactly the ones a twenty-row window drops. It is still bounded, because a journal can
+ * hold thousands of trades and the prompt is not free — a journal past this limit is told
+ * so in the card rather than silently truncated.
+ */
+export const FULL_HISTORY_TRADE_SAMPLES = 300;
+
 function round(value: number, dp = 2): number {
   if (!Number.isFinite(value)) return 0;
   const factor = 10 ** dp;
@@ -813,6 +824,14 @@ export function buildJournalDigest(input: {
    * as a finding.
    */
   sessionExtremes?: SessionExtreme[];
+  /**
+   * How many per-trade rows the digest carries, newest first.
+   *
+   * Defaults to the learner's window. The picture search passes the whole-history window,
+   * because it is resolving one chart against every trade rather than looking for a pattern
+   * that only a handful of rows would show.
+   */
+  tradeSampleLimit?: number;
 }): JournalDigest {
   const { trades, tradingDays, reviews, setups, instruments, todayTradeDate, timezone } = input;
 
@@ -969,8 +988,13 @@ export function buildJournalDigest(input: {
   // ---- Trade samples -------------------------------------------------------
   // The setup learner's raw material, newest first. A trade whose day is missing falls back
   // to the date on its own timestamp, the same rule the recent-form windows use.
+  // Bounded on both ends: a caller cannot ask for fewer than one or more than the whole-
+  // history ceiling, so a bad number from a client cannot blow up the prompt.
+  const sampleLimit = Number.isFinite(input.tradeSampleLimit)
+    ? Math.min(Math.max(1, Math.floor(input.tradeSampleLimit as number)), FULL_HISTORY_TRADE_SAMPLES)
+    : MAX_TRADE_SAMPLES;
   const tradeSamples: DigestTradeSample[] = closedNewestFirst
-    .slice(0, MAX_TRADE_SAMPLES)
+    .slice(0, sampleLimit)
     .map((trade) => {
       const day = dayById.get(trade.tradingDayId);
       return {

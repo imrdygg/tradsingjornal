@@ -773,7 +773,7 @@ function formatTradeSamplesForPrompt(samples: DigestTradeSample[] | undefined): 
 
   const withImages = list.filter((sample) => sample.imageCount > 0).length;
   lines.push(
-    `${list.length} recent closed trade(s), ${withImages} of them carrying a chart ` +
+    `${list.length} closed trade(s), newest first, ${withImages} of them carrying a chart ` +
       'screenshot. These are individual trades, not a summary: group them yourself and ' +
       'quote the counts behind anything you name.'
   );

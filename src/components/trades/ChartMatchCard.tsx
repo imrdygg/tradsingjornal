@@ -1,7 +1,7 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { AlertCircle, ImagePlus, Loader2, Search, Trash2, Upload } from 'lucide-react';
 import type { DailyReview, Instrument, LevelTouch, Setup, Trade, TradingDay } from '../../types';
-import { buildJournalDigest } from '../../lib/ai/journal-digest';
+import { buildJournalDigest, FULL_HISTORY_TRADE_SAMPLES } from '../../lib/ai/journal-digest';
 import type { MatchItem, MatchResponse } from '../../lib/ai/coach-types';
 import { CoachErrorCode, CoachResult, requestCoach } from '../../lib/ai/coach-client';
 import {
@@ -155,6 +155,9 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
         timezone,
         maxDrawdown,
         levelTouches,
+        // This is the one mode that is a search rather than a pattern read, so it is handed
+        // the whole history instead of the learner's twenty-row window.
+        tradeSampleLimit: FULL_HISTORY_TRADE_SAMPLES,
       }),
     [
       trades,
@@ -277,8 +280,9 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
           <h2 className="text-sm font-bold text-zinc-100 tracking-tight">{heading}</h2>
           <p className="text-xs text-zinc-400 mt-0.5">
             Drop a chart you are looking at and the coach reads its shape, then shows the
-            trades in your own log that look like it. It searches what you have already done
-            — it is not a signal, and never a forecast.
+            trades in your own log that look like it — every closed trade you have recorded,
+            not just the recent ones. It searches what you have already done — it is not a
+            signal, and never a forecast.
           </p>
         </div>
       </div>
@@ -408,9 +412,9 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
         <>
           {searched < digest.dataSufficiency.closedTrades && (
             <p className="text-[11px] leading-relaxed text-amber-300/90">
-              The coach reads your {searched} most recent closed trades out of{' '}
-              {digest.dataSufficiency.closedTrades} logged. Older trades are not in this
-              search yet.
+              This search reads your {searched} most recent closed trades out of{' '}
+              {digest.dataSufficiency.closedTrades} logged. The oldest ones are beyond what a
+              single search can hold.
             </p>
           )}
 

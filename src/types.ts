@@ -51,11 +51,14 @@ export interface Setup {
    *
    * `'ai'` marks a draft the coach wrote from their own trade history and entry charts, so
    * it can be badged in the Playbook and never mistaken for one of the setups they trade.
-   * Absent means the trader's own — a built-in they kept, or one they typed by hand. A
-   * draft is an ordinary Setup everywhere else: the same edit, rename, disable and delete
-   * paths apply, and nothing treats it as read-only.
+   * `'ai-chart'` is the same, except the coach was handed a chart the trader uploaded and
+   * the trades it matched, and named the pattern from that — badged separately so a setup a
+   * chart search produced can be told from one the journal read produced. Absent means the
+   * trader's own — a built-in they kept, or one they typed by hand. A draft is an ordinary
+   * Setup everywhere else: the same edit, rename, disable and delete paths apply, and
+   * nothing treats it as read-only.
    */
-  origin?: 'ai';
+  origin?: 'ai' | 'ai-chart';
   createdAt: string;
 }
 

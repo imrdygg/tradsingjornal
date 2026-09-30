@@ -547,8 +547,11 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
           const isFocused = nameMatches(focusSetupNames);
           const isWatched = nameMatches(watchedSetupNames);
           // Anything the coach wrote into the playbook is badged, so the trader can see at
-          // a glance which setups are theirs and which the model learned.
-          const isAiDraft = s.origin === 'ai';
+          // a glance which setups are theirs and which the model learned. A setup a picture
+          // search named carries a second badge, so it can be told from one the journal read
+          // wrote — the two are made by different reads from different evidence.
+          const isAiDraft = s.origin === 'ai' || s.origin === 'ai-chart';
+          const namedFromChart = s.origin === 'ai-chart';
 
           return (
             <div
@@ -607,6 +610,16 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
                         >
                           <Sparkles className="w-3 h-3" />
                           AI draft
+                        </span>
+                      )}
+                      {namedFromChart && (
+                        <span
+                          id={`setup-chart-badge-${s.id}`}
+                          title="Named by the coach from a chart you searched with, and the trades it matched."
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono uppercase font-bold bg-sky-950/80 text-sky-300 border border-sky-800"
+                        >
+                          <ImageIcon className="w-3 h-3" />
+                          From a chart
                         </span>
                       )}
                     </span>

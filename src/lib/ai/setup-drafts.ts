@@ -12,8 +12,17 @@ import type { LearnedSetup } from './coach-types';
  * into two slightly different kinds of setup.
  */
 
-/** Turns one proposed setup into an editable draft for the playbook. */
-export function buildSetupDraft(learned: LearnedSetup): Setup {
+/**
+ * Turns one proposed setup into an editable draft for the playbook.
+ *
+ * `origin` says which read produced it: the playbook's own read over the journal, or a
+ * picture search that was handed a chart and the trades it matched. Both are AI drafts and
+ * behave identically from here; the difference exists only so the Playbook can label them.
+ */
+export function buildSetupDraft(
+  learned: LearnedSetup,
+  origin: NonNullable<Setup['origin']> = 'ai'
+): Setup {
   const rules = learned.entryRules.length
     ? ['', 'Entry rules:', ...learned.entryRules.map((rule) => `- ${rule}`)]
     : [];
@@ -24,7 +33,7 @@ export function buildSetupDraft(learned: LearnedSetup): Setup {
     description: [learned.description, ...rules, '', `Coach's evidence: ${learned.evidence}`]
       .join('\n')
       .trim(),
-    origin: 'ai',
+    origin,
     createdAt: new Date().toISOString(),
   };
 }
@@ -36,7 +45,11 @@ export function buildSetupDraft(learned: LearnedSetup): Setup {
  * proposal that merely repeats one the trader already keeps is dropped instead of shadowing
  * it. Duplicates inside a single answer are dropped for the same reason.
  */
-export function newSetupDrafts(proposed: LearnedSetup[], existing: Setup[]): Setup[] {
+export function newSetupDrafts(
+  proposed: LearnedSetup[],
+  existing: Setup[],
+  origin: NonNullable<Setup['origin']> = 'ai'
+): Setup[] {
   const taken = new Set(existing.map((setup) => setup.name.trim().toLowerCase()));
   const drafts: Setup[] = [];
 
@@ -45,7 +58,7 @@ export function newSetupDrafts(proposed: LearnedSetup[], existing: Setup[]): Set
     const key = name.toLowerCase();
     if (!name || taken.has(key)) continue;
     taken.add(key);
-    drafts.push(buildSetupDraft({ ...learned, name }));
+    drafts.push(buildSetupDraft({ ...learned, name }, origin));
   }
   return drafts;
 }

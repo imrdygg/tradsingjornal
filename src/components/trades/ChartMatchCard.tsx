@@ -664,7 +664,9 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
     }
 
     const proposed = (result.data as LearnResponse).setups;
-    const drafts = newSetupDrafts(proposed, setups);
+    // Marked as chart-named, so the Playbook can tell this setup from one the journal read
+    // wrote, while both behave identically from here.
+    const drafts = newSetupDrafts(proposed, setups, 'ai-chart');
     if (drafts.length) onAddSetups(drafts);
     setNaming({
       loading: false,

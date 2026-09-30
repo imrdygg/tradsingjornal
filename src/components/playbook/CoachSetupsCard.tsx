@@ -207,7 +207,7 @@ export const CoachSetupsCard: React.FC<CoachSetupsCardProps> = ({
         <CoachFact label="Setups you keep" value={`${setups.length}`} />
         <CoachFact
           label="AI drafts so far"
-          value={`${setups.filter((setup) => setup.origin === 'ai').length}`}
+          value={`${setups.filter((setup) => Boolean(setup.origin)).length}`}
         />
       </div>
 

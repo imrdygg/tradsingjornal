@@ -70,6 +70,25 @@ interface TradeFormModalProps {
   todayTrades?: Trade[];
 }
 
+/**
+ * The instrument a NEW trade opens on.
+ *
+ * The day's plan already names the contract the session is for, so the form starts there
+ * rather than on a fixed first entry: a trader whose plan says micro WTI should not have to
+ * reselect it on every trade. Falls back to the first contract in the catalog when the plan
+ * names nothing, or names something the journal no longer records.
+ */
+function planInstrumentId(day: TradingDay, instruments: Instrument[]): string {
+  const planned = (day.primaryInstrument ?? '').trim().toLowerCase();
+  const match = planned
+    ? instruments.find(
+        (instrument) =>
+          instrument.id.toLowerCase() === planned || instrument.symbol.toLowerCase() === planned
+      )
+    : undefined;
+  return match?.id ?? instruments[0]?.id ?? 'mes';
+}
+
 export const TradeFormModal: React.FC<TradeFormModalProps> = ({
   isOpen,
   onClose,
@@ -82,7 +101,7 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
   riskTiers = DEFAULT_RISK_TIER_AMOUNTS,
   todayTrades = [],
 }) => {
-  const [instrumentId, setInstrumentId] = useState('mes');
+  const [instrumentId, setInstrumentId] = useState(() => planInstrumentId(day, instruments));
   const [direction, setDirection] = useState<TradeDirection>('long');
   const [entryPrice, setEntryPrice] = useState('');
   const [initialStop, setInitialStop] = useState('');
@@ -158,7 +177,7 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
   // Initialize or reset form when modal opens
   useEffect(() => {
     if (editingTrade) {
-      setInstrumentId(editingTrade.instrumentId || 'mes');
+      setInstrumentId(editingTrade.instrumentId || planInstrumentId(day, instruments));
       setDirection(editingTrade.direction);
       setEntryPrice(editingTrade.entryPrice.toString());
       setInitialStop(editingTrade.initialStop.toString());
@@ -201,7 +220,7 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
         .toISOString()
         .slice(0, 16);
 
-      setInstrumentId(prefill.instrumentId || 'mes');
+      setInstrumentId(prefill.instrumentId || planInstrumentId(day, instruments));
       setDirection(prefill.direction || 'long');
       setEntryPrice(prefill.entryPrice !== undefined ? prefill.entryPrice.toString() : '');
       setInitialStop(prefill.initialStop !== undefined ? prefill.initialStop.toString() : '');
@@ -241,7 +260,7 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
         .toISOString()
         .slice(0, 16);
 
-      setInstrumentId('mes');
+      setInstrumentId(planInstrumentId(day, instruments));
       setDirection('long');
       setEntryPrice('');
       setInitialStop('');

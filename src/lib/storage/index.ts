@@ -13,7 +13,11 @@ import {
   SessionExtreme,
   ChartSearch,
 } from '../../types';
-import { DEFAULT_INSTRUMENTS, INSTRUMENT_CATALOG_VERSION } from '../trading/instruments';
+import {
+  DEFAULT_INSTRUMENTS,
+  INSTRUMENT_CATALOG_VERSION,
+  RETIRED_INSTRUMENT_IDS,
+} from '../trading/instruments';
 import { DEFAULT_RISK_TIER_AMOUNTS } from '../trading/risk-tiers';
 import { FOCUS_SETUP_NAMES } from '../playbook/focus-setups';
 import { timeframeOf } from '../analytics/session-extremes';
@@ -432,10 +436,23 @@ export const storage = {
       setItem(STORAGE_KEYS.INSTRUMENT_CATALOG, INSTRUMENT_CATALOG_VERSION);
       return DEFAULT_INSTRUMENTS;
     }
-    if (version >= INSTRUMENT_CATALOG_VERSION) return stored;
+
+    // Strip contracts that are no longer in the catalog before anything else. The merge
+    // below only ever adds, so a journal that received the full complex would keep it for
+    // good; this is what brings it back to the three the trader actually uses. It runs on
+    // every read, whatever the marker says, because a stale cloud copy can reintroduce the
+    // whole list.
+    const retired = new Set(RETIRED_INSTRUMENT_IDS.map((id) => id.toLowerCase()));
+    const kept = stored.filter((instrument) => !retired.has(instrument.id.trim().toLowerCase()));
+    const pruned = kept.length !== stored.length;
+
+    if (version >= INSTRUMENT_CATALOG_VERSION) {
+      if (pruned) setItem(STORAGE_KEYS.INSTRUMENTS, kept);
+      return kept;
+    }
 
     const known = new Set<string>();
-    for (const instrument of stored) {
+    for (const instrument of kept) {
       known.add(instrument.symbol.trim().toLowerCase());
       known.add(instrument.id.trim().toLowerCase());
     }
@@ -446,8 +463,8 @@ export const storage = {
         !known.has(instrument.id.trim().toLowerCase())
     );
 
-    const merged = arrivals.length ? [...stored, ...arrivals] : stored;
-    if (arrivals.length) setItem(STORAGE_KEYS.INSTRUMENTS, merged);
+    const merged = arrivals.length ? [...kept, ...arrivals] : kept;
+    if (arrivals.length || pruned) setItem(STORAGE_KEYS.INSTRUMENTS, merged);
     setItem(STORAGE_KEYS.INSTRUMENT_CATALOG, INSTRUMENT_CATALOG_VERSION);
     return merged;
   },

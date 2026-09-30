@@ -53,34 +53,20 @@ describe('the built-in catalog', () => {
     }
   });
 
-  it('values each micro contract at its real fraction of the full-size one', () => {
-    // micro, full size, and how many micros make one full contract.
-    const pairs: Array<[string, string, number]> = [
-      ['MES', 'ES', 10],
-      ['MNQ', 'NQ', 10],
-      ['MYM', 'YM', 10],
-      ['M2K', 'RTY', 10],
-      ['MGC', 'GC', 10],
-      // Silver is the odd one out: micro silver is 1,000oz against 5,000oz, so a fifth.
-      ['SIL', 'SI', 5],
-      ['MCL', 'CL', 10],
-    ];
-
-    for (const [micro, full, ratio] of pairs) {
-      expect(findInstrument(DEFAULT_INSTRUMENTS, micro).pointValue * ratio).toBe(
-        findInstrument(DEFAULT_INSTRUMENTS, full).pointValue
-      );
-    }
+  it('holds exactly the three contracts this journal is for', () => {
+    expect(DEFAULT_INSTRUMENTS.map((instrument) => instrument.symbol)).toEqual([
+      'MES',
+      'MNQ',
+      'MCL',
+    ]);
   });
 
   it('matches the dollar figures a trader would check by hand', () => {
     const pointValue = (symbol: string) => findInstrument(DEFAULT_INSTRUMENTS, symbol).pointValue;
 
-    expect(pointValue('ES')).toBe(50);
-    expect(pointValue('GC')).toBe(100);
-    expect(pointValue('SI')).toBe(5000);
-    expect(pointValue('CL')).toBe(1000);
-    expect(pointValue('M2K')).toBe(5);
+    expect(pointValue('MES')).toBe(5);
+    expect(pointValue('MNQ')).toBe(2);
+    expect(pointValue('MCL')).toBe(100);
   });
 
   it('can quote every contract it records, so no instrument silently has no live read', () => {
@@ -99,30 +85,17 @@ describe('the built-in catalog', () => {
 describe('findInstrumentByContract', () => {
   it('matches the full broker contract month code', () => {
     expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'MESZ5')?.symbol).toBe('MES');
-    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'ESH4')?.symbol).toBe('ES');
-    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'MYMZ5')?.symbol).toBe('MYM');
-    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'GCZ5')?.symbol).toBe('GC');
-    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'M2KZ5')?.symbol).toBe('M2K');
-  });
-
-  it('prefers the longest matching symbol', () => {
-    // MNQU6 must not be read as NQ, and MESZ5 must not be read as ES.
     expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'MNQU6')?.symbol).toBe('MNQ');
-    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'NQZ5')?.symbol).toBe('NQ');
-    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'MESZ5')?.symbol).toBe('MES');
+    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'MCLZ5')?.symbol).toBe('MCL');
   });
 
-  it('keeps each micro on its own side of the micro/full-size split', () => {
-    // Every one of these pairs shares a root with its full-size sibling, so reading "CLZ5"
-    // as MCL — or "MCLZ5" as CL — would put a trade on a contract ten times the size.
+  it('does not resolve a contract the journal no longer records', () => {
+    // ES, GC, CL and the rest were retired, so a broker export naming one must not be read
+    // as some other instrument just because its root is a prefix of a tracked symbol.
+    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'ESH4')).toBeUndefined();
+    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'GCZ5')).toBeUndefined();
+    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'CLZ5')).toBeUndefined();
     expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'MCLZ5')?.symbol).toBe('MCL');
-    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'CLZ5')?.symbol).toBe('CL');
-    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'MGCZ5')?.symbol).toBe('MGC');
-    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'GCZ5')?.symbol).toBe('GC');
-    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'SILZ5')?.symbol).toBe('SIL');
-    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'SIZ5')?.symbol).toBe('SI');
-    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'YMZ5')?.symbol).toBe('YM');
-    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'RTYZ5')?.symbol).toBe('RTY');
   });
 
   it('is case insensitive and returns undefined for unknown contracts', () => {

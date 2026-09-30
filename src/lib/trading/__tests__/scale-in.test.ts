@@ -47,18 +47,18 @@ describe('calculateScaleInPlan — weighted average / break-even', () => {
     expect(mnqPlan.dollarPerPointAfter).toBeCloseTo(8, 5);
     expect(mnqPlan.dollarPerTickAfter).toBeCloseTo(2, 5); // 0.25 tick * $8/pt
 
-    const es = findInstrument(DEFAULT_INSTRUMENTS, 'ES'); // $50/pt
-    const esPlan = calculateScaleInPlan({
+    const mcl = findInstrument(DEFAULT_INSTRUMENTS, 'MCL'); // $100/pt
+    const mclPlan = calculateScaleInPlan({
       direction: 'long',
       contracts: 1,
       entryPrice: 5000,
       currentPrice: 4990,
       addContracts: 1,
       addPrice: 4990,
-      pointValue: es.pointValue,
-      tickSize: es.tickSize,
+      pointValue: mcl.pointValue,
+      tickSize: mcl.tickSize,
     });
-    expect(esPlan.currentPnL).toBeCloseTo(-500, 5);
+    expect(mclPlan.currentPnL).toBeCloseTo(-1000, 5);
   });
 
   it('handles shorts symmetrically', () => {

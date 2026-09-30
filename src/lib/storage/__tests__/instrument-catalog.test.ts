@@ -102,24 +102,33 @@ describe('ensureInstrumentCatalog', () => {
 
     const result = storage.ensureInstrumentCatalog();
 
-    // Everything that arrived after this journal was created: micro WTI in one release,
-    // then the rest of the index, metals and energy complexes in the next.
-    expect(symbols(result)).toEqual(
-      expect.arrayContaining(['MCL', 'CL', 'GC', 'MGC', 'SI', 'SIL', 'YM', 'M2K', 'RTY'])
-    );
+    // Micro WTI is the one contract this journal is missing; the retired complexes are not
+    // brought back by the merge.
+    expect(symbols(result)).toContain('MCL');
+    expect(symbols(result)).not.toContain('CL');
     expect(symbols(listInStorage())).toContain('MCL');
     expect(JSON.parse(fake.getItem(VERSION_KEY) ?? '0')).toBe(INSTRUMENT_CATALOG_VERSION);
   });
 
-  it('adds only the newest release to a journal that already took the previous one', () => {
-    // A journal that merged when micro WTI arrived: it has MCL, and must now receive the
-    // release after it — once each, and without a second copy of the one it already has.
-    seedJournal([{ id: 'mes', symbol: 'MES' }, { id: 'mcl', symbol: 'MCL' }], 2);
+  it('drops the contracts the journal no longer records', () => {
+    // A journal that grew the full complex keeps every retired contract forever unless the
+    // read prunes them, and a stale cloud copy reintroduces them. Only the three the trader
+    // uses survive.
+    seedJournal(
+      [
+        { id: 'mes', symbol: 'MES' },
+        { id: 'es', symbol: 'ES' },
+        { id: 'gc', symbol: 'GC' },
+        { id: 'cl', symbol: 'CL' },
+        { id: 'mcl', symbol: 'MCL' },
+      ],
+      3
+    );
 
     const result = storage.ensureInstrumentCatalog();
 
-    expect(symbols(result).filter((symbol) => symbol === 'MCL')).toHaveLength(1);
-    expect(symbols(result)).toEqual(expect.arrayContaining(['CL', 'GC', 'RTY']));
+    expect(symbols(result)).toEqual(['MES', 'MCL']);
+    expect(symbols(listInStorage())).toEqual(['MES', 'MCL']);
   });
 
   it('keeps the contract the trader added themselves', () => {

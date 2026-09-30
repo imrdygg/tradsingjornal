@@ -146,8 +146,9 @@ test.describe('Multi-instrument labels', () => {
     await page.locator('#trade-initial-stop').fill('19990');
     await page.locator('#trade-contracts').fill('2');
 
-    // The live calculation header names the chosen instrument.
-    await expect(page.getByText('Live MNQ Calculation')).toBeVisible();
+    // The live calculation header names both the chosen instrument and the size the
+    // calculations apply to; the form now spells the size out rather than leaving it implied.
+    await expect(page.getByText('Live 2 × MNQ Calculation')).toBeVisible();
 
     await page.locator('#trade-exit-price').fill('20020');
     await page.getByRole('button', { name: /Save Completed Trade/i }).click();

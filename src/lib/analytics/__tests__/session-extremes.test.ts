@@ -1,17 +1,23 @@
 import { describe, it, expect } from 'vitest';
 import { SessionExtreme } from '../../../types';
 import {
+  buildDaysByTimeframe,
   buildExtremeDays,
   buildExtremeHourHistogram,
   buildOvernightHourPatterns,
   clockHour,
+  defaultLevelType,
   findExtremeMatches,
+  findRatingEdges,
   hourLabel,
   LEAN_THRESHOLD_PCT,
+  levelTypeOf,
   MIN_PATTERN_SESSIONS,
+  MIN_RATED,
   parseClock,
   sessionWindowForTime,
   summarizeExtremes,
+  summarizeRatings,
 } from '../session-extremes';
 
 function extreme(over: Partial<SessionExtreme> = {}): SessionExtreme {
@@ -115,10 +121,22 @@ describe('buildExtremeDays', () => {
     ]);
 
     expect(days).toHaveLength(1);
-    expect(days[0].overnightHigh).toEqual({ hour: 3, time: '03:00', price: 6012 });
-    expect(days[0].overnightLow).toEqual({ hour: 5, time: '05:00', price: 5988 });
-    expect(days[0].regularHigh).toEqual({ hour: 11, time: '11:00', price: 6020 });
-    expect(days[0].regularLow).toEqual({ hour: 14, time: '14:00', price: 5995 });
+    expect(days[0].timeframe).toBe('1m');
+    // A high defaults to resistance and a low to support unless the trader flips it.
+    expect(days[0].overnightHigh).toMatchObject({
+      hour: 3,
+      time: '03:00',
+      price: 6012,
+      levelType: 'resistance',
+    });
+    expect(days[0].overnightLow).toMatchObject({
+      hour: 5,
+      time: '05:00',
+      price: 5988,
+      levelType: 'support',
+    });
+    expect(days[0].regularHigh).toMatchObject({ hour: 11, price: 6020 });
+    expect(days[0].regularLow).toMatchObject({ hour: 14, price: 5995 });
   });
 
   it('keeps one print per slot, taking the more extreme of two', () => {
@@ -198,7 +216,7 @@ describe('buildOvernightHourPatterns', () => {
     const patterns = buildOvernightHourPatterns(days);
     expect(patterns).toHaveLength(1);
     expect(patterns[0]).toMatchObject({
-      key: 'MES|high|3',
+      key: 'MES|1m|high|3',
       sessions: 5,
       held: 4,
       takenOut: 1,
@@ -258,9 +276,9 @@ describe('buildOvernightHourPatterns', () => {
     // The readable 5-session bucket (3 held of 5) leads despite its lower rate; the two thin
     // ones follow, both at 100%, separated by their key.
     expect(patterns.map((pattern) => pattern.key)).toEqual([
-      'MES|high|4',
-      'MCL|high|3',
-      'MES|high|3',
+      'MES|1m|high|4',
+      'MCL|1m|high|3',
+      'MES|1m|high|3',
     ]);
     expect(patterns[0]).toMatchObject({ held: 3, takenOut: 2, heldRate: 60, enoughData: true });
     expect(patterns[1].enoughData).toBe(false);
@@ -278,6 +296,223 @@ describe('buildOvernightHourPatterns', () => {
       '2026-09-02',
       '2026-09-01',
     ]);
+  });
+});
+
+describe('timeframes', () => {
+  it('defaults a record saved before timeframes existed to the 1-minute chart', () => {
+    const days = buildExtremeDays([extreme({ kind: 'high', time: '03:00' })]);
+    expect(days[0].timeframe).toBe('1m');
+  });
+
+  it('pairs each chart separately, so a 30m print never mixes with a 1m one', () => {
+    const extremes = [
+      extreme({ kind: 'high', time: '03:00', price: 6000, timeframe: '1m' }),
+      extreme({ kind: 'high', time: '03:10', price: 6010, timeframe: '30m' }),
+      extreme({ kind: 'high', time: '11:00', price: 5990, timeframe: '1m' }),
+    ];
+
+    const oneMinute = buildExtremeDays(extremes, { timeframe: '1m' });
+    expect(oneMinute).toHaveLength(1);
+    expect(oneMinute[0].overnightHigh?.price).toBe(6000);
+    expect(oneMinute[0].regularHigh?.price).toBe(5990);
+
+    const thirty = buildExtremeDays(extremes, { timeframe: '30m' });
+    expect(thirty).toHaveLength(1);
+    expect(thirty[0].overnightHigh?.price).toBe(6010);
+    expect(thirty[0].regularHigh).toBeNull();
+
+    expect(buildDaysByTimeframe(extremes)).toHaveLength(2);
+  });
+
+  it('keeps the same hour on two charts apart in the pattern read', () => {
+    const extremes = [
+      ...[1, 2, 3, 4, 5].flatMap((day) => [
+        ...session(day, 'MES', 'high', 3, 6000, 5990).map((record) => ({ ...record, timeframe: '1m' as const })),
+      ]),
+      ...session(1, 'MES', 'high', 3, 6000, 6030).map((record) => ({ ...record, timeframe: '30m' as const })),
+    ];
+
+    const patterns = buildOvernightHourPatterns(buildDaysByTimeframe(extremes));
+    expect(patterns.map((pattern) => `${pattern.key}:${pattern.heldRate}`)).toEqual([
+      'MES|1m|high|3:100',
+      'MES|30m|high|3:0',
+    ]);
+  });
+});
+
+describe('level types', () => {
+  it('defaults a high to resistance and a low to support', () => {
+    expect(defaultLevelType('high')).toBe('resistance');
+    expect(defaultLevelType('low')).toBe('support');
+  });
+
+  it('keeps a flipped side, because that is the case worth recording', () => {
+    expect(levelTypeOf({ kind: 'low', levelType: 'resistance' })).toBe('resistance');
+    expect(levelTypeOf({ kind: 'high' })).toBe('resistance');
+  });
+
+  it('carries the picked side through to the pairing and the match', () => {
+    const flipped = { kind: 'low' as const, levelType: 'resistance' as const };
+    const levels = [1, 2, 3, 4, 5].flatMap((day) => [
+      extreme({ tradeDate: `2026-09-0${day}`, ...flipped, time: '05:00', price: 5980 }),
+      extreme({ tradeDate: `2026-09-0${day}`, ...flipped, time: '10:00', price: 5995 }),
+    ]);
+
+    const days = buildExtremeDays(levels);
+    expect(days[3].overnightLow?.levelType).toBe('resistance');
+    const matches = findExtremeMatches(days, '2026-09-05');
+    expect(matches[0].levelType).toBe('resistance');
+  });
+});
+
+describe('rating the result', () => {
+  /** A print carrying one reading at a horizon. */
+  const rated = (
+    day: number,
+    outcome: 'held' | 'taken-out' | 'chopped',
+    options: {
+      horizon?: '30m' | '1h' | 'eod';
+      grade?: number;
+      levelType?: 'support' | 'resistance';
+      timeframe?: '1m' | '30m' | '1h';
+      time?: string;
+      kind?: 'high' | 'low';
+    } = {}
+  ) =>
+    extreme({
+      tradeDate: `2026-09-${String(day).padStart(2, '0')}`,
+      kind: options.kind ?? 'high',
+      levelType: options.levelType,
+      timeframe: options.timeframe,
+      time: options.time ?? '03:00',
+      id: `rated-${day}-${options.horizon ?? 'eod'}-${options.levelType ?? 'default'}-${
+        options.timeframe ?? '1m'
+      }-${options.time ?? '03:00'}-${options.kind ?? 'high'}`,
+      ratings: [
+        {
+          horizon: options.horizon ?? 'eod',
+          outcome,
+          grade: options.grade,
+          ratedAt: '2026-09-20T20:00:00.000Z',
+        },
+      ],
+    });
+
+  it('counts the readings and treats a chopped one as not held', () => {
+    const stats = summarizeRatings([
+      rated(1, 'held'),
+      rated(2, 'held'),
+      rated(3, 'taken-out'),
+      rated(4, 'chopped'),
+    ]);
+
+    expect(stats).toMatchObject({ rated: 4, held: 2, takenOut: 1, chopped: 1, heldRate: 50 });
+    expect(stats.enoughData).toBe(false);
+    expect(MIN_RATED).toBe(5);
+  });
+
+  it('averages the grades apart from the outcomes', () => {
+    const stats = summarizeRatings([
+      rated(1, 'held', { grade: 5 }),
+      rated(2, 'taken-out', { grade: 4 }),
+      rated(3, 'held'),
+    ]);
+
+    expect(stats.graded).toBe(2);
+    expect(stats.avgGrade).toBe(4.5);
+    expect(stats.heldRate).toBe(66.7);
+  });
+
+  it('reads the same print at each horizon separately', () => {
+    const print = extreme({
+      tradeDate: '2026-09-01',
+      ratings: [
+        { horizon: '30m', outcome: 'held', ratedAt: '2026-09-01T10:00:00.000Z' },
+        { horizon: 'eod', outcome: 'taken-out', ratedAt: '2026-09-01T20:00:00.000Z' },
+      ],
+    });
+
+    expect(summarizeRatings([print]).rated).toBe(2);
+    expect(summarizeRatings([print], { horizon: '30m' })).toMatchObject({
+      rated: 1,
+      held: 1,
+      heldRate: 100,
+    });
+    expect(summarizeRatings([print], { horizon: 'eod' })).toMatchObject({
+      rated: 1,
+      held: 0,
+      heldRate: 0,
+    });
+  });
+
+  it('lets the last reading of a horizon win, and ignores an unusable one', () => {
+    const print = extreme({
+      tradeDate: '2026-09-01',
+      ratings: [
+        { horizon: '30m', outcome: 'held', ratedAt: '2026-09-01T10:00:00.000Z' },
+        { horizon: '30m', outcome: 'taken-out', ratedAt: '2026-09-01T11:00:00.000Z' },
+        { horizon: '1h', outcome: 'held', grade: 9, ratedAt: '2026-09-01T11:30:00.000Z' },
+      ],
+    });
+    // A horizon that is not one of the three is not a reading at all.
+    print.ratings!.push({
+      horizon: 'week' as never,
+      outcome: 'held',
+      ratedAt: '2026-09-01T12:00:00.000Z',
+    });
+
+    const stats = summarizeRatings([print]);
+    expect(stats.rated).toBe(2);
+    expect(stats.takenOut).toBe(1);
+    expect(stats.avgGrade).toBe(9);
+  });
+
+  it('reports nothing rather than a zero rate when nothing is rated', () => {
+    expect(summarizeRatings([extreme()])).toMatchObject({
+      rated: 0,
+      heldRate: null,
+      avgGrade: null,
+    });
+  });
+
+  it('buckets the readings by side, chart, horizon and hour, readable first', () => {
+    const support = [1, 2, 3, 4, 5].map((day) =>
+      rated(day, 'held', { levelType: 'support', kind: 'low', time: '05:00' })
+    );
+    const resistance = [1, 2].map((day) =>
+      rated(day, 'taken-out', { levelType: 'resistance', timeframe: '30m' })
+    );
+
+    // A floor of zero keeps the tallies, which is how the digest and the cards read them.
+    const buckets = findRatingEdges([...support, ...resistance], { minRated: 0 });
+    const keys = buckets.map((bucket) => bucket.key);
+
+    // Every family is represented; readable conditions lead and the tallies follow.
+    expect(keys).toContain('all');
+    expect(keys).toContain('level:support');
+    expect(keys).toContain('level:resistance');
+    expect(keys).toContain('tf:30m');      expect(keys).toContain('horizon:eod');
+    expect(keys).toContain('hour:5');
+    expect(keys).toContain('hour:3');
+    expect(keys).toContain('MES:support');
+
+    const supportBucket = buckets.find((bucket) => bucket.key === 'level:support')!;
+    expect(supportBucket.stats).toMatchObject({ rated: 5, held: 5, heldRate: 100, enoughData: true });
+    expect(supportBucket.levelType).toBe('support');
+
+    const thin = buckets.find((bucket) => bucket.key === 'level:resistance')!;
+    expect(thin.stats.rated).toBeLessThan(MIN_RATED);
+    // A clean 5 of 5 sorts above the pooled record, and every readable bucket sorts above
+    // every thin one whatever their rates.
+    const all = buckets.find((bucket) => bucket.key === 'all')!;
+    expect(all.stats.heldRate).toBe(71.4);
+    expect(keys.indexOf('level:support')).toBeLessThan(keys.indexOf('all'));
+    expect(keys.indexOf('all')).toBeLessThan(keys.indexOf('level:resistance'));
+
+    // A thin bucket with a single reading is dropped rather than shown as a rate.
+    const minuteChart = findRatingEdges([rated(1, 'held', { timeframe: '1h' })]);
+    expect(minuteChart.map((bucket) => bucket.key)).toEqual(['all']);
   });
 });
 

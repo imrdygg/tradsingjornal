@@ -1,4 +1,13 @@
-import { ExtremeKind, SessionExtreme, SessionWindow } from '../../types';
+import {
+  ExtremeKind,
+  ExtremeLevelType,
+  ExtremeOutcome,
+  ExtremeRating,
+  ExtremeRatingHorizon,
+  ExtremeTimeframe,
+  SessionExtreme,
+  SessionWindow,
+} from '../../types';
 
 /**
  * Where a session's extremes printed, read as numbers.
@@ -38,6 +47,87 @@ export const REGULAR_CLOSE_MINUTES = 16 * 60;
  * something that looks like an edge.
  */
 export const MIN_PATTERN_SESSIONS = 5;
+
+/**
+ * The charts the log covers, tightest first, in the order they are offered.
+ *
+ * The trader draws their lines on three charts, and a print only means something inside the
+ * one it came from, so everything the log reports is read one timeframe at a time rather
+ * than mixed into a single rate.
+ */
+export const EXTREME_TIMEFRAMES: readonly ExtremeTimeframe[] = ['1m', '30m', '1h'];
+
+/**
+ * What a record with no timeframe is read as.
+ *
+ * Records saved before the log carried a timeframe are the trader's session high and low,
+ * which is what the tightest chart shows — so 1-minute is the honest reading of them rather
+ * than leaving them out of every rate.
+ */
+export const DEFAULT_TIMEFRAME: ExtremeTimeframe = '1m';
+
+/** The chart a print was read off. */
+export function timeframeOf(extreme: { timeframe?: ExtremeTimeframe }): ExtremeTimeframe {
+  return extreme.timeframe ?? DEFAULT_TIMEFRAME;
+}
+
+/**
+ * The side a level acts as by default: a high is resistance, a low is support.
+ *
+ * Only the default, never the whole answer. A low that breaks and then holds from above is
+ * support turned resistance, and that is the case the trader needs to be able to record —
+ * which is why the pick is stored on the print rather than derived every time it is read.
+ */
+export function defaultLevelType(kind: ExtremeKind): ExtremeLevelType {
+  return kind === 'high' ? 'resistance' : 'support';
+}
+
+/** The side a print is logged as, falling back to its kind's default. */
+export function levelTypeOf(extreme: {
+  kind: ExtremeKind;
+  levelType?: ExtremeLevelType;
+}): ExtremeLevelType {
+  return extreme.levelType ?? defaultLevelType(extreme.kind);
+}
+
+/** A price side, as the trader reads it. */
+export const LEVEL_TYPE_LABEL: Record<ExtremeLevelType, string> = {
+  support: 'Support',
+  resistance: 'Resistance',
+};
+
+/** A chart timeframe, as the trader reads it. */
+export const TIMEFRAME_LABEL: Record<ExtremeTimeframe, string> = {
+  '1m': '1 min',
+  '30m': '30 min',
+  '1h': '1 hour',
+};
+
+/** A rated outcome, as the trader reads it. */
+export const OUTCOME_LABEL: Record<ExtremeOutcome, string> = {
+  held: 'Held',
+  'taken-out': 'Taken out',
+  chopped: 'Chopped',
+};
+
+/** The horizons a print can be rated at, nearest first. */
+export const RATING_HORIZONS: readonly ExtremeRatingHorizon[] = ['30m', '1h', 'eod'];
+
+/** A horizon, as the trader reads it. */
+export const HORIZON_LABEL: Record<ExtremeRatingHorizon, string> = {
+  '30m': '30 min',
+  '1h': '1 hour',
+  eod: 'End of day',
+};
+
+/**
+ * Rated prints a bucket needs before its rate may be read as anything.
+ *
+ * The same floor the hour buckets use, and for the same reason: a rating is four clicks and
+ * a fortnight of them is not a finding, so a thin bucket carries its counts and no
+ * percentage.
+ */
+export const MIN_RATED = 5;
 
 /** Reads `HH:MM` into minutes past midnight, or null when it is not a clock time. */
 export function parseClock(time: string): number | null {
@@ -87,12 +177,16 @@ export interface ExtremePoint {
   /** The clock time as logged, `HH:MM`. */
   time: string;
   price: number;
+  /** The side the level was acting as on this print. */
+  levelType: ExtremeLevelType;
 }
 
-/** One session's logged extremes, paired by symbol and date. */
+/** One session's logged extremes, paired by symbol, date and timeframe. */
 export interface ExtremeDay {
   tradeDate: string;
   symbol: string;
+  /** The chart these four slots were read off. */
+  timeframe: ExtremeTimeframe;
   overnightHigh: ExtremePoint | null;
   overnightLow: ExtremePoint | null;
   regularHigh: ExtremePoint | null;
@@ -125,14 +219,21 @@ function isMoreExtreme(candidate: ExtremePoint, current: ExtremePoint, kind: Ext
 }
 
 /**
- * Pairs the raw log into one row per symbol and session.
+ * Pairs the raw log into one row per symbol, session and timeframe.
  *
  * Rows come back oldest first, so a caller reading the tail is reading the most recent
  * sessions. A record whose time cannot be read is not silently dropped into "unknown":
  * it is left out of the pairing and reported by {@link summarizeExtremes}, because a
  * number the trader typed and the journal could not read is not the same as no number.
+ *
+ * The timeframe is a dimension of the pairing rather than a filter over the output: only
+ * prints from the same chart are compared, so an overnight 30-minute high is measured
+ * against that session's 30-minute regular high and never against a 1-minute one.
  */
-export function buildExtremeDays(extremes: SessionExtreme[]): ExtremeDay[] {
+export function buildExtremeDays(
+  extremes: SessionExtreme[],
+  options: { timeframe?: ExtremeTimeframe } = {}
+): ExtremeDay[] {
   const byKey = new Map<string, ExtremeDay>();
 
   for (const extreme of extremes) {
@@ -142,11 +243,14 @@ export function buildExtremeDays(extremes: SessionExtreme[]): ExtremeDay[] {
     if (hour === null) continue;
     const slot = slotOf(extreme);
     if (!SLOTS.includes(slot)) continue;
+    const timeframe = timeframeOf(extreme);
+    if (options.timeframe && timeframe !== options.timeframe) continue;
 
-    const key = `${extreme.symbol}|${extreme.tradeDate}`;
+    const key = `${extreme.symbol}|${extreme.tradeDate}|${timeframe}`;
     const day: ExtremeDay = byKey.get(key) ?? {
       tradeDate: extreme.tradeDate,
       symbol: extreme.symbol,
+      timeframe,
       overnightHigh: null,
       overnightLow: null,
       regularHigh: null,
@@ -157,6 +261,7 @@ export function buildExtremeDays(extremes: SessionExtreme[]): ExtremeDay[] {
       hour,
       time: extreme.time.trim(),
       price: extreme.price,
+      levelType: levelTypeOf(extreme),
     };
     const current = day[slot];
     if (!current || isMoreExtreme(point, current, extreme.kind)) day[slot] = point;
@@ -165,8 +270,21 @@ export function buildExtremeDays(extremes: SessionExtreme[]): ExtremeDay[] {
   }
 
   return [...byKey.values()].sort(
-    (a, b) => a.tradeDate.localeCompare(b.tradeDate) || a.symbol.localeCompare(b.symbol)
+    (a, b) =>
+      a.tradeDate.localeCompare(b.tradeDate) ||
+      a.symbol.localeCompare(b.symbol) ||
+      a.timeframe.localeCompare(b.timeframe)
   );
+}
+
+/**
+ * The same pairing, read once per chart.
+ *
+ * Everything the log reports is per timeframe, and this is the one place the three are split
+ * apart, so a caller cannot accidentally mix a 1-minute print into a 30-minute rate.
+ */
+export function buildDaysByTimeframe(extremes: SessionExtreme[]): ExtremeDay[] {
+  return EXTREME_TIMEFRAMES.flatMap((timeframe) => buildExtremeDays(extremes, { timeframe }));
 }
 
 /** What the log holds, before any pattern is read from it. */
@@ -184,30 +302,56 @@ export interface ExtremeLogSummary {
   unreadable: number;
 }
 
-/** Counts the log, so a card can say how much there is to read. */
+/**
+ * Counts the log, so a card can say how much there is to read.
+ *
+ * Counted across every chart rather than through the pairing: a session the trader logged on
+ * the 30-minute chart is still a session they recorded, and reading the totals through one
+ * timeframe would silently hide the rest of the log.
+ */
 export function summarizeExtremes(extremes: SessionExtreme[]): ExtremeLogSummary {
-  const days = buildExtremeDays(extremes);
-  const read = new Set<string>();
-  for (const extreme of extremes) {
-    if (clockHour(extreme?.time ?? '') === null || !Number.isFinite(extreme?.price)) continue;
-    read.add(extreme.id);
+  const readable = extremes.filter(
+    (extreme) =>
+      Number.isFinite(extreme?.price) && clockHour(extreme?.time ?? '') !== null && !!extreme.id
+  );
+  const sessions = new Set<string>();
+  const symbols = new Set<string>();
+  const dates: string[] = [];
+  for (const extreme of readable) {
+    if (!extreme.tradeDate || !extreme.symbol) continue;
+    sessions.add(`${extreme.symbol}|${extreme.tradeDate}`);
+    symbols.add(extreme.symbol);
+    dates.push(extreme.tradeDate);
   }
+  dates.sort();
 
   return {
-    sessions: days.length,
-    points: read.size,
-    symbols: [...new Set(days.map((day) => day.symbol))].sort(),
-    firstDate: days[0]?.tradeDate ?? null,
-    lastDate: days[days.length - 1]?.tradeDate ?? null,
-    unreadable: extremes.length - read.size,
+    sessions: sessions.size,
+    points: readable.length,
+    symbols: [...symbols].sort(),
+    firstDate: dates[0] ?? null,
+    lastDate: dates[dates.length - 1] ?? null,
+    unreadable: extremes.length - readable.length,
   };
 }
 
-/** One clock hour's record, for one symbol and one side of the range. */
+/** Stable key for one hour's record, so the card and the coach name it the same way. */
+function patternKey(
+  symbol: string,
+  timeframe: ExtremeTimeframe,
+  kind: ExtremeKind,
+  hour: number
+): string {
+  return `${symbol}|${timeframe}|${kind}|${hour}`;
+}
+
+/** One clock hour's record, for one symbol, one chart and one side of the range. */
 export interface ExtremeHourPattern {
-  /** Stable key, e.g. `MES|high|3`, so a list can be diffed. */
+  /** Stable key, e.g. `MES|30m|high|3`, so a list can be diffed. */
   key: string;
   symbol: string;
+  /** The chart this hour was read off. */
+  timeframe: ExtremeTimeframe;
   /** Which extreme the bucket is about: the overnight high, or the overnight low. */
   kind: ExtremeKind;
   /** The clock hour the overnight extreme printed in, 0–23. */
@@ -310,10 +454,11 @@ export function buildOvernightHourPatterns(
       const overnight = kind === 'high' ? day.overnightHigh : day.overnightLow;
       if (!overnight) continue;
 
-      const key = `${day.symbol}|${kind}|${overnight.hour}`;
+      const key = patternKey(day.symbol, day.timeframe, kind, overnight.hour);
       const pattern: ExtremeHourPattern = buckets.get(key) ?? {
         key,
         symbol: day.symbol,
+        timeframe: day.timeframe,
         kind,
         hour: overnight.hour,
         sessions: 0,
@@ -383,6 +528,10 @@ export type ExtremeLean = 'kept' | 'taken-out' | 'split';
 /** One of today's prints that lands in an hour the trader's own log has a record for. */
 export interface ExtremeMatch {
   symbol: string;
+  /** The chart today's print was read off. */
+  timeframe: ExtremeTimeframe;
+  /** The side the level is acting as on today's print. */
+  levelType: ExtremeLevelType;
   kind: ExtremeKind;
   /** The hour today's print landed in. */
   hour: number;
@@ -427,40 +576,44 @@ export function findExtremeMatches(
   );
   const byKey = new Map(patterns.map((pattern) => [pattern.key, pattern]));
 
-  const today = days.find((day) => day.tradeDate === todayTradeDate);
-  if (!today) return [];
+  const todays = days.filter((day) => day.tradeDate === todayTradeDate);
+  if (!todays.length) return [];
 
   const matches: ExtremeMatch[] = [];
-  for (const kind of ['high', 'low'] as ExtremeKind[]) {
-    const overnight = kind === 'high' ? today.overnightHigh : today.overnightLow;
-    if (!overnight) continue;
+  for (const today of todays) {
+    for (const kind of ['high', 'low'] as ExtremeKind[]) {
+      const overnight = kind === 'high' ? today.overnightHigh : today.overnightLow;
+      if (!overnight) continue;
 
-    const pattern = byKey.get(`${today.symbol}|${kind}|${overnight.hour}`);
-    if (!pattern || pattern.heldRate === null) continue;
+      const pattern = byKey.get(patternKey(today.symbol, today.timeframe, kind, overnight.hour));
+      if (!pattern || pattern.heldRate === null) continue;
 
-    const regular = kind === 'high' ? today.regularHigh : today.regularLow;
-    const todayTakenOut = regular
-      ? kind === 'high'
-        ? regular.price > overnight.price
-        : regular.price < overnight.price
-      : null;
+      const regular = kind === 'high' ? today.regularHigh : today.regularLow;
+      const todayTakenOut = regular
+        ? kind === 'high'
+          ? regular.price > overnight.price
+          : regular.price < overnight.price
+        : null;
 
-    matches.push({
-      symbol: today.symbol,
-      kind,
-      hour: overnight.hour,
-      time: overnight.time,
-      price: overnight.price,
-      pattern,
-      lean:
-        pattern.heldRate >= LEAN_THRESHOLD_PCT
-          ? 'kept'
-          : pattern.heldRate <= 100 - LEAN_THRESHOLD_PCT
-          ? 'taken-out'
-          : 'split',
-      todayRegularPrice: regular?.price ?? null,
-      todayTakenOut,
-    });
+      matches.push({
+        symbol: today.symbol,
+        timeframe: today.timeframe,
+        levelType: overnight.levelType,
+        kind,
+        hour: overnight.hour,
+        time: overnight.time,
+        price: overnight.price,
+        pattern,
+        lean:
+          pattern.heldRate >= LEAN_THRESHOLD_PCT
+            ? 'kept'
+            : pattern.heldRate <= 100 - LEAN_THRESHOLD_PCT
+            ? 'taken-out'
+            : 'split',
+        todayRegularPrice: regular?.price ?? null,
+        todayTakenOut,
+      });
+    }
   }
 
   // A lean leads, and the direction it leans in leads: what the log has to say about this
@@ -468,13 +621,15 @@ export function findExtremeMatches(
   return matches.sort((a, b) => {
     const rank = (match: ExtremeMatch) => (match.lean === 'kept' ? 0 : match.lean === 'taken-out' ? 1 : 2);
     if (rank(a) !== rank(b)) return rank(a) - rank(b);
-    return a.kind.localeCompare(b.kind);
+    return a.kind.localeCompare(b.kind) || a.timeframe.localeCompare(b.timeframe);
   });
 }
 
 /** One symbol's overnight extremes, counted by the hour they printed in. */
 export interface ExtremeHourHistogram {
   symbol: string;
+  /** The chart these prints were read off. */
+  timeframe: ExtremeTimeframe;
   kind: ExtremeKind;
   /** Sessions with an overnight extreme of this kind logged. */
   sessions: number;
@@ -499,9 +654,10 @@ export function buildExtremeHourHistogram(days: ExtremeDay[]): ExtremeHourHistog
     for (const kind of ['high', 'low'] as ExtremeKind[]) {
       const overnight = kind === 'high' ? day.overnightHigh : day.overnightLow;
       if (!overnight) continue;
-      const key = `${day.symbol}|${kind}`;
+      const key = `${day.symbol}|${day.timeframe}|${kind}`;
       const row: ExtremeHourHistogram = byKey.get(key) ?? {
         symbol: day.symbol,
+        timeframe: day.timeframe,
         kind,
         sessions: 0,
         hours: new Array<number>(24).fill(0),
@@ -523,5 +679,281 @@ export function buildExtremeHourHistogram(days: ExtremeDay[]): ExtremeHourHistog
       }
       return { ...row, busiestHour };
     })
-    .sort((a, b) => a.symbol.localeCompare(b.symbol) || a.kind.localeCompare(b.kind));
+    .sort(
+      (a, b) =>
+        a.symbol.localeCompare(b.symbol) ||
+        a.timeframe.localeCompare(b.timeframe) ||
+        a.kind.localeCompare(b.kind)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Rating the result
+//
+// A print on its own says where price went; it says nothing about whether the level was
+// worth marking. The trader's own reading closes that gap, and it is kept as two answers
+// rather than one, because they are different findings: what price did (held, taken out,
+// chopped) and how cleanly the level behaved (1–5, optional). A level taken out by a real
+// break is not the same level as one that held through a mess, and folding them into a
+// single number would lose exactly the distinction the trader is collecting for.
+// ---------------------------------------------------------------------------
+
+/** The outcomes a reading can carry, for validation of records written by hand or restored. */
+export const EXTREME_OUTCOMES: readonly ExtremeOutcome[] = ['held', 'taken-out', 'chopped'];
+
+/** One reading, flattened so the buckets can group it without joining anything back. */
+interface RatedPrint {
+  symbol: string;
+  timeframe: ExtremeTimeframe;
+  levelType: ExtremeLevelType;
+  kind: ExtremeKind;
+  hour: number;
+  horizon: ExtremeRatingHorizon;
+  outcome: ExtremeOutcome;
+  grade: number | null;
+}
+
+/**
+ * Every reading in the log, one per print per horizon.
+ *
+ * The last reading for a horizon wins, so re-rating an hour later corrects that reading
+ * rather than counting twice — the same rule the storage save follows, applied again here
+ * because a log restored from an older backup can carry two.
+ */
+function ratedPrints(
+  extremes: SessionExtreme[],
+  horizon: ExtremeRatingHorizon | null
+): RatedPrint[] {
+  const out: RatedPrint[] = [];
+  for (const extreme of extremes) {
+    if (!extreme?.ratings?.length) continue;
+    const hour = clockHour(extreme.time);
+    if (hour === null) continue;
+
+    const byHorizon = new Map<ExtremeRatingHorizon, ExtremeRating>();
+    for (const rating of extreme.ratings) {
+      if (!rating || !RATING_HORIZONS.includes(rating.horizon)) continue;
+      if (!EXTREME_OUTCOMES.includes(rating.outcome)) continue;
+      byHorizon.set(rating.horizon, rating);
+    }
+
+    for (const [at, rating] of byHorizon) {
+      if (horizon && at !== horizon) continue;
+      out.push({
+        symbol: extreme.symbol,
+        timeframe: timeframeOf(extreme),
+        levelType: levelTypeOf(extreme),
+        kind: extreme.kind,
+        hour,
+        horizon: at,
+        outcome: rating.outcome,
+        grade:
+          typeof rating.grade === 'number' && Number.isFinite(rating.grade)
+            ? rating.grade
+            : null,
+      });
+    }
+  }
+  return out;
+}
+
+/** What the trader's own readings say about the levels they marked. */
+export interface ExtremeRatingStats {
+  /** Readings taken: one per print per rated horizon. */
+  rated: number;
+  held: number;
+  takenOut: number;
+  chopped: number;
+  /**
+   * Share of readings where the level held, as a percentage.
+   *
+   * A printed level either held or it did not, so a chopped reading counts against it
+   * rather than being excluded: "it never really decided" is not a hold. Null while nothing
+   * is rated — never 0, which would read as "it never holds".
+   */
+  heldRate: number | null;
+  /** True once `rated` reaches {@link MIN_RATED}, so `heldRate` may be read. */
+  enoughData: boolean;
+  /** Readings that came with a grade. */
+  graded: number;
+  /** Average grade across the readings that carry one, or null. */
+  avgGrade: number | null;
+}
+
+function summarizePrints(prints: RatedPrint[], minRated: number): ExtremeRatingStats {
+  const held = prints.filter((print) => print.outcome === 'held').length;
+  const takenOut = prints.filter((print) => print.outcome === 'taken-out').length;
+  const chopped = prints.filter((print) => print.outcome === 'chopped').length;
+  const grades = prints.map((print) => print.grade).filter((grade): grade is number => grade !== null);
+
+  return {
+    rated: prints.length,
+    held,
+    takenOut,
+    chopped,
+    heldRate: prints.length ? round((held / prints.length) * 100, 1) : null,
+    enoughData: prints.length >= minRated,
+    graded: grades.length,
+    avgGrade: grades.length
+      ? round(grades.reduce((sum, grade) => sum + grade, 0) / grades.length, 1)
+      : null,
+  };
+}
+
+/**
+ * The trader's readings, all of them or just one horizon's.
+ *
+ * The horizon is the interesting axis as much as the level is: a print that held for the
+ * first hour and was taken out by the close is the same level at two different times, and
+ * reading both is what shows whether the trader is exiting too early or holding too long.
+ */
+export function summarizeRatings(
+  extremes: SessionExtreme[],
+  options: { horizon?: ExtremeRatingHorizon; minRated?: number } = {}
+): ExtremeRatingStats {
+  return summarizePrints(
+    ratedPrints(extremes, options.horizon ?? null),
+    options.minRated ?? MIN_RATED
+  );
+}
+
+/** One condition the rated prints can be read by — a side, a chart, a horizon, an hour. */
+export interface ExtremeRatingBucket {
+  /** Stable key, e.g. `level:support`, so a list can be diffed. */
+  key: string;
+  /** What the bucket covers, in the trader's words. */
+  label: string;
+  symbol: string | null;
+  timeframe: ExtremeTimeframe | null;
+  levelType: ExtremeLevelType | null;
+  horizon: ExtremeRatingHorizon | null;
+  /** The clock hour the bucket is scoped to, when it is scoped to one. */
+  hour: number | null;
+  stats: ExtremeRatingStats;
+}
+
+function bucket(
+  key: string,
+  label: string,
+  prints: RatedPrint[],
+  scope: {
+    symbol?: string;
+    timeframe?: ExtremeTimeframe;
+    levelType?: ExtremeLevelType;
+    horizon?: ExtremeRatingHorizon;
+    hour?: number;
+  },
+  minRated: number
+): ExtremeRatingBucket {
+  return {
+    key,
+    label,
+    symbol: scope.symbol ?? null,
+    timeframe: scope.timeframe ?? null,
+    levelType: scope.levelType ?? null,
+    horizon: scope.horizon ?? null,
+    hour: scope.hour ?? null,
+    stats: summarizePrints(prints, minRated),
+  };
+}
+
+/**
+ * The set-up finder for rated levels: every condition worth looking at, best first.
+ *
+ * Buckets are built several ways on purpose, because the useful question changes with the
+ * answer. Reading by side says whether the trader is better at support or resistance;
+ * reading by chart says which of their three charts is actually telling them something;
+ * reading by horizon says whether a level that held at 30 minutes was still holding at the
+ * close; reading by hour says which part of the session their levels are worth drawing.
+ *
+ * A bucket below the floor is dropped by default — a count is not a rate — and the `all`
+ * bucket is always kept, because "you have rated nothing yet" is itself worth saying. A
+ * caller that wants to report the thin buckets as counts (the digest and the cards do) passes
+ * `minRated: 0` and splits the two lists itself, the same way the level-touch record is read.
+ */
+export function findRatingEdges(
+  extremes: SessionExtreme[],
+  options: { minRated?: number } = {}
+): ExtremeRatingBucket[] {
+  const minRated = options.minRated ?? MIN_RATED;
+  const prints = ratedPrints(extremes, null);
+  const buckets: ExtremeRatingBucket[] = [];
+
+  buckets.push(bucket('all', 'Every rated print', prints, {}, minRated));
+
+  for (const levelType of ['support', 'resistance'] as ExtremeLevelType[]) {
+    const list = prints.filter((print) => print.levelType === levelType);
+    if (list.length) {
+      buckets.push(
+        bucket(`level:${levelType}`, LEVEL_TYPE_LABEL[levelType], list, { levelType }, minRated)
+      );
+    }
+  }
+
+  for (const timeframe of EXTREME_TIMEFRAMES) {
+    const list = prints.filter((print) => print.timeframe === timeframe);
+    if (list.length) {
+      buckets.push(
+        bucket(
+          `tf:${timeframe}`,
+          `${TIMEFRAME_LABEL[timeframe]} chart`,
+          list,
+          { timeframe },
+          minRated
+        )
+      );
+    }
+  }
+
+  for (const horizon of RATING_HORIZONS) {
+    const list = prints.filter((print) => print.horizon === horizon);
+    if (list.length) {
+      buckets.push(
+        bucket(
+          `horizon:${horizon}`,
+          `Rated at ${HORIZON_LABEL[horizon].toLowerCase()}`,
+          list,
+          { horizon },
+          minRated
+        )
+      );
+    }
+  }
+
+  const hours = [...new Set(prints.map((print) => print.hour))].sort((a, b) => a - b);
+  for (const hour of hours) {
+    const list = prints.filter((print) => print.hour === hour);
+    buckets.push(bucket(`hour:${hour}`, `${hourLabel(hour)} prints`, list, { hour }, minRated));
+  }
+
+  const symbols = [...new Set(prints.map((print) => print.symbol))].sort();
+  for (const symbol of symbols) {
+    const list = prints.filter((print) => print.symbol === symbol);
+    buckets.push(bucket(`symbol:${symbol}`, symbol, list, { symbol }, minRated));
+
+    for (const levelType of ['support', 'resistance'] as ExtremeLevelType[]) {
+      const scoped = list.filter((print) => print.levelType === levelType);
+      if (scoped.length) {
+        buckets.push(
+          bucket(
+            `${symbol}:${levelType}`,
+            `${symbol} ${LEVEL_TYPE_LABEL[levelType].toLowerCase()}`,
+            scoped,
+            { symbol, levelType },
+            minRated
+          )
+        );
+      }
+    }
+  }
+
+  return buckets
+    .filter((entry) => entry.stats.rated >= minRated || entry.key === 'all')
+    .sort((a, b) => {
+      if (a.stats.enoughData !== b.stats.enoughData) return a.stats.enoughData ? -1 : 1;
+      const rateA = a.stats.heldRate ?? -1;
+      const rateB = b.stats.heldRate ?? -1;
+      if (rateA !== rateB) return rateB - rateA;
+      return b.stats.rated - a.stats.rated;
+    });
 }

@@ -15,6 +15,7 @@ import {
 import { DEFAULT_INSTRUMENTS, INSTRUMENT_CATALOG_VERSION } from '../trading/instruments';
 import { DEFAULT_RISK_TIER_AMOUNTS } from '../trading/risk-tiers';
 import { FOCUS_SETUP_NAMES } from '../playbook/focus-setups';
+import { timeframeOf } from '../analytics/session-extremes';
 import { clearCachedNotes } from '../ai/checkpoints';
 import { getCurrentTradingDate } from './date-utils';
 
@@ -1045,10 +1046,14 @@ export const storage = {
    * Upserts one session extreme, newest first.
    *
    * Keyed by slot as well as by id, because a slot holds one print: logging the same
-   * symbol, date, kind and window again is a correction of that reading rather than a
-   * second one, and storing both would let a typo and its fix sit side by side in the
-   * record. A record moved to a different slot — the time edited from 3am to 11am — is
-   * replaced there too, so the same extreme can never be counted twice.
+   * symbol, date, kind, window and chart again is a correction of that reading rather than a
+   * second one, and storing both would let a typo and its fix sit side by side in the record.
+   * A record moved to a different slot — the time edited from 3am to 11am — is replaced
+   * there too, so the same extreme can never be counted twice.
+   *
+   * The chart is part of the slot and not part of the label: a 30-minute high and a
+   * 1-minute high in the same hour are two different readings of the session, and saving one
+   * over the other would quietly delete a print the trader drew a line from.
    */
   saveSessionExtreme(extreme: SessionExtreme): SessionExtreme {
     const extremes = this.getSessionExtremes();
@@ -1060,7 +1065,8 @@ export const storage = {
           existing.symbol === extreme.symbol &&
           existing.tradeDate === extreme.tradeDate &&
           existing.kind === extreme.kind &&
-          existing.window === extreme.window
+          existing.window === extreme.window &&
+          timeframeOf(existing) === timeframeOf(extreme)
         )
     );
     setItem(STORAGE_KEYS.SESSION_EXTREMES, [updated, ...next]);

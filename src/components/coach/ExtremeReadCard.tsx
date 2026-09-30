@@ -94,10 +94,7 @@ export const ExtremeReadCard: React.FC<ExtremeReadCardProps> = ({
             <CoachFact label="Sessions logged" value={`${read.sessions}`} />
             <CoachFact label="Extremes logged" value={`${read.points}`} />
             <CoachFact label="Hours readable" value={`${read.patterns.length}`} />
-            <CoachFact
-              label="Instruments"
-              value={read.symbols.length ? read.symbols.join(', ') : '—'}
-            />
+            <CoachFact label="Levels rated" value={`${read.ratings.rated}`} />
           </div>
 
           <p className="text-[11px] text-zinc-500 leading-relaxed">
@@ -149,6 +146,54 @@ export const ExtremeReadCard: React.FC<ExtremeReadCardProps> = ({
                   );
                 })}
               </ul>
+            </div>
+          )}
+
+          {read.ratings.rated > 0 && (
+            <div className="space-y-1.5">
+              <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
+                What your levels did
+              </span>
+              <p className="font-mono text-[10px] leading-relaxed text-zinc-500">
+                {read.ratings.held} held · {read.ratings.takenOut} taken out ·{' '}
+                {read.ratings.chopped} chopped
+                {read.ratings.avgGrade === null
+                  ? ''
+                  : ` · average grade ${read.ratings.avgGrade} of 5`}
+                {read.ratings.rated < read.minRated
+                  ? ` — ${read.minRated} readings are needed before this is a rate.`
+                  : ''}
+              </p>
+
+              {read.ratingConditions.length > 0 ? (
+                <ul className="space-y-1.5">
+                  {read.ratingConditions.map((bucket) => (
+                    <li
+                      key={bucket.key}
+                      data-rating-condition={bucket.key}
+                      className="flex items-center justify-between gap-3 rounded-xl border border-zinc-800 bg-zinc-900/60 px-3 py-2"
+                    >
+                      <span className="min-w-0 text-xs text-zinc-200">{bucket.label}</span>
+                      <span className="shrink-0 text-right">
+                        <span className="block text-xs font-mono font-semibold text-emerald-400">
+                          {formatRate(bucket.stats.heldRate)}
+                        </span>
+                        <span className="block text-[10px] text-zinc-500">
+                          held {bucket.stats.held} of {bucket.stats.rated}
+                          {bucket.stats.avgGrade === null
+                            ? ''
+                            : ` · grade ${bucket.stats.avgGrade}`}
+                        </span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-[11px] leading-relaxed text-amber-300/90">
+                  No condition has {read.minRated} readings yet, so there is no held rate to
+                  read — the counts above are a tally of what has been rated so far.
+                </p>
+              )}
             </div>
           )}
 
@@ -228,6 +273,32 @@ export const ExtremeReadCard: React.FC<ExtremeReadCardProps> = ({
                       )}
                     </div>
                   ))}
+                </div>
+              )}
+
+              {answer.levelsRead && (
+                <div>
+                  <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
+                    What your marked levels did
+                  </span>
+                  <p className="mt-1.5 text-xs text-zinc-300 leading-relaxed">
+                    {answer.levelsRead}
+                  </p>
+                </div>
+              )}
+
+              {answer.notYetRated.length > 0 && (
+                <div>
+                  <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
+                    Rated, not yet readable
+                  </span>
+                  <div className="mt-1.5">
+                    <CoachBullets
+                      items={answer.notYetRated}
+                      tone="neutral"
+                      emptyLabel="Every rated condition has enough readings."
+                    />
+                  </div>
                 </div>
               )}
 

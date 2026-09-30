@@ -162,6 +162,57 @@ export type SessionWindow = 'overnight' | 'regular';
 /** Which end of the range a logged extreme is. */
 export type ExtremeKind = 'high' | 'low';
 
+/**
+ * The chart timeframe the print was read off, tightest first.
+ *
+ * The trader draws their lines on three charts and an extreme is only meaningful inside the
+ * one it came from: a 30-minute high and a 1-minute high in the same hour are different
+ * facts, and comparing across them would mix two resolutions into one rate. Grouping is what
+ * makes the log comparable, so the timeframe travels with every print.
+ */
+export type ExtremeTimeframe = '1m' | '30m' | '1h';
+
+/**
+ * Which side of price the print is acting as.
+ *
+ * Not the same thing as `kind`. A high is a resistance level by default and a low is support,
+ * but price reclaims and retests constantly: a low that gets broken and then holds from above
+ * is a support that has turned resistance. The trader picks the side the level is acting as,
+ * one at a time, and the stats read by it — which is the whole point of keeping it separate
+ * from where the print happened.
+ */
+export type ExtremeLevelType = 'support' | 'resistance';
+
+/** What price did to the level by the time the trader rated it. */
+export type ExtremeOutcome = 'held' | 'taken-out' | 'chopped';
+
+/**
+ * When the reading was taken.
+ *
+ * `eod` is the end of the session, which is the one horizon that can be filled in after the
+ * fact for every print. The two intraday ones are what the trader saw while it was live, and
+ * having them separately is what lets the log say whether a level that held for an hour was
+ * still holding at the close.
+ */
+export type ExtremeRatingHorizon = '30m' | '1h' | 'eod';
+
+/** One reading of what a logged print did, at one horizon. */
+export interface ExtremeRating {
+  horizon: ExtremeRatingHorizon;
+  outcome: ExtremeOutcome;
+  /**
+   * 1–5: how clean the level behaved, or absent when it was not graded.
+   *
+   * Kept apart from the outcome on purpose. "Taken out" and "a mess" are different
+   * findings: a level can be taken out cleanly by a real break, and it can hold while
+   * chopping through everyone's stops. Only the trader can tell those apart, so they are
+   * recorded as two answers rather than averaged into one.
+   */
+  grade?: number;
+  /** When the reading was taken, so a rating's own age is visible. */
+  ratedAt: string;
+}
+
 export interface SessionExtreme {
   id: string;
   userId: string;
@@ -193,6 +244,25 @@ export interface SessionExtreme {
    * source of the clock hour the stats read.
    */
   window: SessionWindow;
+  /**
+   * The chart the print was read off.
+   *
+   * Optional because records saved before the log carried a timeframe are read as the
+   * 1-minute print, which is what a session high or low is. See `DEFAULT_TIMEFRAME`.
+   */
+  timeframe?: ExtremeTimeframe;
+  /**
+   * The side the level was acting as when it was logged.
+   *
+   * Optional for the same reason: a record saved before this existed is read as the
+   * default for its kind — a high as resistance, a low as support. See `defaultLevelType`.
+   */
+  levelType?: ExtremeLevelType;
+  /**
+   * What price did to the level, read at up to three horizons. One entry per horizon, so
+   * re-rating an hour later replaces that reading rather than piling up a second one.
+   */
+  ratings?: ExtremeRating[];
   notes?: string;
   createdAt: string;
   updatedAt: string;

@@ -356,6 +356,14 @@ export interface ExtremeResponse {
   patterns: ExtremeCondition[];
   /** Hours that are logged but too thin to read, counts only. */
   notYetReadable: string[];
+  /**
+   * What the trader's own ratings say about the levels they marked: the held rate and counts
+   * behind each condition, with the grades reported apart from the outcomes. Empty when
+   * nothing has been rated.
+   */
+  levelsRead: string;
+  /** Conditions that are rated but still below the readable floor, counts only. */
+  notYetRated: string[];
   /** What the log shows has happened, stated as what has happened. */
   whatItMeans: string;
   /** One concrete thing to log that would sharpen the record. */

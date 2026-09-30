@@ -301,7 +301,14 @@ X4. THE CLOCK TIMES AND PRICES ARE THE TRADER'S OWN ENTRIES. They are not a live
 X5. Do not tell them to trade an hour, avoid an hour, or size differently because of this
     log. Point at what their own record shows and hand the observation back to them.
 X6. A session with no regular-session extreme logged could not be judged, so it is NOT a
-    session where the extreme held. Report it as not judged, never as a hold.`;
+    session where the extreme held. Report it as not judged, never as a hold.
+X7. THE RATINGS ARE THE TRADER'S OWN JUDGEMENTS, MADE AFTER THE FACT. Never re-rate a print
+    yourself, never overrule a reading they made, and never present their held rate as an
+    argument for taking a trade. A CHOPPED reading counts against the level, and the grade
+    is a separate answer from the outcome: never fold the two into one number.
+X8. THE GRADES AND OUTCOMES ARE NOT COMPARABLE ACROSS HORIZONS. A level that held at 30
+    minutes and was taken out by the close is the same level at two different times, so
+    report both rather than claiming it held or failed.`;
 
 /**
  * The rules for finding setups in the trader's own trades, screenshots included.
@@ -453,16 +460,23 @@ export function formatExtremeReadForPrompt(read: ExtremeRead | undefined): strin
   lines.push("=== SESSION EXTREMES — WHERE THE TRADER'S HIGHS AND LOWS PRINTED (their own log) ===");
   lines.push(
     'The trader logged the clock time (US Eastern) each session\'s overnight high and low ' +
-      'printed at, plus the regular session\'s own high and low. Overnight runs 6pm ET to ' +
-      '9:30am ET; the regular session is 9:30am to 4pm ET. HELD means the regular session ' +
-      'never traded past that overnight extreme — no higher high, no lower low. TAKEN OUT ' +
-      'means it did. This is a count of what already happened, not a forecast, and a hold is ' +
-      'not a profit.'
+      'printed at, plus the regular session\'s own high and low, off the chart they drew the ' +
+      'line on. Overnight runs 6pm ET to 9:30am ET; the regular session is 9:30am to 4pm ET. ' +
+      'HELD means the regular session never traded past that overnight extreme — no higher ' +
+      'high, no lower low. TAKEN OUT means it did. This is a count of what already happened, ' +
+      'not a forecast, and a hold is not a profit.'
+  );
+  lines.push(
+    'Every print also carries the side the trader was treating it as — SUPPORT or ' +
+      'RESISTANCE — picked one at a time and not always the default for a high or a low. ' +
+      'Prints are read one CHART at a time (the chart is named in brackets, e.g. [30m]), ' +
+      'because the same hour means something different at two resolutions.'
   );
   lines.push(
     `${read.points} extreme(s) logged across ${read.sessions} session(s) for ` +
       (read.symbols.length ? read.symbols.join(', ') : 'no named instrument') +
-      (read.firstDate && read.lastDate ? `, ${read.firstDate} to ${read.lastDate}.` : '.')
+      (read.firstDate && read.lastDate ? `, ${read.firstDate} to ${read.lastDate}` : '') +
+      (read.timeframes.length ? `, on ${read.timeframes.join(', ')}.` : '.')
   );
   if (read.unreadable > 0) {
     lines.push(
@@ -477,10 +491,9 @@ export function formatExtremeReadForPrompt(read: ExtremeRead | undefined): strin
     for (const pattern of read.patterns) {
       const decided = pattern.held + pattern.takenOut;
       lines.push(
-        `- ${pattern.symbol} overnight ${pattern.kind} printed in the ${hourLabel(
-          pattern.hour
-        )} hour: ${rate(pattern.heldRate)} held over ${decided} decided session(s) ` +
-          `(${pattern.held} held, ${pattern.takenOut} taken out` +
+        `- ${pattern.symbol} [${pattern.timeframe}] overnight ${pattern.kind} printed in the ` +
+          `${hourLabel(pattern.hour)} hour: ${rate(pattern.heldRate)} held over ${decided} ` +
+          `decided session(s) (${pattern.held} held, ${pattern.takenOut} taken out` +
           (pattern.medianExtensionPoints !== null
             ? `, median ${pattern.medianExtensionPoints} point(s) past it when taken out`
             : '') +
@@ -500,12 +513,94 @@ export function formatExtremeReadForPrompt(read: ExtremeRead | undefined): strin
     lines.push('Logged, but NOT yet readable — report these as counts only, never as a rate:');
     for (const pattern of read.thinPatterns) {
       lines.push(
-        `- ${pattern.symbol} overnight ${pattern.kind} at ${hourLabel(pattern.hour)}: ` +
-          `${pattern.held + pattern.takenOut} of ${pattern.sessions} session(s) judged ` +
-          `(${pattern.held} held, ${pattern.takenOut} taken out` +
+        `- ${pattern.symbol} [${pattern.timeframe}] overnight ${pattern.kind} at ` +
+          `${hourLabel(pattern.hour)}: ${pattern.held + pattern.takenOut} of ` +
+          `${pattern.sessions} session(s) judged (${pattern.held} held, ` +
+          `${pattern.takenOut} taken out` +
           (pattern.undecided > 0 ? `, ${pattern.undecided} not judged` : '') +
           `). ${read.minSessions} decided sessions are needed before this is a rate.`
       );
+    }
+  }
+
+  // ---- The trader's own ratings of the levels they marked -------------------
+  // The other half of the log, and a different question: not where price went, but whether
+  // the line they drew was worth drawing. Kept separate from the hour counts above because
+  // "the open kept the 3am high" and "my 3am line was worth marking" are not the same claim.
+  const ratings = read.ratings;
+  lines.push('');
+  lines.push('=== HOW THE LEVELS THE TRADER MARKED ACTUALLY BEHAVED (their own ratings) ===');
+  lines.push(
+    'After the fact the trader rates each print: HELD (the level was not taken out), TAKEN ' +
+      'OUT, or CHOPPED (it never really decided). A chopped reading counts against the ' +
+      'level — it is not a hold. Each reading is taken at one horizon: 30 minutes, 1 hour, or ' +
+      'the end of day. Some readings also carry a GRADE out of 5 for how clean the level was, ' +
+      'which is a separate answer from the outcome: a level taken out by a real break is not ' +
+      'the same finding as one that failed messily.'
+  );
+  if (ratings.rated === 0) {
+    lines.push('Nothing has been rated yet, so there is nothing to say about the levels.');
+  } else {
+    lines.push(
+      `${ratings.rated} reading(s): ${ratings.held} held, ${ratings.takenOut} taken out, ` +
+        `${ratings.chopped} chopped.`
+    );
+    if (ratings.graded > 0 && ratings.avgGrade !== null) {
+      lines.push(
+        `Average grade ${ratings.avgGrade} of 5 across ${ratings.graded} graded reading(s).`
+      );
+    }
+    if (!ratings.enoughData) {
+      lines.push(
+        `THIN: fewer than ${read.minRated} readings in total, so no held rate may be quoted ` +
+          'from them. Report the counts.'
+      );
+    } else {
+      lines.push(`Held rate across every reading: ${rate(ratings.heldRate)}.`);
+    }
+
+    const horizons = read.ratingsByHorizon.filter((entry) => entry.stats.rated > 0);
+    if (horizons.length) {
+      lines.push('');
+      lines.push('By horizon (what a level did by 30 minutes says nothing about the close):');
+      for (const entry of horizons) {
+        lines.push(
+          `- ${entry.horizon}: ${entry.stats.rated} reading(s), ${entry.stats.held} held ` +
+            `(${rate(entry.stats.heldRate)})` +
+            (entry.stats.avgGrade === null ? '' : `, average grade ${entry.stats.avgGrade}`)
+        );
+      }
+    }
+
+    if (read.ratingConditions.length) {
+      lines.push('');
+      lines.push('Conditions with a readable held rate (enough readings), best first:');
+      for (const bucket of read.ratingConditions) {
+        lines.push(
+          `- ${bucket.label}: ${rate(bucket.stats.heldRate)} held over ${bucket.stats.rated} ` +
+            `reading(s) (${bucket.stats.held} held, ${bucket.stats.takenOut} taken out, ` +
+            `${bucket.stats.chopped} chopped` +
+            (bucket.stats.avgGrade === null
+              ? ''
+              : `, average grade ${bucket.stats.avgGrade}`) +
+            ')'
+        );
+      }
+    } else {
+      lines.push('');
+      lines.push('NO CONDITION HAS ENOUGH READINGS YET for a rate. Report the counts only.');
+    }
+
+    if (read.thinRatingConditions.length) {
+      lines.push('');
+      lines.push('Rated, but NOT yet readable — counts only, never a rate:');
+      for (const bucket of read.thinRatingConditions) {
+        lines.push(
+          `- ${bucket.label}: ${bucket.stats.rated} reading(s), ${bucket.stats.held} held, ` +
+            `${bucket.stats.takenOut} taken out, ${bucket.stats.chopped} chopped. ` +
+            `${read.minRated} readings are needed before this is a rate.`
+        );
+      }
     }
   }
 
@@ -1297,11 +1392,13 @@ Rank only conditions with a readable hold rate. Never quote a rate for a conditi
     { "condition": "an hour from the log, e.g. the MES overnight high printing at 3am", "heldRate": "the held rate and the counts it came from", "evidence": "the held / taken-out / not-judged numbers behind it" }
   ],
   "notYetReadable": ["hours logged but still too thin to read, each with its counts. Empty array when every hour has enough"],
+  "levelsRead": "2-4 sentences on what the trader's own RATINGS say about the levels they marked: quote the held rates and the held / taken-out / chopped counts, name the side (support or resistance) and the chart and hour each finding comes from, and report the grades separately from the outcomes. Say plainly which conditions are not yet readable. When nothing is rated, say that instead",
+  "notYetRated": ["conditions that are rated but still below the readable floor, each with its counts. Empty array when every rated condition has enough"],
   "whatItMeans": "2-3 sentences on what their own logged sessions show, stated as what has happened, never what will",
-  "nextStep": "one concrete, checkable thing to log that would sharpen this record",
+  "nextStep": "one concrete, checkable thing to log or rate that would sharpen this record",
   "motivation": "2 sentences. Specific to this trader and earned by their data. No slogans."
 }
-Rank only hours with a readable held rate. Never quote a rate for an hour listed as not yet readable, and never say an hour "tends to" do anything. Held means the regular session never traded past the overnight extreme — not that the trade paid.`,
+Rank only hours with a readable held rate, and only conditions with enough readings in levelsRead. Never quote a rate for anything listed as not yet readable, and never say an hour "tends to" do anything. Held means the regular session never traded past the overnight extreme — not that the trade paid. A chopped rating counts against the level.`,
   setups: `Return exactly this JSON:
 {
   "headline": "one sentence, under 16 words, on which setup the week's own numbers say is working",
@@ -1565,7 +1662,12 @@ export function buildCoachPrompt(
         `is logged but not yet readable. Say what the recorded sessions show has happened, ` +
         `never what an hour will do next — and never call a hold a profit or a reason to ` +
         `trade. If nothing is readable yet, say exactly that and make nextStep about logging ` +
-        `more sessions.`
+        `more sessions. Then read the trader's own RATINGS of the levels they marked: what ` +
+        `their lines did, split by the side they were treating as support or resistance, by ` +
+        `chart, by hour, and by how long they waited before calling it — a level that held at ` +
+        `30 minutes and was taken out by the close is reported as both, never as one. Quote ` +
+        `the held rates only for conditions marked readable, and the grades separately from ` +
+        `the outcomes.`
       : mode === 'setups'
       ? `Read this trader's WEEK SETUP BY SETUP, from THE WEEK section: what each setup's own ` +
         `trades paid in the last seven days, and whether its levels held behind that. Every ` +
@@ -1870,6 +1972,8 @@ export function parseCoachResponse(
       bestPattern: asText(obj.bestPattern, 'bestPattern'),
       patterns,
       notYetReadable: asTextList(obj.notYetReadable, 'notYetReadable'),
+      levelsRead: asLooseText(obj.levelsRead),
+      notYetRated: asTextList(obj.notYetRated, 'notYetRated'),
       whatItMeans: asText(obj.whatItMeans, 'whatItMeans'),
       nextStep: asText(obj.nextStep, 'nextStep'),
       motivation: asText(obj.motivation, 'motivation'),

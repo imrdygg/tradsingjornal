@@ -793,6 +793,8 @@ describe('extremes mode', () => {
       },
     ],
     notYetReadable: ['MNQ overnight low at 5am: 2 of 3 sessions judged'],
+    levelsRead: 'Your 3am resistance levels held in 4 of 5 readings, average grade 4.2 of 5.',
+    notYetRated: ['MES support: 2 readings, 1 held'],
     whatItMeans: 'In the sessions you logged, the 3am high was not extended by the open.',
     nextStep: 'Log both windows for every session, so the sample covers them evenly.',
     motivation: 'Five sessions logged by hand is what makes this readable.',
@@ -802,11 +804,16 @@ describe('extremes mode', () => {
     const shape = COACH_RESPONSE_SHAPES.extremes;
     expect(shape).toContain('"bestPattern"');
     expect(shape).toContain('"notYetReadable"');
-    expect(shape).toContain('Never quote a rate for an hour listed as not yet readable');
+    expect(shape).toContain('"levelsRead"');
+    expect(shape).toContain('"notYetRated"');
+    expect(shape).toContain('Never quote a rate for anything listed as not yet readable');
     expect(shape).toContain('never say an hour "tends to" do anything');
+    expect(shape).toContain('A chopped rating counts against the level');
 
     const { userPrompt } = buildCoachPrompt('extremes', digestFor());
     expect(userPrompt).toContain("Read this trader's SESSION EXTREMES");
+    // The ratings are part of the read, not a footnote to it.
+    expect(userPrompt).toContain("read the trader's own RATINGS of the levels they marked");
   });
 
   it('parses a clock read, and reads an absent thin list as empty', () => {

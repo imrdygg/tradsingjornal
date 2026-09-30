@@ -29,11 +29,17 @@ import {
   type LevelEdgeBucket,
 } from '../analytics/level-edge';
 import {
-  buildExtremeDays,
+  buildDaysByTimeframe,
   buildOvernightHourPatterns,
+  findRatingEdges,
   MIN_PATTERN_SESSIONS,
+  MIN_RATED,
+  RATING_HORIZONS,
   summarizeExtremes,
+  summarizeRatings,
   type ExtremeHourPattern,
+  type ExtremeRatingBucket,
+  type ExtremeRatingStats,
 } from '../analytics/session-extremes';
 
 /**
@@ -167,6 +173,8 @@ export interface ExtremeRead {
   points: number;
   /** Instruments the log covers. */
   symbols: string[];
+  /** The charts the log covers, so the coach knows which resolutions are even in play. */
+  timeframes: string[];
   /** The oldest and newest session dates, or null when the log is empty. */
   firstDate: string | null;
   lastDate: string | null;
@@ -178,6 +186,16 @@ export interface ExtremeRead {
   patterns: ExtremeHourPattern[];
   /** Hours logged but still too thin to read, so the coach reports counts, not rates. */
   thinPatterns: ExtremeHourPattern[];
+  /** What the trader's own readings say, across every horizon together. */
+  ratings: ExtremeRatingStats;
+  /** The same readings split by horizon, so an hour that held and a close that did not are visible. */
+  ratingsByHorizon: Array<{ horizon: string; stats: ExtremeRatingStats }>;
+  /** Rated conditions with a readable sample, best held rate first. */
+  ratingConditions: ExtremeRatingBucket[];
+  /** Rated conditions logged but still too thin, so the coach reports counts only. */
+  thinRatingConditions: ExtremeRatingBucket[];
+  /** Rated readings a condition needs before its rate may be read. */
+  minRated: number;
 }
 
 /**
@@ -731,18 +749,38 @@ export /**
  */
 function buildExtremeRead(extremes: SessionExtreme[]): ExtremeRead {
   const summary = summarizeExtremes(extremes);
-  const all = buildOvernightHourPatterns(buildExtremeDays(extremes));
+  // Read one chart at a time, then pooled: a print only means something inside the timeframe
+  // it came off, so the pattern read never mixes two resolutions into one rate.
+  const days = buildDaysByTimeframe(extremes);
+  const all = buildOvernightHourPatterns(days);
+  // Every bucket, thin ones included, so the split into readable and counted is made here
+  // rather than by a floor that would hide the conditions worth reporting as counts.
+  const ratingEdges = findRatingEdges(extremes, { minRated: 0 });
+  const timeframes = [...new Set(days.map((day) => day.timeframe))].sort();
 
   return {
     sessions: summary.sessions,
     points: summary.points,
     symbols: summary.symbols,
+    timeframes,
     firstDate: summary.firstDate,
     lastDate: summary.lastDate,
     unreadable: summary.unreadable,
     minSessions: MIN_PATTERN_SESSIONS,
     patterns: all.filter((pattern) => pattern.enoughData),
     thinPatterns: all.filter((pattern) => !pattern.enoughData).slice(0, 8),
+    ratings: summarizeRatings(extremes),
+    ratingsByHorizon: RATING_HORIZONS.map((horizon) => ({
+      horizon,
+      stats: summarizeRatings(extremes, { horizon }),
+    })),
+    // Compared against the floor here rather than trusting `enoughData`, which is relative to
+    // the floor the caller passed — the same way the level-touch buckets are split.
+    ratingConditions: ratingEdges.filter((bucket) => bucket.stats.rated >= MIN_RATED),
+    thinRatingConditions: ratingEdges
+      .filter((bucket) => bucket.key !== 'all' && bucket.stats.rated < MIN_RATED)
+      .slice(0, 8),
+    minRated: MIN_RATED,
   };
 }
 
@@ -1054,6 +1092,13 @@ export function buildJournalDigest(input: {
         `logged, and ${MIN_PATTERN_SESSIONS} decided sessions are needed for any hour before ` +
         `it means anything. The extreme counts are a tally of what was logged so far, not a ` +
         `pattern.`
+    );
+  }
+  if (extremeRead.ratings.rated > 0 && extremeRead.ratingConditions.length === 0) {
+    caveats.push(
+      `Only ${extremeRead.ratings.rated} rated print(s) so far and no condition has ` +
+        `${MIN_RATED}. The trader's own ratings are a record of what happened to the levels ` +
+        `they marked, not a rate, until a condition reaches that floor.`
     );
   }
 

@@ -83,6 +83,11 @@ interface CoachViewProps {
   onSaveChartSearch?: (search: ChartSearch) => void;
   /** Removes one saved picture search. */
   onDeleteChartSearch?: (id: string) => void;
+  /**
+   * Writes coach-named setups into the playbook. Omitted hides the picture search's
+   * "Name this setup from my chart" action.
+   */
+  onAddSetups?: (setups: Setup[]) => void;
   /** The account a saved search belongs to. */
   userId?: string;
 }
@@ -132,6 +137,7 @@ export const CoachView: React.FC<CoachViewProps> = ({
   chartSearches,
   onSaveChartSearch,
   onDeleteChartSearch,
+  onAddSetups,
   userId,
 }) => {
   const digest = useMemo(
@@ -434,6 +440,7 @@ export const CoachView: React.FC<CoachViewProps> = ({
         chartSearches={chartSearches}
         onSaveChartSearch={onSaveChartSearch}
         onDeleteChartSearch={onDeleteChartSearch}
+        onAddSetups={onAddSetups}
         userId={userId}
       />
 

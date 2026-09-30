@@ -79,6 +79,8 @@ interface TradesViewProps {
     chartSearches?: ChartSearch[];
     onSaveChartSearch?: (search: ChartSearch) => void;
     onDeleteChartSearch?: (id: string) => void;
+    /** Writes coach-named setups from the picture search into the playbook. */
+    onAddSetups?: (setups: Setup[]) => void;
     userId?: string;
   };
 }

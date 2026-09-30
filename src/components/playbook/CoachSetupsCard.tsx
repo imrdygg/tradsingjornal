@@ -3,6 +3,7 @@ import { Sparkles, Wand2 } from 'lucide-react';
 import { DailyReview, Instrument, LevelTouch, Setup, Trade, TradingDay } from '../../types';
 import { buildJournalDigest } from '../../lib/ai/journal-digest';
 import type { LearnResponse, LearnedSetup } from '../../lib/ai/coach-types';
+import { newSetupDrafts } from '../../lib/ai/setup-drafts';
 import { CoachErrorCode, CoachResult, requestCoach } from '../../lib/ai/coach-client';
 import {
   MAX_COACH_IMAGES,
@@ -106,44 +107,6 @@ function collectImages(trades: Trade[], instruments: Instrument[]): { label: str
   return out;
 }
 
-/** Turns one proposed setup into an editable draft for the playbook. */
-function buildDraft(learned: LearnedSetup): Setup {
-  const rules = learned.entryRules.length
-    ? ['', 'Entry rules:', ...learned.entryRules.map((rule) => `- ${rule}`)]
-    : [];
-  return {
-    id: `setup-ai-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    name: learned.name,
-    active: true,
-    description: [learned.description, ...rules, '', `Coach's evidence: ${learned.evidence}`]
-      .join('\n')
-      .trim(),
-    origin: 'ai',
-    createdAt: new Date().toISOString(),
-  };
-}
-
-/**
- * The proposals that are actually new, as playbook drafts.
- *
- * Compared case-insensitively against the catalog the way every other setup name is, so a
- * proposal that merely repeats one the trader already keeps is dropped instead of shadowing
- * it. Duplicates inside a single answer are dropped for the same reason.
- */
-function newDrafts(proposed: LearnedSetup[], existing: Setup[]): Setup[] {
-  const taken = new Set(existing.map((setup) => setup.name.trim().toLowerCase()));
-  const drafts: Setup[] = [];
-
-  for (const learned of proposed) {
-    const name = learned.name.trim();
-    const key = name.toLowerCase();
-    if (!name || taken.has(key)) continue;
-    taken.add(key);
-    drafts.push(buildDraft({ ...learned, name }));
-  }
-  return drafts;
-}
-
 /** How much the record supports a proposal, said plainly rather than implied. */
 function confidenceTone(confidence: LearnedSetup['confidence']): string {
   if (confidence === 'high') return 'bg-emerald-950/80 text-emerald-300 border-emerald-800';
@@ -197,7 +160,7 @@ export const CoachSetupsCard: React.FC<CoachSetupsCardProps> = ({
     const result = await requestCoach('learn', digest, undefined, { images });
 
     if (result.ok) {
-      const drafts = newDrafts((result.data as LearnResponse).setups, setups);
+      const drafts = newSetupDrafts((result.data as LearnResponse).setups, setups);
       if (drafts.length) onAddSetups(drafts);
       setState({
         loading: false,

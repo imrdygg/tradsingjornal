@@ -1686,6 +1686,9 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               chartSearches,
               onSaveChartSearch: handleSaveChartSearch,
               onDeleteChartSearch: handleDeleteChartSearch,
+              // The picture search can name a setup from the chart it was handed; the
+              // drafts land in the playbook exactly as the playbook's own read leaves them.
+              onAddSetups: (drafts) => drafts.forEach(handleAddSetup),
               userId,
             }}
           />
@@ -1756,6 +1759,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             chartSearches={chartSearches}
             onSaveChartSearch={handleSaveChartSearch}
             onDeleteChartSearch={handleDeleteChartSearch}
+            onAddSetups={(drafts) => drafts.forEach(handleAddSetup)}
             userId={userId}
           />
         );
@@ -1836,6 +1840,9 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               chartSearches,
               onSaveChartSearch: handleSaveChartSearch,
               onDeleteChartSearch: handleDeleteChartSearch,
+              // The picture search can name a setup from the chart it was handed; the
+              // drafts land in the playbook exactly as the playbook's own read leaves them.
+              onAddSetups: (drafts) => drafts.forEach(handleAddSetup),
               userId,
             }}
           />

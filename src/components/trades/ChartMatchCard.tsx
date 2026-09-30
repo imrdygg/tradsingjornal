@@ -10,7 +10,8 @@ import type {
   TradingDay,
 } from '../../types';
 import { buildJournalDigest, FULL_HISTORY_TRADE_SAMPLES } from '../../lib/ai/journal-digest';
-import type { MatchItem, MatchResponse } from '../../lib/ai/coach-types';
+import type { LearnResponse, MatchItem, MatchResponse } from '../../lib/ai/coach-types';
+import { newSetupDrafts } from '../../lib/ai/setup-drafts';
 import { CoachErrorCode, CoachResult, requestCoach } from '../../lib/ai/coach-client';
 import {
   MAX_COACH_IMAGES,
@@ -93,6 +94,11 @@ export interface ChartMatchCardProps {
   onSaveChartSearch?: (search: ChartSearch) => void;
   /** Removes one saved search. Omitted leaves the history read-only. */
   onDeleteChartSearch?: (id: string) => void;
+  /**
+   * Writes coach-named setups into the playbook as drafts. Omitted hides the
+   * "Name this setup" action, which is what a caller with no playbook wants.
+   */
+  onAddSetups?: (setups: Setup[]) => void;
   /** The account a saved search belongs to, carried onto the record. */
   userId?: string;
   /** A heading override, so the card can read naturally on the tab that hosts it. */
@@ -282,6 +288,7 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
   chartSearches,
   onSaveChartSearch,
   onDeleteChartSearch,
+  onAddSetups,
   userId = 'local',
   heading = 'Search your history with a chart',
   className = '',
@@ -350,6 +357,18 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
     title: string;
     subtitle?: string;
   } | null>(null);
+  /**
+   * The naming read: whether it is running, and what it wrote into the playbook.
+   *
+   * `proposed` is the count the coach returned, so an answer whose names are all already
+   * kept can say so rather than looking like a failed call.
+   */
+  const [naming, setNaming] = useState<{
+    loading: boolean;
+    added: string[];
+    proposed: number;
+    failure: { code: CoachErrorCode; message: string } | null;
+  }>({ loading: false, added: [], proposed: 0, failure: null });
   /** The score a match must reach to be shown. Remembered, and adjustable on the card. */
   const [resemblanceFloor, setResemblanceFloor] = useState(readStoredFloor);
   /** Whether the matches below the resemblance floor are revealed. */
@@ -612,6 +631,48 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
       </div>
     );
   };
+
+  /**
+   * Asks the coach to name the setup this chart is.
+   *
+   * It is fed the very chart the trader searched with, then the trades the search matched —
+   * so the name is about the picture on screen and the trades it resembles, not about the
+   * journal at large. The drafts land in the playbook through the same builder and the same
+   * rules as the playbook's own read, so the two produce identical material.
+   */
+  async function nameSetup() {
+    if (!onAddSetups || !queryImage) return;
+    setNaming({ loading: true, added: [], proposed: 0, failure: null });
+
+    const matchedTrades = rankedMatches
+      .map((match) => resolve(match))
+      .filter((candidate): candidate is Trade => Boolean(candidate));
+    const images = [
+      { label: QUERY_LABEL, dataUrl: queryImage },
+      ...collectTradeShots(matchedTrades, instruments, dayById),
+    ];
+
+    const result = await requestCoach('learn', digest, undefined, { images });
+    if (!result.ok) {
+      setNaming({
+        loading: false,
+        added: [],
+        proposed: 0,
+        failure: { code: result.code, message: result.message },
+      });
+      return;
+    }
+
+    const proposed = (result.data as LearnResponse).setups;
+    const drafts = newSetupDrafts(proposed, setups);
+    if (drafts.length) onAddSetups(drafts);
+    setNaming({
+      loading: false,
+      added: drafts.map((draft) => draft.name),
+      proposed: proposed.length,
+      failure: null,
+    });
+  }
 
   const searched = Math.min(digest.tradeSamples.length, digest.dataSufficiency.closedTrades);
 
@@ -1009,6 +1070,43 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
                           renderMatchRow(match, visibleMatches.length + index)
                         )}
                     </div>
+                  )}
+                </div>
+              )}
+
+              {onAddSetups && (
+                <div className="space-y-2 border-t border-zinc-800/70 pt-3">
+                  <CoachGenerateButton
+                    id="chart-match-name-setup"
+                    label={naming.failure ? 'Try naming it again' : 'Name this setup from my chart'}
+                    loadingLabel="Reading your chart and matches…"
+                    loading={naming.loading}
+                    onClick={() => void nameSetup()}
+                  />
+                  <p className="text-[10px] leading-relaxed text-zinc-500">
+                    Sends this chart and the trades it matched, and writes what the coach names
+                    into your playbook as an AI draft you can edit or delete.
+                  </p>
+                  {naming.failure && (
+                    <CoachErrorPanel
+                      code={naming.failure.code}
+                      message={naming.failure.message}
+                      idSuffix="name"
+                    />
+                  )}
+                  {naming.added.length > 0 && (
+                    <p
+                      id="chart-match-name-added"
+                      className="text-[11px] leading-relaxed text-emerald-300/90"
+                    >
+                      Added to your playbook as an AI draft:{' '}
+                      <span className="font-semibold">{naming.added.join(', ')}</span>.
+                    </p>
+                  )}
+                  {!naming.loading && !naming.failure && naming.added.length === 0 && naming.proposed > 0 && (
+                    <p className="text-[11px] leading-relaxed text-zinc-500">
+                      Every setup it named is already in your playbook, so nothing new was added.
+                    </p>
                   )}
                 </div>
               )}

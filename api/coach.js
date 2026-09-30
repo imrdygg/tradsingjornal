@@ -1763,15 +1763,31 @@ function asLevels(value) {
   }
   return levels;
 }
+function extractJsonFromModelText(raw) {
+  const cleaned = raw.trim().replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+  const attempts = [cleaned];
+  const starts = ["{", "["].map((opener) => cleaned.indexOf(opener)).filter((index) => index >= 0);
+  if (starts.length) {
+    const start = Math.min(...starts);
+    const end = Math.max(cleaned.lastIndexOf("}"), cleaned.lastIndexOf("]"));
+    if (end > start) attempts.push(cleaned.slice(start, end + 1));
+  }
+  for (const attempt of attempts) {
+    try {
+      return JSON.parse(attempt);
+    } catch {
+      try {
+        return JSON.parse(attempt.replace(/,\s*([}\]])/g, "$1"));
+      } catch {
+      }
+    }
+  }
+  throw new Error("The coach did not return valid JSON.");
+}
 function parseCoachResponse(mode, raw, extras) {
   let parsed = raw;
   if (typeof raw === "string") {
-    const cleaned = raw.trim().replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
-    try {
-      parsed = JSON.parse(cleaned);
-    } catch {
-      throw new Error("The coach did not return valid JSON.");
-    }
+    parsed = extractJsonFromModelText(raw);
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error("The coach did not return a JSON object.");

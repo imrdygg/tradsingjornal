@@ -2052,6 +2052,44 @@ function asLevels(value: unknown): PlannedLevel[] {
 }
 
 /**
+ * Pulls a JSON value out of whatever the model actually returned.
+ *
+ * A model slips into a code fence, or wraps the object in a sentence, often enough that a bare
+ * `JSON.parse` throws away an otherwise perfectly good answer. Three attempts, cheapest first:
+ * the text as-is (minus a wrapping fence), then the outermost object or array inside it, then
+ * the same with the trailing commas that turn up in hand-shaped JSON removed. Exported so the
+ * recovery is tested directly rather than only through one mode's parser.
+ */
+export function extractJsonFromModelText(raw: string): unknown {
+  const cleaned = raw.trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
+  const attempts: string[] = [cleaned];
+
+  // The outermost container in the text, in case the model framed the JSON in prose.
+  const starts = ['{', '[']
+    .map((opener) => cleaned.indexOf(opener))
+    .filter((index) => index >= 0);
+  if (starts.length) {
+    const start = Math.min(...starts);
+    const end = Math.max(cleaned.lastIndexOf('}'), cleaned.lastIndexOf(']'));
+    if (end > start) attempts.push(cleaned.slice(start, end + 1));
+  }
+
+  for (const attempt of attempts) {
+    try {
+      return JSON.parse(attempt);
+    } catch {
+      // A trailing comma before a closing brace or bracket is the commonest model slip.
+      try {
+        return JSON.parse(attempt.replace(/,\s*([}\]])/g, '$1'));
+      } catch {
+        // Try the next candidate rather than giving up on the first.
+      }
+    }
+  }
+  throw new Error('The coach did not return valid JSON.');
+}
+
+/**
  * Validates the model's JSON into a known shape.
  *
  * Throws with a readable message rather than returning partial data, so the UI can
@@ -2064,14 +2102,9 @@ export function parseCoachResponse(
 ): CoachResponse {
   let parsed: unknown = raw;
 
-  // Models sometimes wrap JSON in a code fence despite instructions.
+  // Models sometimes wrap JSON in a code fence, or in a sentence, despite instructions.
   if (typeof raw === 'string') {
-    const cleaned = raw.trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
-    try {
-      parsed = JSON.parse(cleaned);
-    } catch {
-      throw new Error('The coach did not return valid JSON.');
-    }
+    parsed = extractJsonFromModelText(raw);
   }
 
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {

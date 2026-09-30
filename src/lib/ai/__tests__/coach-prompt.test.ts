@@ -6,6 +6,7 @@ import {
   COACH_MODES,
   COACH_OPINION_MODES,
   COACH_RESPONSE_SHAPES,
+  extractJsonFromModelText,
   formatDigestForPrompt,
   formatTradeForPrompt,
   isCoachMode,
@@ -1031,6 +1032,46 @@ describe('learn mode', () => {
 
     const { nextStep, ...withoutStep } = learnJson;
     expect(() => parseCoachResponse('learn', withoutStep)).toThrow(/nextStep/);
+  });
+});
+
+/**
+ * A model's answer arrives as text, and a bare JSON.parse throws away usable answers whenever
+ * it wraps the object in a fence or a sentence. What is asserted here is the recovery: the
+ * plain case still works, the messy cases are salvaged, and text that holds no JSON at all is
+ * still refused rather than guessed at.
+ */
+describe('recovering a coach answer from messy text', () => {
+  it('reads plain JSON unchanged', () => {
+    expect(extractJsonFromModelText('{"a":1}')).toEqual({ a: 1 });
+  });
+
+  it('unwraps a code fence', () => {
+    expect(extractJsonFromModelText('```json\n{"a":1}\n```')).toEqual({ a: 1 });
+  });
+
+  it('finds the object inside a sentence', () => {
+    expect(
+      extractJsonFromModelText('Sure, here it is:\n{"a":1}\nHope that helps.')
+    ).toEqual({ a: 1 });
+  });
+
+  it('repairs a trailing comma', () => {
+    expect(extractJsonFromModelText('{"a":1,}')).toEqual({ a: 1 });
+  });
+
+  it('refuses text that holds no JSON at all', () => {
+    expect(() => extractJsonFromModelText('I cannot help with that.')).toThrow(/valid JSON/);
+  });
+
+  it('lets a mode parser accept a fenced answer', () => {
+    const fenced =
+      '```json\n{"headline":"h","patternRead":"p","matches":[],' +
+      '"notInJournal":"","nextStep":"s","motivation":"m"}\n```';
+    const parsed = parseCoachResponse('match', fenced) as MatchResponse;
+
+    expect(parsed.headline).toBe('h');
+    expect(parsed.matches).toEqual([]);
   });
 });
 

@@ -135,6 +135,14 @@ function scoreTone(score: number): string {
   return 'bg-amber-950/60 text-amber-300/90 border-amber-900/70';
 }
 
+/** The fill for one match's bar in the distribution, banded the way the score chip is. */
+function scoreBarClass(score: number): string {
+  if (score >= 80) return 'bg-emerald-500';
+  if (score >= 60) return 'bg-sky-500';
+  if (score >= MIN_MATCH_SCORE) return 'bg-amber-500';
+  return 'bg-rose-500/70';
+}
+
 /** How many of the closest matches are shown as the main answer. */
 export const CLOSEST_MATCH_COUNT = 3;
 
@@ -316,6 +324,12 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
 
   const closestMatches = visibleMatches.slice(0, CLOSEST_MATCH_COUNT);
   const alsoSimilar = visibleMatches.slice(CLOSEST_MATCH_COUNT);
+
+  // The shape of one search, said in numbers rather than left to be guessed from the rows.
+  const strongCount = rankedMatches.filter((match) => match.score >= 80).length;
+  const goodCount = rankedMatches.filter(
+    (match) => match.score >= 60 && match.score < 80
+  ).length;
 
   /** One matched trade, rendered the same way in the closest list and the secondary one. */
   const renderMatchRow = (match: MatchItem, index: number) => {
@@ -584,6 +598,60 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
                   {answer.patternRead}
                 </p>
               </div>
+
+              {/*
+                The shape of the search at a glance.
+
+                Five rows of percentages are hard to read as a whole; a bar per match, longest
+                first with the floor marked, shows in one look whether the search found real
+                matches or a spread of loose ones.
+              */}
+              {answer.matches.length > 0 && (
+                <div id="chart-match-distribution" className="space-y-1.5">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
+                      How strong these matches are
+                    </span>
+                    <span className="text-[10px] text-zinc-500">
+                      {strongCount} strong · {goodCount} good · {weakerMatches.length} below the{' '}
+                      {MIN_MATCH_SCORE}% floor
+                    </span>
+                  </div>
+                  <div className="space-y-1">
+                    {rankedMatches.map((match, index) => (
+                      <div
+                        key={`${match.date}-${match.symbol}-bar-${index}`}
+                        data-score-bar={match.score}
+                        className="flex items-center gap-2"
+                      >
+                        <span className="w-20 shrink-0 truncate font-mono text-[10px] text-zinc-500">
+                          {match.date.slice(5)} {match.symbol}
+                        </span>
+                        <div className="relative h-2 flex-1 overflow-hidden rounded-full bg-zinc-800">
+                          <div
+                            className={`h-full rounded-full ${scoreBarClass(match.score)}`}
+                            style={{ width: `${match.score}%` }}
+                          />
+                          {/* Where the floor sits, so a bar's length is judged against it. */}
+                          <div
+                            className="absolute inset-y-0 w-px bg-zinc-500/80"
+                            style={{ left: `${MIN_MATCH_SCORE}%` }}
+                            title={`The ${MIN_MATCH_SCORE}% floor`}
+                          />
+                        </div>
+                        <span className="w-9 shrink-0 text-right font-mono text-[10px] text-zinc-300">
+                          {match.score}%
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[10px] leading-relaxed text-zinc-500">
+                    Each bar is one match's closeness score from the coach, longest first. The
+                    mark is the {MIN_MATCH_SCORE}% floor — the bars shorter than it are the ones
+                    kept below.
+                  </p>
+                </div>
+              )}
 
               {answer.matches.length === 0 ? (
                 <p id="chart-match-empty" className="text-xs text-zinc-400 leading-relaxed">

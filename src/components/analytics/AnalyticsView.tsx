@@ -47,6 +47,7 @@ import {
 } from '../../lib/ai/entry-comparison';
 import { instrumentSymbol } from '../../lib/trading/instruments';
 import { DEFAULT_RISK_TIER_AMOUNTS } from '../../lib/trading/risk-tiers';
+import { DrawdownRoomChart } from '../today/DrawdownRoomChart';
 import {
   assessRiskCapacity,
   buildEquityCurve,
@@ -1245,6 +1246,13 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
           </span>
           {capacity.note}
         </div>
+
+        {/*
+          The figures above say what the account can absorb now; this says how it got there.
+          It moved here from Today because the limit that defines every point on the line is
+          edited on this panel — the chart and the control that changes it belong together.
+        */}
+        <DrawdownRoomChart trades={trades} maxDrawdown={maxDrawdown} />
 
         <p className="text-[10px] text-zinc-500 leading-relaxed">
           This is capacity, not advice: it says what the account can absorb, not what to do

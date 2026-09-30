@@ -6,7 +6,6 @@ import {
 } from './components/layout/AppShell';
 import { YesterdayFocusBanner } from './components/today/YesterdayFocusBanner';
 import { DrawdownRoomStrip } from './components/today/DrawdownRoomStrip';
-import { DrawdownRoomChart } from './components/today/DrawdownRoomChart';
 import { realizedPnL } from './lib/analytics/realized-pnl';
 import { TodaySummary } from './components/today/TodaySummary';
 import { ImportantLevelsEditor } from './components/today/ImportantLevelsEditor';
@@ -1307,10 +1306,11 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               Today, said in one line.
 
               The number, the record behind it and the two things a trader does with it: write
-              a trade down, and say how the day went. Everything below this strip is reading
-              the same day back — the lesson, the review and the trades — so the strip stays
-              the page's header. The journal-wide search sits directly under it, because that
-              box is about finding any day rather than about reading this one.
+              a trade down, and say how the day went. Under the strip the tab reads in the
+              order the trader asked for: the carried-forward lesson first, because it is the
+              one thing that has to be in view whether or not it is welcome; then the
+              journal-wide search, always open; then the review trend, which is the evidence
+              behind that lesson. The day's own panels follow below them.
             */}
             <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 backdrop-blur-sm sm:p-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1374,24 +1374,32 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             </div>
 
             {/*
-              Journal-wide search, at the top of the tab.
+              The lesson carried forward from the last session, first in the tab.
 
-              It reads across every tab's records rather than the day's, so it is not part of
-              reading the session back — which is exactly why it goes first: a box you reach
-              by scrolling past the whole day is a box you stop using on the days you most
-              need it. Above the day's panels it is one click away, and folded away it costs a
-              single line.
+              It used to sit third, under the day's summary and its levels, which meant the
+              one piece of writing the trader is meant to act on had to be scrolled to. It
+              goes first now: a lesson nobody reads before the session is a lesson already
+              lost.
             */}
-            <CollapsibleSection
-              id="section-search"
-              title="Search the journal"
-              meta={
-                <span className="font-mono text-[11px] text-zinc-500">
-                  trades, days, notes and tags
-                </span>
-              }
-              persistKey="search"
-            >
+            {yesterdayFocus && (
+              <YesterdayFocusBanner
+                yesterdayFocus={yesterdayFocus}
+                acknowledged={lessonAcknowledged}
+                acknowledgedAt={lessonAck?.acknowledgedAt ?? null}
+                onAcknowledge={handleAcknowledgeLesson}
+              />
+            )}
+
+            {/*
+              Journal-wide search, directly under the lesson.
+
+              It reads across every tab's records rather than the day's, which is why it
+              belongs above the day's own panels: a box you reach by scrolling past the whole
+              day is a box you stop using on the days you most need it. It used to fold away,
+              and a box behind a line is one the trader has to remember exists — so it is
+              always open, like the lesson above it.
+            */}
+            <section id="section-search" className="space-y-3">
               <GlobalSearch
                 trades={trades}
                 tradingDays={tradingDays}
@@ -1404,21 +1412,47 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
                   setHistoryFocusDayId(dayId);
                 }}
               />
-            </CollapsibleSection>
+            </section>
+
+            {/*
+              The review trend, directly under the search.
+
+              This is the evidence behind the lesson at the top of the tab: the same history
+              told by the trader's own writing rather than by the account. It moved up from
+              the foot of the page because a trend read once a session, buried under a day's
+              trades, is one that gets skipped on the days it matters. It is not held back
+              until the lesson is accepted — closing the line because a banner was not
+              clicked hid the trader's own record from them.
+            */}
+            <Suspense
+              fallback={
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4 text-xs text-zinc-400">
+                  Loading your review trend…
+                </div>
+              }
+            >
+              <CollapsibleSection
+                id="section-review-trend"
+                title="End-of-day review trend"
+                meta={
+                  <span className="font-mono text-[11px] text-zinc-400">
+                    {reviews.length} reviewed
+                  </span>
+                }
+                persistKey="review-trend"
+              >
+                <ReviewTrendPanel reviews={reviews} tradingDays={tradingDays} trades={trades} />
+              </CollapsibleSection>
+            </Suspense>
 
             {/*
               ── Today ─────────────────────────────────────────────────────────────────
 
-              The day as it stands, in the order a session is read in: the number, then the
-              lesson from the last one, then the review the trader wrote, then the trades the
-              numbers came from. Nothing here is behind a click, because all four are things
-              a trader reads or writes around a session rather than during one, and each one
-              stops working the moment it is folded away: a lesson nobody can re-read, a
-              review that disappears after it is saved, and a record nobody scrolls back to
-              are the same as not having them.
-
-              The lesson banner stays uncollapsible on purpose — it is the one thing on this
-              page that has to be in view whether or not it is welcome.
+              The day as it stands, under the lesson, the search and the trend. Nothing here
+              is behind a click, because all of these are things a trader reads or writes
+              around a session rather than during one, and each one stops working the moment
+              it is folded away: a review that disappears after it is saved, and a record
+              nobody scrolls back to, are the same as not having them.
             */}
             <CollapsibleSection
               id="section-today-summary"
@@ -1512,15 +1546,6 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               />
             </section>
 
-            {yesterdayFocus && (
-              <YesterdayFocusBanner
-                yesterdayFocus={yesterdayFocus}
-                acknowledged={lessonAcknowledged}
-                acknowledgedAt={lessonAck?.acknowledgedAt ?? null}
-                onAcknowledge={handleAcknowledgeLesson}
-              />
-            )}
-
             {/* The review the trader last wrote, so the focus they set is still in front of
                 them when they sit down to trade it. */}
             <CollapsibleSection
@@ -1597,69 +1622,24 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             </section>
 
             {/*
-              ── Drawdown room over time, and the trend the reviews make ──────────────
+              ── Drawdown room ──────────────────────────────────────────────────────────
 
-              The room left is a number; these two are what explain it. The chart is the
-              account's own history of room against the agreed floor, which is the one thing
-              a day's loss limit cannot say on its own — the limit can read unchanged while
-              the room behind it is nearly gone. The review trend is the same history told by
-              the trader's own writing: whether the discipline described in the last review is
-              the discipline of the last month of trades.
-
-              Both sit below Today rather than beside it because they are read once a session,
-              not once a trade.
+              What is left of the account is the reading that belongs to today: it decides
+              whether the next trade is affordable. The chart that explains how the room got
+              here moved to Analytics, where the limit defining it is set, and the review
+              trend now sits at the top of this tab beside the lesson it is the evidence for.
             */}
             <section id="today-room-and-trend" className="space-y-6">
               <h2 className="flex items-center gap-2 font-mono text-xs font-bold uppercase tracking-wider text-zinc-400">
                 <Activity className="h-4 w-4 text-zinc-300" />
-                Drawdown room & review trend
+                Drawdown room
               </h2>
 
-              {/*
-                What the account can still absorb, directly above the chart that got it there.
-              */}
               <DrawdownRoomStrip
                 capacity={riskCapacity}
                 plannedSize={plannedSizeRisk}
                 onOpenRisk={() => setActiveTab('analytics')}
               />
-
-              {/*
-                The strip says what is left today; this says how it got there. Kept beside it
-                rather than on Analytics, where the limit is set, because the reading the
-                chart explains is the one on this screen.
-              */}
-              <DrawdownRoomChart trades={trades} maxDrawdown={profile.maxDrawdown ?? null} />
-
-              {/*
-                The trend is the evidence behind the review, and it is not held back until the
-                lesson is accepted: closing the line because a banner was not clicked hid the
-                trader's own record from them.
-              */}
-              <Suspense
-                fallback={
-                  <div className="mb-4 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4 text-xs text-zinc-400">
-                    Loading your review trend…
-                  </div>
-                }
-              >
-                <CollapsibleSection
-                  id="section-review-trend"
-                  title="End-of-day review trend"
-                  meta={
-                    <span className="font-mono text-[11px] text-zinc-400">
-                      {reviews.length} reviewed
-                    </span>
-                  }
-                  persistKey="review-trend"
-                >
-                  <ReviewTrendPanel
-                    reviews={reviews}
-                    tradingDays={tradingDays}
-                    trades={trades}
-                  />
-                </CollapsibleSection>
-              </Suspense>
             </section>
 
           </div>

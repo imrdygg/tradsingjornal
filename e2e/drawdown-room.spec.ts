@@ -1,9 +1,12 @@
 import { expect, test, type Page } from '@playwright/test';
 
 /**
- * Covers the account drawdown room on Today:
+ * Covers the account drawdown room:
  *  - the number moves with the journal rather than sitting on the agreed figure
  *  - profit adds room above it; a loss takes it back
+ *
+ * The strip is read on Today; the chart behind it is read on Analytics, where the limit it is
+ * measured against is set, so the tests that look at the chart walk over to that tab first.
  *
  * The room was read from the equity high-water mark, which meant a winning run left it parked
  * on the agreed limit — the reading the trader reported as broken. A fresh journal starts
@@ -34,6 +37,22 @@ test.beforeEach(async ({ page }) => {
   });
   await page.goto('/');
 });
+
+/** Switches tabs by their nav button, whichever of the two navs the viewport shows. */
+async function goToTab(page: Page, id: 'today' | 'analytics') {
+  const desktop = page.locator(`#nav-btn-${id}`);
+  const target = (await desktop.isVisible()) ? desktop : page.locator(`#mobile-nav-${id}`);
+  await target.click();
+}
+
+/**
+ * Opens the Analytics tab, where the drawdown room chart now lives. The chart is read from
+ * the journal rather than from the tab's filters, so nothing on that page has to be set up.
+ */
+async function goToAnalytics(page: Page) {
+  await goToTab(page, 'analytics');
+  await expect(page.locator('#risk-capacity')).toBeVisible();
+}
 
 /**
  * A closed trade the way an import leaves one: gross P&L with the fees already taken off it.
@@ -82,11 +101,18 @@ test.describe('The drawdown room follows the journal', () => {
   });
 
   test('the chart behind the number waits for the first closed trade', async ({ page }) => {
+    // On Today the room is a number with nothing behind it; the chart is on Analytics.
+    await expect(page.locator('#drawdown-room-chart')).toHaveCount(0);
+    await goToAnalytics(page);
+
     const chart = page.locator('#drawdown-room-chart');
     await expect(chart).toContainText('No closed trade yet');
     await expect(chart.locator('[data-testid="room-chart"]')).toHaveCount(0);
 
+    // The trade is recorded from Today, where the form lives, then read back on Analytics.
+    await goToTab(page, 'today');
     await recordClosedTrade(page, 7730, 7740);
+    await goToAnalytics(page);
 
     // The line appears, and reads the same $1,100.00 the strip does.
     await expect(chart.locator('[data-testid="room-chart"]')).toBeVisible();
@@ -109,6 +135,9 @@ test.describe('The drawdown room follows the journal', () => {
     const strip = page.locator('#drawdown-room');
     await expect(strip).toContainText('$1,150.00 room left');
     await expect(strip).not.toContainText('$1,200.00');
+
+    await goToAnalytics(page);
+    // The chart reads the room net of fees too, and from the same whole journal the strip does.
     await expect(page.locator('#drawdown-room-chart')).toContainText('Room now$1,150');
   });
 

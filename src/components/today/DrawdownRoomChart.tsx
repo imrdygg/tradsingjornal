@@ -22,9 +22,10 @@ interface DrawdownRoomChartProps {
 }
 
 /**
- * How much drawdown room was left after each trade, so the strip above has a history.
+ * How much drawdown room was left after each trade, so the capacity panel it sits in has a
+ * history and not just a number.
  *
- * A single room figure answers \"what is left now\" and nothing else: it cannot show whether
+ * A single room figure answers "what is left now" and nothing else: it cannot show whether
  * this month's room was earned or inherited, and a number that only ever moves in one
  * direction is indistinguishable from one that is broken. The line puts the steps in order —
  * each win lifting the room, each loss pulling it back — which is what makes today's reading
@@ -107,7 +108,7 @@ export const DrawdownRoomChart: React.FC<DrawdownRoomChartProps> = ({
       {limit === null ? (
         <p className="text-xs leading-relaxed text-zinc-400">
           No account drawdown is set, so there is no floor for room to be measured against. Set
-          one in Analytics and the line starts here.
+          one above and the line starts here.
         </p>
       ) : points.length === 0 ? (
         <p className="text-xs leading-relaxed text-zinc-400">

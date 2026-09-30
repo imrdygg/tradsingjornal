@@ -2,13 +2,15 @@ import { expect, test, type Page } from '@playwright/test';
 
 /**
  * Covers what Today shows before anything is unfolded:
- *  - the end-of-day review, its trend and the search box are on the page as it opens
+ *  - the search box, the review trend and the end-of-day review are on the page as it opens
  *  - the review the trader last wrote is readable, not just remembered as a score
  *  - the trend is not held back until the carried-forward lesson is accepted
+ *  - the tab reads in the requested order: search, then the review trend, then the day
  *
  * All of it used to sit inside the folded "Plan, risk & coach" section, and the trend was
  * additionally gated behind the lesson banner, so a journal with a written review could open
- * on a page that showed none of it.
+ * on a page that showed none of it. The trend has since moved up from the foot of the tab,
+ * and the search box no longer folds away at all.
  */
 
 test.beforeEach(async ({ page }) => {
@@ -40,22 +42,37 @@ test.describe('What Today shows on load', () => {
     await expect(page.locator('#section-today-summary-body')).toBeVisible();
     await expect(page.locator('#section-eod-review-body')).toBeVisible();
     await expect(page.locator('#latest-review')).toBeVisible();
-    await expect(page.locator('#latest-review')).toContainText('no review written yet');
-    await expect(page.locator('#section-review-trend-body')).toBeVisible();
+    await expect(page.locator('#latest-review')).toContainText('no review written yet');    await expect(page.locator('#section-review-trend-body')).toBeVisible();
+
+    // The search box never folds away, so it is on the page on load rather than behind a
+    // line the trader has to remember to click.
     await expect(page.locator('#journal-search')).toBeVisible();
+    await expect(page.locator('#section-search input')).toBeVisible();
 
-    // Nothing is folded shut any more: the drawdown room and its chart are on the page.
+    // Nothing is folded shut any more: the drawdown room is on the page.
     await expect(page.locator('#drawdown-room')).toBeVisible();
-    await expect(page.locator('#drawdown-room-chart')).toBeVisible();
 
-    // The day reads in one order — the numbers, then the trades they came from, then the
-    // room and the trend behind both. Today's trades are inside the first group, not
-    // stranded past the long-run panels.
+    // The chart behind the room moved to Analytics, where the limit defining it is set, so
+    // it must not be sitting on Today any more.
+    await expect(page.locator('#drawdown-room-chart')).toHaveCount(0);
+
     const y = async (selector: string) => (await page.locator(selector).boundingBox())?.y ?? -1;
+
+    // The top of the tab reads in the order that was asked for: the search directly under the
+    // lesson, and the review trend directly under the search — above the day's own panels,
+    // rather than buried at the foot of the page under the trades.
+    const search = await y('#section-search');
+    const trend = await y('#section-review-trend');
     const summary = await y('#section-today-summary');
+    expect(search).toBeGreaterThanOrEqual(0);
+    expect(search).toBeLessThan(trend);
+    expect(trend).toBeLessThan(summary);
+
+    // The rest of the day keeps its order — the numbers, then the trades they came from,
+    // then the room behind both. Today's trades are inside the first group, not stranded
+    // past the long-run panels.
     const trades = await y('#today-trades');
     const room = await y('#today-room-and-trend');
-    expect(summary).toBeGreaterThanOrEqual(0);
     expect(summary).toBeLessThan(trades);
     expect(trades).toBeLessThan(room);
 

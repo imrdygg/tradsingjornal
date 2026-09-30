@@ -1,5 +1,15 @@
 import React, { useMemo, useState } from 'react';
-import { Activity, ArrowDown, ArrowUp, Clock, Star, Trash2, TrendingUp } from 'lucide-react';
+import {
+  Activity,
+  ArrowDown,
+  ArrowUp,
+  Check,
+  Clock,
+  Pencil,
+  Star,
+  Trash2,
+  TrendingUp,
+} from 'lucide-react';
 import {
   ExtremeKind,
   ExtremeLevelType,
@@ -205,7 +215,15 @@ const RatingRow: React.FC<{
   );
 };
 
-/** One logged print, with its own rating controls folded away until they are wanted. */
+/**
+ * One logged print, editable in place, with its rating controls folded away until they are
+ * wanted.
+ *
+ * A print was write-once: a wrong time, a mistyped price or the wrong instrument meant
+ * deleting it and entering the whole thing again, rating include. Editing rewrites the same
+ * record — the id travels with it — so nothing is duplicated and the ratings already given
+ * stay attached to the print they were about.
+ */
 const ExtremeRow: React.FC<{
   extreme: SessionExtreme;
   instruments: Instrument[];
@@ -213,15 +231,188 @@ const ExtremeRow: React.FC<{
   onDelete: (extremeId: string) => void;
 }> = ({ extreme, instruments, onSave, onDelete }) => {
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editError, setEditError] = useState('');
+
   const levelType = extreme.levelType ?? defaultLevelType(extreme.kind);
   const timeframe = extreme.timeframe ?? '1m';
   const rated = (extreme.ratings ?? []).length;
+  const options = useMemo(() => trackedExtremeInstruments(instruments), [instruments]);
+
+  const [editInstrumentId, setEditInstrumentId] = useState(extreme.instrumentId);
+  const [editKind, setEditKind] = useState<ExtremeKind>(extreme.kind);
+  const [editLevelType, setEditLevelType] = useState<ExtremeLevelType>(levelType);
+  const [editTimeframe, setEditTimeframe] = useState<ExtremeTimeframe>(timeframe);
+  const [editTime, setEditTime] = useState(extreme.time);
+  const [editPrice, setEditPrice] = useState(String(extreme.price));
+  const [editNotes, setEditNotes] = useState(extreme.notes ?? '');
+
+  /** Seeds every draft from the record, so an edit always starts from what is stored. */
+  const startEdit = () => {
+    setEditInstrumentId(extreme.instrumentId);
+    setEditKind(extreme.kind);
+    setEditLevelType(levelType);
+    setEditTimeframe(timeframe);
+    setEditTime(extreme.time);
+    setEditPrice(String(extreme.price));
+    setEditNotes(extreme.notes ?? '');
+    setEditError('');
+    setEditing(true);
+  };
+
+  /** Writes the draft back onto the same print, re-deriving the window from the new time. */
+  const saveEdit = () => {
+    const window = sessionWindowForTime(editTime);
+    if (window === null) {
+      setEditError(
+        editTime.trim() === ''
+          ? 'Enter the clock time this print was at.'
+          : 'The contract is halted between 4pm and 6pm ET — that print is not in a session.'
+      );
+      return;
+    }
+    const level = parseFloat(editPrice);
+    if (!Number.isFinite(level) || level <= 0) {
+      setEditError('Enter the price this extreme printed at.');
+      return;
+    }
+    const instrument = options.find((option) => option.id === editInstrumentId);
+    if (!instrument) {
+      setEditError('Pick the instrument this print is for.');
+      return;
+    }
+
+    onSave({
+      ...extreme,
+      instrumentId: instrument.id,
+      symbol: instrument.symbol,
+      kind: editKind,
+      levelType: editLevelType,
+      timeframe: editTimeframe,
+      time: editTime.trim(),
+      price: Math.round(level * 100) / 100,
+      window,
+      notes: editNotes.trim() || undefined,
+    });
+    setEditing(false);
+  };
+
+  const fieldClass =
+    'rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1 text-[11px] font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none';
 
   return (
     <div
       data-extreme-row={extreme.id}
       className="rounded-lg border border-zinc-800/70 bg-zinc-900/40 px-2.5 py-1.5 space-y-1.5"
     >
+      {editing ? (
+        <div data-extreme-editing={extreme.id} className="space-y-2">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <select
+              id={`extreme-edit-instrument-${extreme.id}`}
+              value={editInstrumentId}
+              onChange={(e) => setEditInstrumentId(e.target.value)}
+              aria-label="Instrument"
+              className={fieldClass}
+            >
+              {options.map((instrument) => (
+                <option key={instrument.id} value={instrument.id}>
+                  {instrument.symbol}
+                </option>
+              ))}
+            </select>
+            <select
+              id={`extreme-edit-kind-${extreme.id}`}
+              value={editKind}
+              onChange={(e) => {
+                const next = e.target.value as ExtremeKind;
+                setEditKind(next);
+                // The side follows the kind until the trader overrides it, as when adding.
+                setEditLevelType(defaultLevelType(next));
+              }}
+              aria-label="Kind"
+              className={fieldClass}
+            >
+              <option value="high">High</option>
+              <option value="low">Low</option>
+            </select>
+            <select
+              id={`extreme-edit-level-${extreme.id}`}
+              value={editLevelType}
+              onChange={(e) => setEditLevelType(e.target.value as ExtremeLevelType)}
+              aria-label="Level type"
+              className={fieldClass}
+            >
+              <option value="resistance">Resistance</option>
+              <option value="support">Support</option>
+            </select>
+            <select
+              id={`extreme-edit-timeframe-${extreme.id}`}
+              value={editTimeframe}
+              onChange={(e) => setEditTimeframe(e.target.value as ExtremeTimeframe)}
+              aria-label="Chart"
+              className={fieldClass}
+            >
+              {EXTREME_TIMEFRAMES.map((value) => (
+                <option key={value} value={value}>
+                  {TIMEFRAME_LABEL[value] ?? value}
+                </option>
+              ))}
+            </select>
+            <input
+              id={`extreme-edit-time-${extreme.id}`}
+              type="time"
+              value={editTime}
+              onChange={(e) => setEditTime(e.target.value)}
+              aria-label="Time"
+              className={fieldClass}
+            />
+            <input
+              id={`extreme-edit-price-${extreme.id}`}
+              type="number"
+              step="0.01"
+              value={editPrice}
+              onChange={(e) => setEditPrice(e.target.value)}
+              aria-label="Price"
+              className={`${fieldClass} w-24`}
+            />
+          </div>
+          <input
+            id={`extreme-edit-notes-${extreme.id}`}
+            type="text"
+            value={editNotes}
+            onChange={(e) => setEditNotes(e.target.value)}
+            placeholder="Notes (optional)"
+            aria-label="Notes"
+            className={`${fieldClass} w-full text-xs`}
+          />
+          {editError && (
+            <p className="text-[11px] text-rose-300" id={`extreme-edit-error-${extreme.id}`}>
+              {editError}
+            </p>
+          )}
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              id={`extreme-edit-cancel-${extreme.id}`}
+              onClick={() => setEditing(false)}
+              className="rounded-lg border border-zinc-700 px-2.5 py-1 text-[11px] font-semibold text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              id={`extreme-edit-save-${extreme.id}`}
+              onClick={saveEdit}
+              className="flex items-center gap-1 rounded-lg bg-zinc-800 px-2.5 py-1 text-[11px] font-semibold text-zinc-100 transition-colors hover:bg-zinc-700"
+            >
+              <Check className="w-3 h-3" />
+              Save
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
       <div className="flex flex-wrap items-center gap-2">
         <span className="w-10 font-mono text-[11px] font-bold text-zinc-200">
           {extreme.symbol || instrumentSymbol(instruments, extreme.instrumentId)}
@@ -267,6 +458,16 @@ const ExtremeRow: React.FC<{
           </button>
           <button
             type="button"
+            id={`extreme-edit-${extreme.id}`}
+            onClick={startEdit}
+            title="Edit this extreme"
+            aria-label={`Edit the ${extreme.time} ${extreme.kind}`}
+            className="rounded-lg p-1 text-zinc-600 transition-colors hover:bg-zinc-800 hover:text-sky-400"
+          >
+            <Pencil className="h-3 w-3" />
+          </button>
+          <button
+            type="button"
             onClick={() => onDelete(extreme.id)}
             title="Delete this extreme"
             className="rounded-lg p-1 text-zinc-600 transition-colors hover:bg-zinc-800 hover:text-rose-400"
@@ -286,6 +487,8 @@ const ExtremeRow: React.FC<{
             counts against it. The grade is how clean it was, and is optional.
           </p>
         </div>
+      )}
+        </>
       )}
     </div>
   );

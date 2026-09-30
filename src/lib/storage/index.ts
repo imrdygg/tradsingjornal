@@ -11,6 +11,7 @@ import {
   PatternStudy,
   LevelTouch,
   SessionExtreme,
+  ChartSearch,
 } from '../../types';
 import { DEFAULT_INSTRUMENTS, INSTRUMENT_CATALOG_VERSION } from '../trading/instruments';
 import { DEFAULT_RISK_TIER_AMOUNTS } from '../trading/risk-tiers';
@@ -109,6 +110,7 @@ const STORAGE_KEYS = {
   PATTERN_STUDIES: 'ptj_pattern_studies_v1',
   LEVEL_TOUCHES: 'ptj_level_touches_v1',
   SESSION_EXTREMES: 'ptj_session_extremes_v1',
+  CHART_SEARCHES: 'ptj_chart_searches_v1',
   SETUP_CATALOG: 'ptj_setup_catalog_v1',
   LESSON_ACK: 'ptj_lesson_ack_v1',
   RECOVERY: 'ptj_recovery_v1',
@@ -144,6 +146,16 @@ export interface RecoveryCopy {
  */
 const RECOVERY_COPY_LIMIT_BYTES = 2_000_000;
 
+/**
+ * How many picture searches are kept.
+ *
+ * Each saved search carries a thumbnail of the chart it was run against, so this is the
+ * number that keeps the history from becoming the largest thing in storage. Thirty is a few
+ * weeks of looking at charts — long enough for the record to show which of them matched the
+ * trader's own trades — and anything past it drops oldest-first.
+ */
+const MAX_CHART_SEARCHES = 30;
+
 export interface StorageState {
   profile: UserProfile;
   instruments: Instrument[];
@@ -178,6 +190,14 @@ export interface StorageState {
    * it belongs to.
    */
   sessionExtremes?: SessionExtreme[];
+  /**
+   * The saved picture searches: which charts the trader uploaded and what they matched.
+   *
+   * Optional for the same reason as the lists above — a snapshot saved before this feature
+   * existed must still load, and every reader treats a missing list as empty. It is the
+   * trader's own material, so a reset clears it with the journal it was searched against.
+   */
+  chartSearches?: ChartSearch[];
   /**
    * The carried-forward lesson the trader has acknowledged, if any.
    *
@@ -950,6 +970,7 @@ export const storage = {
       patternStudies: this.getPatternStudies(),
       levelTouches: this.getLevelTouches(),
       sessionExtremes: this.getSessionExtremes(),
+      chartSearches: this.getChartSearches(),
       lessonAck: this.getLessonAck(),
     };
     return JSON.stringify(state, null, 2);
@@ -969,6 +990,7 @@ export const storage = {
       if (parsed.patternStudies) setItem(STORAGE_KEYS.PATTERN_STUDIES, parsed.patternStudies);
       if (parsed.levelTouches) setItem(STORAGE_KEYS.LEVEL_TOUCHES, parsed.levelTouches);
       if (parsed.sessionExtremes) setItem(STORAGE_KEYS.SESSION_EXTREMES, parsed.sessionExtremes);
+      if (parsed.chartSearches) setItem(STORAGE_KEYS.CHART_SEARCHES, parsed.chartSearches);
       // Written even when null (an explicit "nothing acknowledged"), so adopting a snapshot
       // carries that state across too. A backup taken before this existed has no key at
       // all and leaves what is here untouched.
@@ -1080,6 +1102,34 @@ export const storage = {
     );
   },
 
+  getChartSearches(): ChartSearch[] {
+    return getItem<ChartSearch[]>(STORAGE_KEYS.CHART_SEARCHES, []);
+  },
+
+  /**
+   * Adds one picture search, newest first, and drops the oldest past the cap.
+   *
+   * Every run is its own record rather than an upsert by chart: the trader is asking the
+   * same question of a different picture, or a different question of the same one, and the
+   * point of the history is to compare searches over time. The cap is what keeps a list of
+   * charts — each carrying a thumbnail — from filling the browser's storage on its own.
+   */
+  saveChartSearch(search: ChartSearch): ChartSearch[] {
+    const next = [search, ...this.getChartSearches()].slice(0, MAX_CHART_SEARCHES);
+    setItem(STORAGE_KEYS.CHART_SEARCHES, next);
+    return next;
+  },
+
+  deleteChartSearch(id: string): ChartSearch[] {
+    const next = this.getChartSearches().filter((search) => search.id !== id);
+    setItem(STORAGE_KEYS.CHART_SEARCHES, next);
+    return next;
+  },
+
+  clearChartSearches(): void {
+    setItem(STORAGE_KEYS.CHART_SEARCHES, []);
+  },
+
   /**
    * Clears every journal entry — trades, daily plans and reviews — while
    * keeping the trader's settings, instruments and playbook set-ups. This is
@@ -1103,6 +1153,9 @@ export const storage = {
       // The extremes are the same kind of thing: a record of one session, not material
       // about the trader's setups.
       STORAGE_KEYS.SESSION_EXTREMES,
+      // The picture searches matched against the trades that are about to be deleted, so
+      // they go with them rather than outliving the journal they describe.
+      STORAGE_KEYS.CHART_SEARCHES,
       STORAGE_KEYS.LESSON_ACK,
       // "Nothing can be undone" is the promise this reset makes, so the copy set aside
       // from before it goes too rather than becoming a way to undo it after all.
@@ -1133,6 +1186,7 @@ export const storage = {
       STORAGE_KEYS.PATTERN_STUDIES,
       STORAGE_KEYS.LEVEL_TOUCHES,
       STORAGE_KEYS.SESSION_EXTREMES,
+      STORAGE_KEYS.CHART_SEARCHES,
       STORAGE_KEYS.SETUP_CATALOG,
       STORAGE_KEYS.LESSON_ACK,
       STORAGE_KEYS.RECOVERY,

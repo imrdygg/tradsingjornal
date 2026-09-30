@@ -1,6 +1,14 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { AlertCircle, ImagePlus, Loader2, Search, Trash2, Upload } from 'lucide-react';
-import type { DailyReview, Instrument, LevelTouch, Setup, Trade, TradingDay } from '../../types';
+import type {
+  ChartSearch,
+  DailyReview,
+  Instrument,
+  LevelTouch,
+  Setup,
+  Trade,
+  TradingDay,
+} from '../../types';
 import { buildJournalDigest, FULL_HISTORY_TRADE_SAMPLES } from '../../lib/ai/journal-digest';
 import type { MatchItem, MatchResponse } from '../../lib/ai/coach-types';
 import { CoachErrorCode, CoachResult, requestCoach } from '../../lib/ai/coach-client';
@@ -10,7 +18,20 @@ import {
   isCoachImageDataUrl,
 } from '../../lib/ai/coach-images';
 import { instrumentSymbol } from '../../lib/trading/instruments';
-import { compressAndReadImage, getImageFromPasteEvent } from '../../lib/utils/image-utils';
+import {
+  CHART_MATCH_FLOOR,
+  CHART_MATCH_GOOD,
+  CHART_MATCH_STRONG,
+  rankChartSearchesByStrength,
+  summarizeChartSearch,
+  summarizeChartSearchHistory,
+  type ChartMatchBands,
+} from '../../lib/analytics/chart-searches';
+import {
+  compressAndReadImage,
+  downscaleDataUrl,
+  getImageFromPasteEvent,
+} from '../../lib/utils/image-utils';
 import {
   CoachAction,
   CoachCard,
@@ -60,6 +81,18 @@ export interface ChartMatchCardProps {
   levelTouches?: LevelTouch[];
   /** Opens the full detail view for a matched trade. Omitted hides the rows' click state. */
   onViewTrade?: (trade: Trade) => void;
+  /**
+   * The saved picture searches, newest first. Rendered as a history under the search, so the
+   * trader can see which of their charts have matched their own trades most. Omitted hides
+   * the history entirely.
+   */
+  chartSearches?: ChartSearch[];
+  /** Records one completed search. Omitted means nothing is kept. */
+  onSaveChartSearch?: (search: ChartSearch) => void;
+  /** Removes one saved search. Omitted leaves the history read-only. */
+  onDeleteChartSearch?: (id: string) => void;
+  /** The account a saved search belongs to, carried onto the record. */
+  userId?: string;
   /** A heading override, so the card can read naturally on the tab that hosts it. */
   heading?: string;
   className?: string;
@@ -130,32 +163,66 @@ function collectTradeShots(
  * spelled out beside them.
  */
 function scoreTone(score: number): string {
-  if (score >= 80) return 'bg-emerald-950/80 text-emerald-300 border-emerald-800';
-  if (score >= 60) return 'bg-zinc-800 text-zinc-300 border-zinc-700';
+  if (score >= CHART_MATCH_STRONG) return 'bg-emerald-950/80 text-emerald-300 border-emerald-800';
+  if (score >= CHART_MATCH_GOOD) return 'bg-zinc-800 text-zinc-300 border-zinc-700';
   return 'bg-amber-950/60 text-amber-300/90 border-amber-900/70';
 }
 
 /** The fill for one match's bar in the distribution, banded the way the score chip is. */
 function scoreBarClass(score: number): string {
-  if (score >= 80) return 'bg-emerald-500';
-  if (score >= 60) return 'bg-sky-500';
-  if (score >= MIN_MATCH_SCORE) return 'bg-amber-500';
+  if (score >= CHART_MATCH_STRONG) return 'bg-emerald-500';
+  if (score >= CHART_MATCH_GOOD) return 'bg-sky-500';
+  if (score >= CHART_MATCH_FLOOR) return 'bg-amber-500';
   return 'bg-rose-500/70';
 }
 
 /** How many of the closest matches are shown as the main answer. */
 export const CLOSEST_MATCH_COUNT = 3;
 
+/** How many past searches are shown before the history is folded. */
+export const HISTORY_PREVIEW = 5;
+
+/** The four bands every distribution bar is drawn from, strongest first. */
+const BAND_SEGMENTS: { key: keyof Omit<ChartMatchBands, 'total'>; label: string; bar: string }[] =
+  [
+    { key: 'strong', label: 'strong', bar: 'bg-emerald-500' },
+    { key: 'good', label: 'good', bar: 'bg-sky-500' },
+    { key: 'modest', label: 'below-standard', bar: 'bg-amber-500' },
+    { key: 'below', label: 'below the floor', bar: 'bg-rose-500/70' },
+  ];
+
 /**
- * The resemblance a match must reach to be shown by default.
+ * A stacked bar of one set of band counts.
  *
- * Below this the likeness is loose, and a loose match shown beside a close one invites the
- * trader to read them as equally alike. The floor sits just above the 50 the prompt already
- * refuses to list, so it filters what the coach judged borderline rather than second-guessing
- * a real match. Hidden matches are kept, never dropped: the count is stated and one tap
- * reveals them below the fold.
+ * The whole point of the history is the shape of a run of searches, and four numbers side by
+ * side are harder to read as a shape than four widths. Segments with no matches are dropped
+ * so an all-strong history is one solid bar rather than a bar with invisible slices.
  */
-export const MIN_MATCH_SCORE = 55;
+const BandBar: React.FC<{ bands: ChartMatchBands; className?: string }> = ({
+  bands,
+  className = 'h-2',
+}) => {
+  if (bands.total === 0) {
+    return <div className={`${className} rounded-full bg-zinc-800`} />;
+  }
+  return (
+    <div className={`flex overflow-hidden rounded-full bg-zinc-800 ${className}`}>
+      {BAND_SEGMENTS.map((segment) => {
+        const count = bands[segment.key];
+        if (count === 0) return null;
+        return (
+          <div
+            key={segment.key}
+            data-band={segment.key}
+            className={segment.bar}
+            style={{ width: `${(count / bands.total) * 100}%` }}
+            title={`${count} ${segment.label}`}
+          />
+        );
+      })}
+    </div>
+  );
+};
 
 export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
   trades,
@@ -168,6 +235,10 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
   maxDrawdown,
   levelTouches,
   onViewTrade,
+  chartSearches,
+  onSaveChartSearch,
+  onDeleteChartSearch,
+  userId = 'local',
   heading = 'Search your history with a chart',
   className = '',
 }) => {
@@ -230,6 +301,8 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
   const [state, setState] = useState<MatchState>(IDLE);
   /** Whether the matches below the resemblance floor are revealed. */
   const [showWeaker, setShowWeaker] = useState(false);
+  /** Whether the whole search history is shown, rather than the strongest few. */
+  const [showAllHistory, setShowAllHistory] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function handleFiles(files: FileList | File[] | null) {
@@ -271,6 +344,9 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
       // A new answer starts folded: the weaker list is a choice about the last search.
       setShowWeaker(false);
       setState({ loading: false, result, failure: null, writtenAt: new Date().toISOString() });
+      // Saved after the answer is on screen, never before: drawing a thumbnail takes a beat
+      // and the trader is waiting on the read, not on the history row.
+      void saveSearch(result.data as MatchResponse, queryImage);
       return;
     }
     setState((prev) => ({
@@ -301,6 +377,54 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
   };
 
   /**
+   * Records one completed search so the history can be read back.
+   *
+   * Best-effort and never awaited by the caller: a search the browser cannot shrink or store
+   * must still leave the answer on screen. Matches are copied off the answer with the trade
+   * they resolved to, so an old search can still open the trade it named.
+   */
+  const saveSearch = async (answer: MatchResponse, chart: string) => {
+    if (!onSaveChartSearch) return;
+    const thumbnail = await downscaleDataUrl(chart);
+    onSaveChartSearch({
+      id: `chart-search-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      userId,
+      createdAt: new Date().toISOString(),
+      patternRead: answer.patternRead,
+      thumbnail: thumbnail ?? undefined,
+      matches: answer.matches.map((match) => ({
+        date: match.date,
+        symbol: match.symbol,
+        direction: match.direction,
+        setupName: match.setupName,
+        score: match.score,
+        compared: match.compared,
+        tradeId: resolve(match)?.id,
+      })),
+    });
+  };
+
+  /**
+   * The saved searches, strongest first.
+   *
+   * Ranked by the best match each one found, which is the question the history answers: which
+   * of the charts this trader has searched with looks most like something they actually
+   * traded.
+   */
+  const historySummaries = useMemo(
+    () => (chartSearches ?? []).map((search) => summarizeChartSearch(search)),
+    [chartSearches]
+  );
+  const rankedHistory = useMemo(
+    () => rankChartSearchesByStrength(historySummaries),
+    [historySummaries]
+  );
+  const history = useMemo(
+    () => summarizeChartSearchHistory(historySummaries),
+    [historySummaries]
+  );
+
+  /**
    * The matches, ranked by how closely they resemble the chart.
    *
    * Ordered by the coach's own score, highest first, so the ranking is a number rather than a
@@ -319,16 +443,18 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
 
   // Only the genuinely close matches are shown by default; the weaker ones keep their place
   // behind a toggle, so a loose resemblance never sits level with a close one.
-  const visibleMatches = rankedMatches.filter((match) => match.score >= MIN_MATCH_SCORE);
-  const weakerMatches = rankedMatches.filter((match) => match.score < MIN_MATCH_SCORE);
+  const visibleMatches = rankedMatches.filter((match) => match.score >= CHART_MATCH_FLOOR);
+  const weakerMatches = rankedMatches.filter((match) => match.score < CHART_MATCH_FLOOR);
 
   const closestMatches = visibleMatches.slice(0, CLOSEST_MATCH_COUNT);
   const alsoSimilar = visibleMatches.slice(CLOSEST_MATCH_COUNT);
 
   // The shape of one search, said in numbers rather than left to be guessed from the rows.
-  const strongCount = rankedMatches.filter((match) => match.score >= 80).length;
+  const strongCount = rankedMatches.filter(
+    (match) => match.score >= CHART_MATCH_STRONG
+  ).length;
   const goodCount = rankedMatches.filter(
-    (match) => match.score >= 60 && match.score < 80
+    (match) => match.score >= CHART_MATCH_GOOD && match.score < CHART_MATCH_STRONG
   ).length;
 
   /** One matched trade, rendered the same way in the closest list and the secondary one. */
@@ -614,7 +740,7 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
                     </span>
                     <span className="text-[10px] text-zinc-500">
                       {strongCount} strong · {goodCount} good · {weakerMatches.length} below the{' '}
-                      {MIN_MATCH_SCORE}% floor
+                      {CHART_MATCH_FLOOR}% floor
                     </span>
                   </div>
                   <div className="space-y-1">
@@ -635,8 +761,8 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
                           {/* Where the floor sits, so a bar's length is judged against it. */}
                           <div
                             className="absolute inset-y-0 w-px bg-zinc-500/80"
-                            style={{ left: `${MIN_MATCH_SCORE}%` }}
-                            title={`The ${MIN_MATCH_SCORE}% floor`}
+                            style={{ left: `${CHART_MATCH_FLOOR}%` }}
+                            title={`The ${CHART_MATCH_FLOOR}% floor`}
                           />
                         </div>
                         <span className="w-9 shrink-0 text-right font-mono text-[10px] text-zinc-300">
@@ -647,7 +773,7 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
                   </div>
                   <p className="text-[10px] leading-relaxed text-zinc-500">
                     Each bar is one match's closeness score from the coach, longest first. The
-                    mark is the {MIN_MATCH_SCORE}% floor — the bars shorter than it are the ones
+                    mark is the {CHART_MATCH_FLOOR}% floor — the bars shorter than it are the ones
                     kept below.
                   </p>
                 </div>
@@ -666,7 +792,7 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
                 */
                 <div id="chart-match-weak-only" className="space-y-2">
                   <p className="text-xs text-zinc-300 leading-relaxed">
-                    Nothing scored above {MIN_MATCH_SCORE}% alike, so nothing here is genuinely
+                    Nothing scored above {CHART_MATCH_FLOOR}% alike, so nothing here is genuinely
                     close. The strongest resemblance is {rankedMatches[0].score}% — loose enough
                     that treating it as a match would be a stretch.
                   </p>
@@ -717,7 +843,7 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
                         className="rounded-lg border border-zinc-700 px-2.5 py-1 text-[11px] font-semibold text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
                       >
                         {showWeaker ? 'Hide' : 'Show'} {weakerMatches.length} weaker match
-                        {weakerMatches.length === 1 ? '' : 'es'} (below {MIN_MATCH_SCORE}%
+                        {weakerMatches.length === 1 ? '' : 'es'} (below {CHART_MATCH_FLOOR}%
                         alike)
                       </button>
                       {showWeaker &&
@@ -751,6 +877,118 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
             </CoachResultPanel>
           )}
         </>
+      )}
+
+      {/*
+        ---- Past searches ----
+
+        The score distribution across every search the trader has run, strongest first, so
+        the question "which of my charts match my own trading most" has an answer they can
+        see. Ranked by each search's best match, because that is what makes a chart worth
+        looking at again, with the whole history's shape drawn above the rows.
+      */}
+      {chartSearches && chartSearches.length > 0 && (
+        <div id="chart-match-history" className="space-y-2.5 border-t border-zinc-800 pt-3.5">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
+              Past searches ({history.searches}, {history.bands.total} match
+              {history.bands.total === 1 ? '' : 'es'})
+            </span>
+            <span className="text-[10px] text-zinc-500">
+              strongest {history.best ?? '—'}% · average {history.average ?? '—'}%
+            </span>
+          </div>
+
+          <div id="chart-match-history-bands">
+            <BandBar bands={history.bands} className="h-2.5" />
+          </div>
+          <div className="flex flex-wrap gap-x-3 gap-y-1">
+            {BAND_SEGMENTS.map((segment) => (
+              <span
+                key={segment.key}
+                className="flex items-center gap-1 text-[10px] text-zinc-500"
+              >
+                <span className={`h-2 w-2 rounded-full ${segment.bar}`} />
+                {history.bands[segment.key]} {segment.label}
+              </span>
+            ))}
+          </div>
+
+          <p className="text-[10px] leading-relaxed text-zinc-500">
+            {history.withMatches === 0
+              ? 'None of your saved searches has matched a trade yet — the shape fills in as you log and search.'
+              : 'Your charts ranked by the closest match each one found against your own trades.'}
+          </p>
+
+          <div className="space-y-1.5">
+            {(showAllHistory ? rankedHistory : rankedHistory.slice(0, HISTORY_PREVIEW)).map(
+              (summary) => (
+                <div
+                  key={summary.id}
+                  data-search-row={summary.id}
+                  className="flex items-center gap-3 rounded-xl border border-zinc-800 bg-zinc-900/50 p-2.5"
+                >
+                  {summary.thumbnail ? (
+                    <img
+                      src={summary.thumbnail}
+                      alt="A chart you searched with"
+                      className="h-10 w-14 shrink-0 rounded-lg border border-zinc-800 bg-zinc-950 object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-10 w-14 shrink-0 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-950">
+                      <Search className="h-3.5 w-3.5 text-zinc-600" />
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-mono text-[11px] text-zinc-400">
+                        {formatTimestamp(summary.createdAt, timezone)}
+                      </span>
+                      <span
+                        className={`rounded-md border px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
+                          summary.best === null
+                            ? 'border-zinc-700 bg-zinc-800 text-zinc-400'
+                            : scoreTone(summary.best)
+                        }`}
+                      >
+                        {summary.best === null ? 'no match' : `best ${summary.best}%`}
+                      </span>
+                      <span className="text-[10px] text-zinc-500">
+                        {summary.matches} match{summary.matches === 1 ? '' : 'es'}
+                        {summary.average !== null ? ` · avg ${summary.average}%` : ''}
+                      </span>
+                    </div>
+                    <BandBar bands={summary.bands} className="h-1.5" />
+                    <p className="truncate text-[10px] text-zinc-500">{summary.patternRead}</p>
+                  </div>
+                  {onDeleteChartSearch && (
+                    <button
+                      type="button"
+                      data-search-delete={summary.id}
+                      onClick={() => onDeleteChartSearch(summary.id)}
+                      title="Remove this search"
+                      className="shrink-0 rounded-lg border border-zinc-700 p-1.5 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-rose-300"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+              )
+            )}
+          </div>
+
+          {rankedHistory.length > HISTORY_PREVIEW && (
+            <button
+              type="button"
+              id="chart-match-history-toggle"
+              onClick={() => setShowAllHistory((prev) => !prev)}
+              aria-expanded={showAllHistory}
+              className="rounded-lg border border-zinc-700 px-2.5 py-1 text-[11px] font-semibold text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+            >
+              {showAllHistory ? 'Show fewer' : `Show all ${rankedHistory.length}`}
+            </button>
+          )}
+        </div>
       )}
     </CoachCard>
   );

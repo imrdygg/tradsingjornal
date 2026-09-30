@@ -63,6 +63,56 @@ export async function compressAndReadImage(
 }
 
 /**
+ * A downscaled copy of an image data URL, for storing rather than sending.
+ *
+ * A chart screenshot runs to a couple of hundred kilobytes, and a history of them would fill
+ * the browser's storage on its own; this shrinks one to a thumbnail a list can render. It
+ * resolves to null rather than throwing when the image cannot be drawn, because a saved
+ * search without its picture is still a usable record.
+ */
+export function downscaleDataUrl(
+  dataUrl: string,
+  maxDim = 320,
+  quality = 0.7
+): Promise<string | null> {
+  return new Promise((resolve) => {
+    try {
+      const img = new Image();
+      img.onerror = () => resolve(null);
+      img.onload = () => {
+        try {
+          let { width, height } = img;
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(null);
+            return;
+          }
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        } catch {
+          resolve(null);
+        }
+      };
+      img.src = dataUrl;
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+/**
  * Extracts any image File from a browser paste event
  */
 export function getImageFromPasteEvent(event: React.ClipboardEvent | ClipboardEvent): File | null {

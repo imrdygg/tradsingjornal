@@ -16,7 +16,15 @@ import {
   Percent,
   ImageIcon,
 } from 'lucide-react';
-import { DailyReview, LevelTouch, Trade, TradingDay, Setup, Instrument } from '../../types';
+import {
+  ChartSearch,
+  DailyReview,
+  LevelTouch,
+  Trade,
+  TradingDay,
+  Setup,
+  Instrument,
+} from '../../types';
 import { TradeCard } from './TradeCard';
 import { CoachEntryCallBadge } from './CoachEntryCallBadge';
 import { SetupBoard } from './SetupBoard';
@@ -67,6 +75,11 @@ interface TradesViewProps {
     maxDrawdown?: number | null;
     levelTouches?: LevelTouch[];
     onViewTrade: (trade: Trade) => void;
+    /** The saved searches the card's history reads. Omitted hides the history. */
+    chartSearches?: ChartSearch[];
+    onSaveChartSearch?: (search: ChartSearch) => void;
+    onDeleteChartSearch?: (id: string) => void;
+    userId?: string;
   };
 }
 

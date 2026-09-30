@@ -8,6 +8,7 @@ import {
   CalendarRange,
 } from 'lucide-react';
 import {
+  ChartSearch,
   DailyReview,
   Instrument,
   LevelTouch,
@@ -76,6 +77,14 @@ interface CoachViewProps {
    * readable but not clickable, which is what a caller with no detail view wants.
    */
   onViewTrade?: (trade: Trade) => void;
+  /** The saved picture searches, so the search card can show its own history here. */
+  chartSearches?: ChartSearch[];
+  /** Records one completed picture search. */
+  onSaveChartSearch?: (search: ChartSearch) => void;
+  /** Removes one saved picture search. */
+  onDeleteChartSearch?: (id: string) => void;
+  /** The account a saved search belongs to. */
+  userId?: string;
 }
 
 interface RequestState {
@@ -120,6 +129,10 @@ export const CoachView: React.FC<CoachViewProps> = ({
   levelTouches,
   sessionExtremes,
   onViewTrade,
+  chartSearches,
+  onSaveChartSearch,
+  onDeleteChartSearch,
+  userId,
 }) => {
   const digest = useMemo(
     () =>
@@ -418,6 +431,10 @@ export const CoachView: React.FC<CoachViewProps> = ({
         maxDrawdown={maxDrawdown}
         levelTouches={levelTouches}
         onViewTrade={onViewTrade}
+        chartSearches={chartSearches}
+        onSaveChartSearch={onSaveChartSearch}
+        onDeleteChartSearch={onDeleteChartSearch}
+        userId={userId}
       />
 
       {/* What the coach is allowed to know. Shown up front so the advice can be judged. */}

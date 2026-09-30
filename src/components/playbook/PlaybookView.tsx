@@ -20,6 +20,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import {
+  ChartSearch,
   DailyReview,
   Instrument,
   LevelTouch,
@@ -126,6 +127,11 @@ interface PlaybookViewProps {
     maxDrawdown?: number | null;
     levelTouches?: LevelTouch[];
     onViewTrade: (trade: Trade) => void;
+    /** The saved searches the card's history reads. Omitted hides the history. */
+    chartSearches?: ChartSearch[];
+    onSaveChartSearch?: (search: ChartSearch) => void;
+    onDeleteChartSearch?: (id: string) => void;
+    userId?: string;
   };
 }
 

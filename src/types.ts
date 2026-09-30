@@ -268,6 +268,52 @@ export interface SessionExtreme {
   updatedAt: string;
 }
 
+/**
+ * One trade the picture search matched to a chart the trader uploaded.
+ *
+ * The recorded fields are copied off the trade at the moment of the search rather than
+ * resolved later, so a search stays a record of what the coach actually returned even if the
+ * trade is edited or deleted afterwards. `tradeId` is kept only where the client could
+ * resolve the match back to a real trade, which is what lets an old search still open it.
+ */
+export interface ChartSearchMatch {
+  date: string;
+  symbol: string;
+  direction: string;
+  setupName: string | null;
+  /** How closely this trade resembled the uploaded chart, 0-100. */
+  score: number;
+  compared: 'written-record' | 'their-screenshot';
+  /** The stored trade this match resolved to, when one was found. */
+  tradeId?: string;
+}
+
+/**
+ * One saved picture search: the chart that was uploaded and the trades it matched.
+ *
+ * Kept so the trader can look back over what they have searched for and which of their own
+ * charts found real matches, rather than losing every search the moment the tab closes. It is
+ * the trader's own material — their picture and their trades — so a reset clears it with the
+ * journal and a sign-out removes it from the device.
+ */
+export interface ChartSearch {
+  id: string;
+  userId: string;
+  /** When the search was run, so the history can be read in order. */
+  createdAt: string;
+  /** What the uploaded chart showed, in the coach's structural words. */
+  patternRead: string;
+  /**
+   * A downscaled copy of the uploaded chart, so a past search can be recognised at a glance.
+   *
+   * Optional: a list of thumbnails is what makes this storage-heavy, so a search saved
+   * without one is still a valid record with its scores intact.
+   */
+  thumbnail?: string;
+  /** The trades the search matched, closest first. */
+  matches: ChartSearchMatch[];
+}
+
 export interface TradeExecutionReview {
   id: string;
   tradeId: string;

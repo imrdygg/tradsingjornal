@@ -88,6 +88,7 @@ import {
   PatternStudy,
   LevelTouch,
   SessionExtreme,
+  ChartSearch,
   ImportantLevel,
 } from './types';
 import type { SyncStatus } from './components/layout/SyncStatusBadge';
@@ -209,6 +210,11 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   const [sessionExtremes, setSessionExtremes] = useState<SessionExtreme[]>(() =>
     storage.getSessionExtremes()
   );
+  // The saved picture searches: which charts the trader uploaded and what they matched.
+  // Held with the rest of the state so it is saved and synced by the same debounced write.
+  const [chartSearches, setChartSearches] = useState<ChartSearch[]>(() =>
+    storage.getChartSearches()
+  );
 
   const [activeTab, setActiveTab] = useState<NavTab>('today');
 
@@ -286,6 +292,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       patternStudies,
       levelTouches,
       sessionExtremes,
+      chartSearches,
       lessonAck,
     }),
     [
@@ -298,6 +305,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       patternStudies,
       levelTouches,
       sessionExtremes,
+      chartSearches,
       lessonAck,
     ]
   );
@@ -332,6 +340,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       setPatternStudies(next.patternStudies ?? []);
       setLevelTouches(next.levelTouches ?? []);
       setSessionExtremes(next.sessionExtremes ?? []);
+      setChartSearches(next.chartSearches ?? []);
       setLessonAck(next.lessonAck ?? null);
     },
     [userId]
@@ -992,6 +1001,20 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   };
 
   /**
+   * Records one completed picture search.
+   *
+   * Storage caps the list and drops the oldest, so the state is read back from storage
+   * rather than appended here — the two can never disagree about what was kept.
+   */
+  const handleSaveChartSearch = (search: ChartSearch) => {
+    setChartSearches(storage.saveChartSearch(search));
+  };
+
+  const handleDeleteChartSearch = (searchId: string) => {
+    setChartSearches(storage.deleteChartSearch(searchId));
+  };
+
+  /**
    * The trades taken on one session date, for linking a logged extreme back to what it led to.
    *
    * Read from the day records rather than from a stored link, so it stays right when a trade
@@ -1184,6 +1207,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       reviews: [],
       levelTouches: [],
       sessionExtremes: [],
+      chartSearches: [],
     };
 
     if (cloudEnabled && cloudReady) {
@@ -1676,6 +1700,10 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               maxDrawdown: profile.maxDrawdown ?? null,
               levelTouches,
               onViewTrade: (t) => setViewingTradeId(t.id),
+              chartSearches,
+              onSaveChartSearch: handleSaveChartSearch,
+              onDeleteChartSearch: handleDeleteChartSearch,
+              userId,
             }}
           />
         );
@@ -1742,6 +1770,10 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             sessionExtremes={sessionExtremes}
             // A trade the picture search matches opens from here like it does from the log.
             onViewTrade={(t) => setViewingTradeId(t.id)}
+            chartSearches={chartSearches}
+            onSaveChartSearch={handleSaveChartSearch}
+            onDeleteChartSearch={handleDeleteChartSearch}
+            userId={userId}
           />
         );
 
@@ -1818,6 +1850,10 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               maxDrawdown: profile.maxDrawdown ?? null,
               levelTouches,
               onViewTrade: (t) => setViewingTradeId(t.id),
+              chartSearches,
+              onSaveChartSearch: handleSaveChartSearch,
+              onDeleteChartSearch: handleDeleteChartSearch,
+              userId,
             }}
           />
         );

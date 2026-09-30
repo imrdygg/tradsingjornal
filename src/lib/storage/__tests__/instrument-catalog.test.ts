@@ -153,6 +153,18 @@ describe('ensureInstrumentCatalog', () => {
     expect(result.filter((instrument) => instrument.symbol === 'MCL')).toHaveLength(1);
   });
 
+  it('gives micro WTI back to a journal whose marker had already passed it', () => {
+    // The reported case: the marker says the catalog is current and MCL is missing. Micro WTI
+    // is announced again in a later release precisely so this journal receives it, rather
+    // than reading the gap as a deliberate removal forever.
+    seedJournal([{ id: 'mes', symbol: 'MES' }], 3);
+
+    const result = storage.ensureInstrumentCatalog();
+
+    expect(symbols(result)).toContain('MCL');
+    expect(symbols(listInStorage())).toContain('MCL');
+  });
+
   it('does not bring back a contract the version it arrived in already recorded', () => {
     // The marker says this journal has seen the catalog that MCL arrived in, so its absence
     // from the list is a decision — the trader removed it — not an oversight.

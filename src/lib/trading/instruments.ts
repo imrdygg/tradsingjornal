@@ -22,8 +22,9 @@ import { Instrument } from '../../types';
  * 1 — the equity index futures the journal shipped with.
  * 2 — micro WTI.
  * 3 — the rest of the index, metals and energy complexes, micro and full size.
+ * 4 — micro WTI announced again, so a journal that is somehow missing it receives it.
  */
-export const INSTRUMENT_CATALOG_VERSION = 3;
+export const INSTRUMENT_CATALOG_VERSION = 4;
 
 export const DEFAULT_INSTRUMENTS: Instrument[] = [
   {
@@ -151,6 +152,12 @@ export const DEFAULT_INSTRUMENTS: Instrument[] = [
 
   // Energy. Micro WTI is 100 barrels, so a $1.00 move in the barrel price is $100 per
   // contract — a tenth of full-size crude, which is the point of it.
+  //
+  // Tagged at version 4 rather than the 2 it first arrived in: a journal whose catalog
+  // marker had already passed micro WTI but which did not hold it was reaching a state the
+  // upgrade rule reads as a deliberate removal. Re-announcing it is the only way that
+  // journal receives it, and a journal that already has it is untouched — the merge skips
+  // anything already present by symbol or id.
   {
     id: 'mcl',
     symbol: 'MCL',
@@ -159,7 +166,7 @@ export const DEFAULT_INSTRUMENTS: Instrument[] = [
     tickSize: 0.01,
     tickValue: 1,
     active: true,
-    since: 2,
+    since: 4,
   },
   {
     id: 'cl',

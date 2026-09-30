@@ -129,6 +129,23 @@ function confidenceTone(confidence: MatchItem['confidence']): string {
   return 'bg-amber-950/60 text-amber-300/90 border-amber-900/70';
 }
 
+/**
+ * The closeness ranking, made explicit.
+ *
+ * The coach's own confidence is the only closeness signal there is, so it is what orders
+ * the list: a high resemblance always sorts above a medium, whatever order the answer
+ * happened to arrive in. Ties keep the coach's order, which the prompt asks to be
+ * closest-first — so the sort never scrambles two matches it rated the same.
+ */
+const CONFIDENCE_RANK: Record<MatchItem['confidence'], number> = {
+  high: 0,
+  medium: 1,
+  low: 2,
+};
+
+/** How many of the closest matches are shown as the main answer. */
+export const CLOSEST_MATCH_COUNT = 3;
+
 export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
   trades,
   tradingDays,
@@ -265,6 +282,96 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
       ) ??
       candidates.find((trade) => trade.direction.toLowerCase() === direction) ??
       candidates[0]
+    );
+  };
+
+  /**
+   * The matches, ranked by how closely they resemble the chart.
+   *
+   * Closest first, from the coach's own confidence, with the closest three lifted out as the
+   * answer. A longer list still shows the rest beneath them, so nothing is hidden — but the
+   * best resemblances are never buried under weaker ones.
+   */
+  const rankedMatches = useMemo(() => {
+    if (!answer) return [] as MatchItem[];
+    return answer.matches
+      .map((match, index) => ({ match, index }))
+      .sort(
+        (a, b) =>
+          CONFIDENCE_RANK[a.match.confidence] - CONFIDENCE_RANK[b.match.confidence] ||
+          a.index - b.index
+      )
+      .map((entry) => entry.match);
+  }, [answer]);
+
+  const closestMatches = rankedMatches.slice(0, CLOSEST_MATCH_COUNT);
+  const alsoSimilar = rankedMatches.slice(CLOSEST_MATCH_COUNT);
+
+  /** One matched trade, rendered the same way in the closest list and the secondary one. */
+  const renderMatchRow = (match: MatchItem, index: number) => {
+    const trade = resolve(match);
+    const shot = trade
+      ? (trade.images ?? []).find((candidate) => isCoachImageDataUrl(candidate))
+      : undefined;
+    const openable = Boolean(trade && onViewTrade);
+    return (
+      <div
+        key={`${match.date}-${match.symbol}-${index}`}
+        data-match-row={trade ? trade.id : `unresolved-${index}`}
+        role={openable ? 'button' : undefined}
+        tabIndex={openable ? 0 : undefined}
+        onClick={openable && trade ? () => onViewTrade?.(trade) : undefined}
+        onKeyDown={
+          openable && trade
+            ? (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onViewTrade?.(trade);
+                }
+              }
+            : undefined
+        }
+        className={`flex gap-3 rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 ${
+          openable ? 'cursor-pointer transition-colors hover:border-zinc-700 hover:bg-zinc-800/60' : ''
+        }`}
+        title={openable ? 'Click to open this trade' : undefined}
+      >
+        {shot && (
+          <img
+            src={shot}
+            alt={`Screenshot of the ${match.date} ${match.symbol} trade`}
+            className="h-14 w-20 shrink-0 rounded-lg border border-zinc-800 bg-zinc-950 object-cover"
+          />
+        )}
+        <div className="min-w-0 flex-1 space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-mono text-xs font-semibold text-zinc-100">
+              {match.date} · {match.symbol} · {match.direction.toUpperCase()}
+            </span>
+            {match.setupName && (
+              <span className="rounded-md border border-zinc-700 bg-zinc-800/70 px-1.5 py-0.5 text-[10px] text-zinc-300">
+                {match.setupName}
+              </span>
+            )}
+            <span
+              className={`rounded-md border px-1.5 py-0.5 text-[10px] font-semibold uppercase ${confidenceTone(
+                match.confidence
+              )}`}
+            >
+              {match.confidence}
+            </span>
+            <span className="rounded-md border border-zinc-800 bg-zinc-950/60 px-1.5 py-0.5 text-[10px] font-mono uppercase text-zinc-400">
+              {match.compared === 'their-screenshot' ? 'picture compared' : 'written record'}
+            </span>
+          </div>
+          <p className="text-xs text-zinc-300 leading-relaxed">{match.why}</p>
+          {!trade && (
+            <p className="text-[10px] text-amber-300/80">
+              This trade could not be matched to a row in your log, so it is shown as quoted.
+            </p>
+          )}
+        </div>
+      </div>
     );
   };
 
@@ -473,79 +580,24 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
                   failure — {answer.nextStep}
                 </p>
               ) : (
-                <div id="chart-match-matches" className="space-y-2">
-                  <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
-                    Your trades that look like it ({answer.matches.length})
-                  </span>
-                  {answer.matches.map((match, index) => {
-                    const trade = resolve(match);
-                    const shot = trade
-                      ? (trade.images ?? []).find((candidate) => isCoachImageDataUrl(candidate))
-                      : undefined;
-                    const openable = Boolean(trade && onViewTrade);
-                    return (
-                      <div
-                        key={`${match.date}-${match.symbol}-${index}`}
-                        data-match-row={trade ? trade.id : `unresolved-${index}`}
-                        role={openable ? 'button' : undefined}
-                        tabIndex={openable ? 0 : undefined}
-                        onClick={openable && trade ? () => onViewTrade?.(trade) : undefined}
-                        onKeyDown={
-                          openable && trade
-                            ? (e) => {
-                                if (e.key === 'Enter' || e.key === ' ') {
-                                  e.preventDefault();
-                                  onViewTrade?.(trade);
-                                }
-                              }
-                            : undefined
-                        }
-                        className={`flex gap-3 rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 ${
-                          openable ? 'cursor-pointer transition-colors hover:border-zinc-700 hover:bg-zinc-800/60' : ''
-                        }`}
-                        title={openable ? 'Click to open this trade' : undefined}
-                      >
-                        {shot && (
-                          <img
-                            src={shot}
-                            alt={`Screenshot of the ${match.date} ${match.symbol} trade`}
-                            className="h-14 w-20 shrink-0 rounded-lg border border-zinc-800 bg-zinc-950 object-cover"
-                          />
-                        )}
-                        <div className="min-w-0 flex-1 space-y-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="font-mono text-xs font-semibold text-zinc-100">
-                              {match.date} · {match.symbol} · {match.direction.toUpperCase()}
-                            </span>
-                            {match.setupName && (
-                              <span className="rounded-md border border-zinc-700 bg-zinc-800/70 px-1.5 py-0.5 text-[10px] text-zinc-300">
-                                {match.setupName}
-                              </span>
-                            )}
-                            <span
-                              className={`rounded-md border px-1.5 py-0.5 text-[10px] font-semibold uppercase ${confidenceTone(
-                                match.confidence
-                              )}`}
-                            >
-                              {match.confidence}
-                            </span>
-                            <span className="rounded-md border border-zinc-800 bg-zinc-950/60 px-1.5 py-0.5 text-[10px] font-mono uppercase text-zinc-400">
-                              {match.compared === 'their-screenshot'
-                                ? 'picture compared'
-                                : 'written record'}
-                            </span>
-                          </div>
-                          <p className="text-xs text-zinc-300 leading-relaxed">{match.why}</p>
-                          {!trade && (
-                            <p className="text-[10px] text-amber-300/80">
-                              This trade could not be matched to a row in your log, so it is
-                              shown as quoted.
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
+                <div id="chart-match-matches" className="space-y-3">
+                  <div className="space-y-2">
+                    <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
+                      Closest matches ({closestMatches.length} of {answer.matches.length}, ranked
+                      by how closely they resemble your chart)
+                    </span>
+                    {closestMatches.map((match, index) => renderMatchRow(match, index))}
+                  </div>
+                  {alsoSimilar.length > 0 && (
+                    <div className="space-y-2">
+                      <span className="text-[10px] font-mono uppercase font-bold text-zinc-500">
+                        Also similar ({alsoSimilar.length})
+                      </span>
+                      {alsoSimilar.map((match, index) =>
+                        renderMatchRow(match, closestMatches.length + index)
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 

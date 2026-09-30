@@ -47,6 +47,7 @@ import { BehaviorCard } from './BehaviorCard';
 import { RecentFormCard } from './RecentFormCard';
 import { ExtremeReadCard } from './ExtremeReadCard';
 import { ExtremeCallCard } from './ExtremeCallCard';
+import { ChartMatchCard } from '../trades/ChartMatchCard';
 import { SetupWeekCard } from './SetupWeekCard';
 import { instrumentSymbol } from '../../lib/trading/instruments';
 import { formatTimestamp } from '../../lib/storage/date-utils';
@@ -70,6 +71,11 @@ interface CoachViewProps {
   levelTouches: LevelTouch[];
   /** The session-extreme log, so the coach can read where the highs and lows printed. */
   sessionExtremes: SessionExtreme[];
+  /**
+   * Opens the detail view for a trade the picture search matched. Omitted leaves the matches
+   * readable but not clickable, which is what a caller with no detail view wants.
+   */
+  onViewTrade?: (trade: Trade) => void;
 }
 
 interface RequestState {
@@ -113,6 +119,7 @@ export const CoachView: React.FC<CoachViewProps> = ({
   maxDrawdown,
   levelTouches,
   sessionExtremes,
+  onViewTrade,
 }) => {
   const digest = useMemo(
     () =>
@@ -391,6 +398,26 @@ export const CoachView: React.FC<CoachViewProps> = ({
         answer={extremeCall}
         writtenAt={callState.writtenAt}
         onRun={() => run('extremecall', setCallState, { instrument: callSymbol })}
+      />
+
+      {/*
+        The picture search, beside the other reads.
+
+        Same card the trade log carries, so a chart can be chased back to the trades that
+        look like it without leaving the coach, and a matched row opens the trade from here
+        too.
+      */}
+      <ChartMatchCard
+        trades={trades}
+        tradingDays={tradingDays}
+        reviews={reviews}
+        setups={setups}
+        instruments={instruments}
+        todayTradeDate={todayTradeDate}
+        timezone={timezone}
+        maxDrawdown={maxDrawdown}
+        levelTouches={levelTouches}
+        onViewTrade={onViewTrade}
       />
 
       {/* What the coach is allowed to know. Shown up front so the advice can be judged. */}

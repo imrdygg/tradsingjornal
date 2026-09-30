@@ -1740,6 +1740,8 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             maxDrawdown={profile.maxDrawdown ?? null}
             levelTouches={levelTouches}
             sessionExtremes={sessionExtremes}
+            // A trade the picture search matches opens from here like it does from the log.
+            onViewTrade={(t) => setViewingTradeId(t.id)}
           />
         );
 

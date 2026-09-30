@@ -108,9 +108,15 @@ export function createJournalSaver({
  * is the other thing: records that exist only here, which is what a save that never
  * reached the cloud leaves behind.
  *
- * Deliberately looks only at records with an `id` (days, trades, reviews). Pattern studies
- * are keyed by pattern rather than by id and are playbook material rather than journal
- * entries, so they are not what a lost morning consists of.
+ * Deliberately looks only at records with an `id` (days, trades, reviews, the level log, the
+ * session-extreme log and the saved picture searches). Pattern studies are keyed by pattern
+ * rather than by id and are playbook material rather than journal entries, so they are not
+ * what a lost morning consists of.
+ *
+ * The session extremes and picture searches are counted here for the same reason as the
+ * rest: they are logged, often in a run, and a cloud copy that predates them would otherwise
+ * take them away with nothing set aside. A level the trader entered minutes ago is exactly
+ * the kind of record this is meant to catch.
  */
 export function countLocalOnlyRecords(local: StorageState, remote: StorageState): number {
   let count = 0;
@@ -126,6 +132,8 @@ export function countLocalOnlyRecords(local: StorageState, remote: StorageState)
   compare(local.trades, remote.trades);
   compare(local.reviews, remote.reviews);
   compare(local.levelTouches, remote.levelTouches);
+  compare(local.sessionExtremes, remote.sessionExtremes);
+  compare(local.chartSearches, remote.chartSearches);
 
   return count;
 }

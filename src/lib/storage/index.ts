@@ -1116,19 +1116,25 @@ export const storage = {
   /**
    * Upserts one session extreme, newest first.
    *
-   * Keyed by slot as well as by id, because a slot holds one print: logging the same
-   * symbol, date, kind, window and chart again is a correction of that reading rather than a
-   * second one, and storing both would let a typo and its fix sit side by side in the record.
-   * A record moved to a different slot — the time edited from 3am to 11am — is replaced
-   * there too, so the same extreme can never be counted twice.
+   * A record replaces the reading it is the SAME reading of, and nothing else. That is the
+   * whole identity of a print: symbol, date, kind, window, chart and the clock time it
+   * printed at. Passing in the same one again corrects it — a typo in the price is fixed
+   * rather than sitting beside its fix — while two different prints are both kept.
    *
-   * The chart is part of the slot and not part of the label: a 30-minute high and a
+   * The clock time is part of that identity. It was left out once, on the reasoning that a
+   * window holds a single high or low; but a trader watching a session logs the level every
+   * time price leaves one, and the log exists precisely to keep every print the coach is to
+   * watch. Without the time, the second print in a window silently overwrote the first, and
+   * a level the trader had entered simply disappeared.
+   *
+   * The chart is part of the identity too, and not part of the label: a 30-minute high and a
    * 1-minute high in the same hour are two different readings of the session, and saving one
    * over the other would quietly delete a print the trader drew a line from.
    */
   saveSessionExtreme(extreme: SessionExtreme): SessionExtreme {
     const extremes = this.getSessionExtremes();
     const updated: SessionExtreme = { ...extreme, updatedAt: new Date().toISOString() };
+    const at = (value: string | undefined) => (value ?? '').trim();
     const next = extremes.filter(
       (existing) =>
         existing.id !== extreme.id &&
@@ -1137,7 +1143,8 @@ export const storage = {
           existing.tradeDate === extreme.tradeDate &&
           existing.kind === extreme.kind &&
           existing.window === extreme.window &&
-          timeframeOf(existing) === timeframeOf(extreme)
+          timeframeOf(existing) === timeframeOf(extreme) &&
+          at(existing.time) === at(extreme.time)
         )
     );
     setItem(STORAGE_KEYS.SESSION_EXTREMES, [updated, ...next]);

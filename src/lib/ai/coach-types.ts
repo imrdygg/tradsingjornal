@@ -41,6 +41,12 @@ export type CoachMode =
    * forecast forward.
    */
   | 'extremes'
+  /**
+   * The clock call: the coach's own read of the levels the trader logged, on request. This
+   * is one of the opinion modes — the trader has explicitly asked for a side, a level and a
+   * confidence — so it may state a direction, but only from the numbers it was handed.
+   */
+  | 'extremecall'
   | 'trade'
   | 'prep'
   | 'postclose'
@@ -372,6 +378,37 @@ export interface ExtremeResponse {
 }
 
 /**
+ * The coach's own call on the trader's logged levels: which side it would be on, the level
+ * that call is about, and what would prove it wrong.
+ *
+ * An opinion, never a forecast, and the fields are shaped to keep it one: the level must be a
+ * number the trader recorded or a live read, the counts behind it are required, and the
+ * trigger and invalidation are required so a call can never arrive without the two things
+ * that make it checkable. Standing aside is a complete answer.
+ */
+export interface ExtremeCallResponse {
+  headline: string;
+  /** The side the coach would be on right now, or that it would stand aside. */
+  stance: 'long' | 'short' | 'stand-aside';
+  /** The trader's own level the call is about, or null when it stands aside. */
+  level: number | null;
+  /** The side that level is being treated as. */
+  levelType: 'support' | 'resistance' | null;
+  /** What has to happen before the call is live, in plain words. */
+  trigger: string;
+  /**
+   * What would prove the call wrong. For a stand-aside it is what would bring the coach in,
+   * which is the same question read the other way.
+   */
+  invalidation: string;
+  /** The counts from the trader's own log the call rests on. */
+  basedOn: string[];
+  confidence: 'low' | 'medium' | 'high';
+  /** Said plainly: this is its opinion, and what it does not know. */
+  rationale: string;
+}
+
+/**
  * The weekly setup read: which of the trader's setups the last seven days say is working.
  *
  * The verdict itself is not in here — it is computed from the recorded trades in the digest
@@ -509,6 +546,7 @@ export type CoachResponse =
   | FormResponse
   | EdgeResponse
   | ExtremeResponse
+  | ExtremeCallResponse
   | SetupsResponse
   | LearnResponse
   | AskResponse

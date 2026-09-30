@@ -220,6 +220,7 @@ const MODES_WITH_LIVE_FETCH: readonly CoachMode[] = [
   'scalein',
   'entrycall',
   'chartread',
+  'extremecall',
 ];
 
 export async function requestCoach(

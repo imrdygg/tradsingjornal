@@ -65,6 +65,12 @@ export const COACH_MODES: readonly CoachMode[] = [
    * the regular session kept an overnight extreme that printed in a given hour.
    */
   'extremes',
+  /**
+   * The clock call: the coach's own read of the levels the trader logged, asking for a side,
+   * a level and a confidence. An opinion mode, so it gets the live read and the narrowed
+   * rules — the trader asked for this one explicitly.
+   */
+  'extremecall',
   'trade',
   'prep',
   'postclose',
@@ -92,6 +98,10 @@ export const COACH_OPINION_MODES: readonly CoachMode[] = [
   'scalein',
   'entrycall',
   'chartread',
+  // Added last, and only after the trader asked for it in as many words: a call on the levels
+  // they logged is still an opinion about the market, so it belongs on this list — and every
+  // rule the other opinion modes carry applies to it unchanged.
+  'extremecall',
 ];
 
 export function isCoachMode(value: unknown): value is CoachMode {
@@ -1399,6 +1409,19 @@ Rank only conditions with a readable hold rate. Never quote a rate for a conditi
   "motivation": "2 sentences. Specific to this trader and earned by their data. No slogans."
 }
 Rank only hours with a readable held rate, and only conditions with enough readings in levelsRead. Never quote a rate for anything listed as not yet readable, and never say an hour "tends to" do anything. Held means the regular session never traded past the overnight extreme — not that the trade paid. A chopped rating counts against the level.`,
+  extremecall: `Return exactly this JSON:
+{
+  "headline": "one sentence, under 16 words, naming the call",
+  "stance": "long, short, or stand-aside: the side you would be on right now",
+  "level": "the one level this call is about, a number from the trader's own log or the LIVE READ, or null when you stand aside",
+  "levelType": "support or resistance: the side that level is being treated as, or null when you stand aside",
+  "trigger": "what has to happen before this call is live, in plain words. Required even when you stand aside",
+  "invalidation": "what would prove this call wrong. When you stand aside, what would bring you in",
+  "basedOn": ["each count, hour, chart or reading from their log that this call rests on, one per item, quoted as it appears in the SESSION EXTREMES section"],
+  "confidence": "one of low, medium, high",
+  "rationale": "3-4 sentences: the read, the side, why the level matters, which of their own readings supports it, and plainly that this is your opinion and can be wrong"
+}
+Every level must be a number from SESSION EXTREMES or LIVE READ. Stand aside when their log is too thin to support a side, and say so in the rationale. Never predict where price goes next, never name an expected win rate, and never tell them to trade a size.`,
   setups: `Return exactly this JSON:
 {
   "headline": "one sentence, under 16 words, on which setup the week's own numbers say is working",
@@ -1668,6 +1691,17 @@ export function buildCoachPrompt(
         `30 minutes and was taken out by the close is reported as both, never as one. Quote ` +
         `the held rates only for conditions marked readable, and the grades separately from ` +
         `the outcomes.`
+      : mode === 'extremecall'
+      ? `The trader has asked for YOUR call on their logged levels for ${'{instrument}'}. Read ` +
+        `their own SESSION EXTREMES section — the hours their extremes print in, the side each ` +
+        `was being treated as, and their own RATINGS of what those levels did — and then use the ` +
+        `LIVE READ to say which side you would be on right now, the one level that call is about, ` +
+        `what has to happen before it is live, and what would prove it wrong. Every level must be ` +
+        `a number you were handed. Quote the counts from their log that the call rests on, inside ` +
+        `basedOn. Say plainly that this is your opinion and can be wrong, and stand aside when ` +
+        `their log is too thin or the numbers do not support a side — standing aside is a ` +
+        `complete answer, not a failure. Never predict where price goes next and never name a ` +
+        `win rate.`
       : mode === 'setups'
       ? `Read this trader's WEEK SETUP BY SETUP, from THE WEEK section: what each setup's own ` +
         `trades paid in the last seven days, and whether its levels held behind that. Every ` +
@@ -1977,6 +2011,25 @@ export function parseCoachResponse(
       whatItMeans: asText(obj.whatItMeans, 'whatItMeans'),
       nextStep: asText(obj.nextStep, 'nextStep'),
       motivation: asText(obj.motivation, 'motivation'),
+    };
+  }
+
+  if (mode === 'extremecall') {
+    const stance = asEnum(obj.stance, ['long', 'short', 'stand-aside'] as const, 'stand-aside');
+    const inPlay = stance !== 'stand-aside';
+    const levelType = asEnum(obj.levelType, ['support', 'resistance'] as const, 'support');
+    return {
+      headline: asText(obj.headline, 'headline'),
+      stance,
+      // A stand-aside with a level attached would render a call the coach did not make, so the
+      // level is dropped rather than trusted — the same rule the scale-in mode follows.
+      level: inPlay ? asNumberOrNull(obj.level, 'level') : null,
+      levelType: inPlay ? levelType : null,
+      trigger: asText(obj.trigger, 'trigger'),
+      invalidation: asText(obj.invalidation, 'invalidation'),
+      basedOn: asTextList(obj.basedOn, 'basedOn'),
+      confidence: asEnum(obj.confidence, ['low', 'medium', 'high'] as const, 'low'),
+      rationale: asText(obj.rationale, 'rationale'),
     };
   }
 

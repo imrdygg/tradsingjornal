@@ -74,7 +74,7 @@ interface ApiResponse {
  * knows the meaning of gets updated without being read. Bump it when the request or response
  * contract changes in a way a caller could notice.
  */
-export const ENDPOINT_VERSION = 14;
+export const ENDPOINT_VERSION = 15;
 
 /** Total time to spend trying models before returning what we have. */
 const REQUEST_BUDGET_MS = 45_000;
@@ -839,8 +839,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     res.status(400).json({
       error:
         'Unknown coach mode. Expected brief, weekly, setups, form, edge, learn, extremes, ' +
-        'trade, prep, postclose, planreview, planfield, planbuild, scalein, entrycall, ' +
-        'chartread or ask.',
+        'extremecall, trade, prep, postclose, planreview, planfield, planbuild, scalein, ' +
+        'entrycall, chartread or ask.',
     });
     return;
   }

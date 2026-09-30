@@ -19,7 +19,9 @@ import {
 import { buildJournalDigest } from '../../lib/ai/journal-digest';
 import type {
   BriefResponse,
+  CoachExtras,
   CoachMode,
+  ExtremeCallResponse,
   ExtremeResponse,
   FormResponse,
   SetupsResponse,
@@ -44,6 +46,7 @@ import { COACH_WAIT_STEPS } from '../common/AiThinking';
 import { BehaviorCard } from './BehaviorCard';
 import { RecentFormCard } from './RecentFormCard';
 import { ExtremeReadCard } from './ExtremeReadCard';
+import { ExtremeCallCard } from './ExtremeCallCard';
 import { SetupWeekCard } from './SetupWeekCard';
 import { instrumentSymbol } from '../../lib/trading/instruments';
 import { formatTimestamp } from '../../lib/storage/date-utils';
@@ -144,6 +147,7 @@ export const CoachView: React.FC<CoachViewProps> = ({
   const [formState, setFormState] = useState<RequestState>(IDLE);
   const [setupsState, setSetupsState] = useState<RequestState>(IDLE);
   const [extremesState, setExtremesState] = useState<RequestState>(IDLE);
+  const [callState, setCallState] = useState<RequestState>(IDLE);
 
   /**
    * Runs one of the reads this tab keeps.
@@ -154,10 +158,11 @@ export const CoachView: React.FC<CoachViewProps> = ({
    */
   async function run(
     mode: CoachMode,
-    setState: React.Dispatch<React.SetStateAction<RequestState>>
+    setState: React.Dispatch<React.SetStateAction<RequestState>>,
+    extras?: CoachExtras
   ) {
     setState((prev) => ({ ...prev, loading: true, failure: null }));
-    const result = await requestCoach(mode, digest);
+    const result = await requestCoach(mode, digest, undefined, extras);
 
     if (result.ok) {
       setState((prev) => ({
@@ -186,6 +191,25 @@ export const CoachView: React.FC<CoachViewProps> = ({
   /** The clock read, once one has come back. Null keeps the result block from rendering. */
   const extremesRead =
     extremesState.result?.ok ? (extremesState.result.data as ExtremeResponse) : null;
+  /** The call, once one has come back. */
+  const extremeCall = callState.result?.ok ? (callState.result.data as ExtremeCallResponse) : null;
+
+  /**
+   * The instrument the call is about.
+   *
+   * The one whose levels were logged most recently, because that is the log the trader is
+   * working in right now; the plan's instrument is only a fallback for a journal that has
+   * logged nothing yet.
+   */
+  const callSymbol = useMemo(() => {
+    const newest = [...sessionExtremes].sort((a, b) =>
+      (b.createdAt ?? '').localeCompare(a.createdAt ?? '')
+    )[0];
+    if (newest?.symbol) return newest.symbol;
+    const planned = (todayTradingDay.primaryInstrument ?? '').trim();
+    if (planned) return instrumentSymbol(instruments, planned);
+    return instruments[0]?.symbol ?? 'MES';
+  }, [sessionExtremes, todayTradingDay, instruments]);
 
   return (
     <div className="space-y-5">
@@ -350,6 +374,23 @@ export const CoachView: React.FC<CoachViewProps> = ({
         answer={extremesRead}
         writtenAt={extremesState.writtenAt}
         onRun={() => run('extremes', setExtremesState)}
+      />
+
+      {/*
+        The one card that states a direction, and only because the trader asked for it.
+
+        It sits after the clock read on purpose: the counts it leans on are directly above it,
+        so the call can be judged against the same numbers the coach was handed.
+      */}
+      <ExtremeCallCard
+        read={digest.extremeRead}
+        symbol={callSymbol}
+        timezone={timezone}
+        loading={callState.loading}
+        failure={callState.failure}
+        answer={extremeCall}
+        writtenAt={callState.writtenAt}
+        onRun={() => run('extremecall', setCallState, { instrument: callSymbol })}
       />
 
       {/* What the coach is allowed to know. Shown up front so the advice can be judged. */}

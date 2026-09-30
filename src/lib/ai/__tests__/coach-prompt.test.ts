@@ -720,6 +720,82 @@ describe('the session-extreme log in the prompt', () => {
 });
 
 /**
+ * The clock call is the only place the journal states a direction. What is asserted here is
+ * the scaffolding that keeps it honest: it is an opinion mode so it gets the narrowed rules
+ * and the live read, every honesty field is required, and standing aside is a real answer
+ * rather than a parse failure.
+ */
+describe('extremecall mode', () => {
+  const callJson = {
+    headline: 'Long the 3am high as support on MES',
+    stance: 'long',
+    level: 6012,
+    levelType: 'support',
+    trigger: 'A 5-minute close back above 6012 after the open.',
+    invalidation: 'A close back below 6000, which is under the level and under your stop.',
+    basedOn: ['MES 3am high kept in 4 of 5 judged sessions', '3 held readings of 4'],
+    confidence: 'medium',
+    rationale: 'Your log kept this level in four of five sessions. This is my opinion and can be wrong.',
+  };
+
+  it('is an opinion mode, and says the call is an opinion', () => {
+    expect(allowsMarketOpinion('extremecall')).toBe(true);
+    expect(COACH_OPINION_MODES).toContain('extremecall');
+
+    const { userPrompt } = buildCoachPrompt('extremecall', digestFor(), undefined, undefined, {
+      instrument: 'MES',
+    });
+    expect(userPrompt).toContain("The trader has asked for YOUR call on their logged levels for MES");
+    expect(userPrompt).toContain('this is your opinion and can be wrong');
+  });
+
+  it('requires the trigger, the invalidation and the counts behind the call', () => {
+    const shape = COACH_RESPONSE_SHAPES.extremecall;
+    expect(shape).toContain('"stance"');
+    expect(shape).toContain('"trigger"');
+    expect(shape).toContain('"invalidation"');
+    expect(shape).toContain('"basedOn"');
+    expect(shape).toContain('never name an expected win rate');
+
+    expect(() => parseCoachResponse('extremecall', callJson)).not.toThrow();
+    const { invalidation, ...withoutInvalidation } = callJson;
+    expect(() => parseCoachResponse('extremecall', withoutInvalidation)).toThrow(/invalidation/);
+  });
+
+  it('reads a call, and drops the level when it stands aside', () => {
+    const parsed = parseCoachResponse('extremecall', callJson) as {
+      stance: string;
+      level: number | null;
+      levelType: string | null;
+      basedOn: string[];
+    };
+    expect(parsed).toMatchObject({
+      stance: 'long',
+      level: 6012,
+      levelType: 'support',
+    });
+    expect(parsed.basedOn).toHaveLength(2);
+
+    // A stand-aside carrying a level would render a call the coach did not make.
+    const aside = parseCoachResponse('extremecall', {
+      ...callJson,
+      stance: 'stand-aside',
+      level: 6012,
+      levelType: 'support',
+    }) as { stance: string; level: number | null; levelType: string | null };
+    expect(aside).toMatchObject({ stance: 'stand-aside', level: null, levelType: null });
+
+    // An unknown stance is read as standing aside rather than as a direction.
+    const unknown = parseCoachResponse('extremecall', {
+      ...callJson,
+      stance: 'maybe',
+    }) as { stance: string; level: number | null };
+    expect(unknown.stance).toBe('stand-aside');
+    expect(unknown.level).toBeNull();
+  });
+});
+
+/**
  * The edge mode is the dedicated finder: it reports which conditions the trader's own
  * record supports and, just as importantly, which are still too thin to name.
  */
@@ -1200,6 +1276,7 @@ describe('opinion modes', () => {
   it('is an explicit list, so a stray mode can never inherit the market allowance', () => {
     expect(allowsMarketOpinion('planbuild')).toBe(true);
     expect(allowsMarketOpinion('entrycall')).toBe(true);
+    expect(allowsMarketOpinion('extremecall')).toBe(true);
     expect(allowsMarketOpinion('scalein')).toBe(true);
     expect(allowsMarketOpinion('planfield')).toBe(true);
     expect(allowsMarketOpinion('planreview')).toBe(false);

@@ -74,7 +74,7 @@ interface ApiResponse {
  * knows the meaning of gets updated without being read. Bump it when the request or response
  * contract changes in a way a caller could notice.
  */
-export const ENDPOINT_VERSION = 16;
+export const ENDPOINT_VERSION = 17;
 
 /** Total time to spend trying models before returning what we have. */
 const REQUEST_BUDGET_MS = 45_000;

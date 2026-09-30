@@ -479,7 +479,15 @@ export interface MatchItem {
    * was actually sent alongside the uploaded chart.
    */
   compared: 'written-record' | 'their-screenshot';
-  confidence: 'low' | 'medium' | 'high';
+  /**
+   * How closely this trade resembles the uploaded chart, 0-100.
+   *
+   * A resemblance measure, never a probability: 100 means the record of this trade looks as
+   * much like the chart as a trade can, and it says nothing about whether acting on the
+   * pattern would work. The scale is the model's own, applied consistently across the matches
+   * of one search so they can be ranked against each other — which is all it is for.
+   */
+  score: number;
 }
 
 /**

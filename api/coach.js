@@ -718,7 +718,13 @@ M6. THIN IS AN ANSWER. A single resembling trade is the closest one, not a patte
     Return an empty matches array when nothing in the record resembles the chart, and make
     nextStep about logging the chart so a future search has something to find.
 M7. NAME ONLY THE TRADER'S OWN SETUPS. Never label a match with a textbook pattern name they
-    do not use, and never name a setup their record does not show.`;
+    do not use, and never name a setup their record does not show.
+M8. THE SCORE IS A RESEMBLANCE, NOT A PROBABILITY. For each match, give a score from 0 to 100
+    for how closely that trade's own pattern looks like the uploaded chart, and use the range:
+    a score is only useful if it separates the near matches from the loose ones. It is never
+    the chance the trade works, a win rate, or a quality grade \u2014 so never write it as a
+    percentage of success, and never let a high score change how you describe what the trade
+    did. Order the matches by their own scores, highest first.`;
 function touchOutcomeWord(outcome) {
   switch (outcome) {
     case "never-returned":
@@ -1509,14 +1515,14 @@ Return 1-3 setups, best supported first. Return an empty setups array when the r
       "setupName": "the setup it was logged under, or null when it had none",
       "why": "1-2 sentences on what makes this trade resemble the uploaded chart, in their own terms",
       "compared": "written-record, or their-screenshot when a picture of this trade was actually attached and you compared it",
-      "confidence": "one of low, medium, high \u2014 how close the resemblance really is"
+      "score": "0-100: how closely this trade's own pattern resembles the uploaded chart, 100 meaning as alike as a trade in their record can look and 0 meaning nothing alike. A resemblance measure, never a probability of success. Use the range and be conservative"
     }
   ],
   "notInJournal": "what the record does not hold that would have sharpened the search. Empty string when nothing was missing",
   "nextStep": "one concrete, checkable thing to log that would make the next picture search better",
   "motivation": "2 sentences. Specific to this trader and earned by their data. No slogans."
 }
-Return 0-5 matches, closest first. Every match must be a trade that appears in TRADE SAMPLES \u2014 never invent one, and never name a textbook pattern the trader does not use. Copy each match's date, symbol and direction exactly as they appear. Return an empty matches array when nothing in the record resembles the chart and say so in patternRead. Never predict direction, never state a price or level, and never call a resemblance a reason to trade it.`,
+Return 0-5 matches, ordered by score, highest first. Every match must be a trade that appears in TRADE SAMPLES \u2014 never invent one, and never name a textbook pattern the trader does not use. Copy each match's date, symbol and direction exactly as they appear. Only include a trade that genuinely resembles the chart: a loose or forced match is worse than none, and a trade scoring below 50 does not belong in the list. Return an empty matches array when nothing in the record resembles the chart and say so in patternRead. Never predict direction, never state a price or level, and never call a resemblance a reason to trade it.`,
   trade: `Return exactly this JSON:
 {
   "verdict": "2 sentences judging the decision and the execution separately",
@@ -1720,6 +1726,16 @@ function asPositiveInt(value, field, fallback) {
   if (parsed === null) return fallback;
   return Math.max(1, Math.round(parsed));
 }
+function asScore(value) {
+  let parsed = null;
+  if (typeof value === "number" && Number.isFinite(value)) parsed = value;
+  else if (typeof value === "string") {
+    const fromString = Number(value.replace(/[%\s]/g, ""));
+    if (Number.isFinite(fromString)) parsed = fromString;
+  }
+  if (parsed === null) return 0;
+  return Math.max(0, Math.min(100, Math.round(parsed)));
+}
 function asEnum(value, allowed, fallback) {
   const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
   return allowed.includes(raw) ? raw : fallback;
@@ -1900,7 +1916,7 @@ function parseCoachResponse(mode, raw, extras) {
       // Only a match labelled as picture-compared is allowed to claim it: anything else,
       // including a missing field, is read as a match on the written record.
       compared: item.compared === "their-screenshot" ? "their-screenshot" : "written-record",
-      confidence: asEnum(item.confidence, ["low", "medium", "high"], "low")
+      score: asScore(item.score)
     })).filter((item) => item.date && item.symbol && item.direction);
     return {
       headline: asText(obj.headline, "headline"),
@@ -2095,7 +2111,7 @@ function readCoachImages(raw, max = MAX_COACH_IMAGES, maxTotalChars = MAX_COACH_
 }
 
 // src/api/coach.ts
-var ENDPOINT_VERSION = 16;
+var ENDPOINT_VERSION = 17;
 var REQUEST_BUDGET_MS = 45e3;
 var DEFAULT_MODEL_CHAIN = [
   "gemini-flash-lite-latest",

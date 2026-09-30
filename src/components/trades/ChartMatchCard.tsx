@@ -122,26 +122,18 @@ function collectTradeShots(
   return out;
 }
 
-/** How much the resemblance is worth to the trader, said plainly rather than implied. */
-function confidenceTone(confidence: MatchItem['confidence']): string {
-  if (confidence === 'high') return 'bg-emerald-950/80 text-emerald-300 border-emerald-800';
-  if (confidence === 'medium') return 'bg-zinc-800 text-zinc-300 border-zinc-700';
+/**
+ * The colour a resemblance score is shown in.
+ *
+ * Bands rather than a gradient because a gradient reads as a measurement the app made, and
+ * the number is the coach's own estimate. The bands are only a quick read of the same number
+ * spelled out beside them.
+ */
+function scoreTone(score: number): string {
+  if (score >= 80) return 'bg-emerald-950/80 text-emerald-300 border-emerald-800';
+  if (score >= 60) return 'bg-zinc-800 text-zinc-300 border-zinc-700';
   return 'bg-amber-950/60 text-amber-300/90 border-amber-900/70';
 }
-
-/**
- * The closeness ranking, made explicit.
- *
- * The coach's own confidence is the only closeness signal there is, so it is what orders
- * the list: a high resemblance always sorts above a medium, whatever order the answer
- * happened to arrive in. Ties keep the coach's order, which the prompt asks to be
- * closest-first — so the sort never scrambles two matches it rated the same.
- */
-const CONFIDENCE_RANK: Record<MatchItem['confidence'], number> = {
-  high: 0,
-  medium: 1,
-  low: 2,
-};
 
 /** How many of the closest matches are shown as the main answer. */
 export const CLOSEST_MATCH_COUNT = 3;
@@ -288,19 +280,17 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
   /**
    * The matches, ranked by how closely they resemble the chart.
    *
-   * Closest first, from the coach's own confidence, with the closest three lifted out as the
-   * answer. A longer list still shows the rest beneath them, so nothing is hidden — but the
-   * best resemblances are never buried under weaker ones.
+   * Ordered by the coach's own score, highest first, so the ranking is a number rather than a
+   * felt order — and a tie keeps the order the answer arrived in, which the prompt asks to be
+   * closest-first, so two trades scored alike are never scrambled against each other. The
+   * closest three are lifted out as the answer; the rest stay beneath them, so nothing is
+   * hidden but the best resemblances are never buried under weaker ones.
    */
   const rankedMatches = useMemo(() => {
     if (!answer) return [] as MatchItem[];
     return answer.matches
       .map((match, index) => ({ match, index }))
-      .sort(
-        (a, b) =>
-          CONFIDENCE_RANK[a.match.confidence] - CONFIDENCE_RANK[b.match.confidence] ||
-          a.index - b.index
-      )
+      .sort((a, b) => b.match.score - a.match.score || a.index - b.index)
       .map((entry) => entry.match);
   }, [answer]);
 
@@ -354,11 +344,12 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
               </span>
             )}
             <span
-              className={`rounded-md border px-1.5 py-0.5 text-[10px] font-semibold uppercase ${confidenceTone(
-                match.confidence
+              className={`rounded-md border px-1.5 py-0.5 text-[10px] font-semibold uppercase ${scoreTone(
+                match.score
               )}`}
+              title="How closely this trade's pattern resembles your chart, 0-100. A resemblance, not a chance it works."
             >
-              {match.confidence}
+              {match.score}% alike
             </span>
             <span className="rounded-md border border-zinc-800 bg-zinc-950/60 px-1.5 py-0.5 text-[10px] font-mono uppercase text-zinc-400">
               {match.compared === 'their-screenshot' ? 'picture compared' : 'written record'}

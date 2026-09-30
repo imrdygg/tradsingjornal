@@ -1053,10 +1053,10 @@ describe('match mode', () => {
         setupName: 'Support',
         why: 'Same failed push and reclaim you took on the 18th.',
         compared: 'their-screenshot',
-        confidence: 'high',
+        score: 92,
       },
       // No date: the client could not resolve this to a trade, so it must be dropped.
-      { date: '', symbol: 'MNQ', direction: 'long', why: 'unresolvable', confidence: 'low' },
+      { date: '', symbol: 'MNQ', direction: 'long', why: 'unresolvable', score: 40 },
     ],
     notInJournal: '',
     nextStep: 'Log the chart you are looking at so a future search has something to find.',
@@ -1074,6 +1074,10 @@ describe('match mode', () => {
     expect(shape).toContain('NO price, level, index level or time may appear here');
     expect(shape).toContain('Never predict direction');
     expect(shape).toContain('an empty matches array');
+    // The closeness is a number the card can rank on, not a label.
+    expect(shape).toContain('"score"');
+    expect(shape).toContain('0-100');
+    expect(shape).toContain('ordered by score, highest first');
 
     const { userPrompt } = buildCoachPrompt('match', digestFor());
     expect(userPrompt).toContain('the trades in their OWN history');
@@ -1115,8 +1119,24 @@ describe('match mode', () => {
       symbol: 'MES',
       setupName: 'Support',
       compared: 'their-screenshot',
-      confidence: 'high',
+      score: 92,
     });
+  });
+
+  it('clamps a score to the 0-100 scale and reads a missing one as zero', () => {
+    const scoresOf = (matches: unknown[]) =>
+      (parseCoachResponse('match', { ...matchJson, matches }) as MatchResponse).matches.map(
+        (match) => match.score
+      );
+    const base = matchJson.matches[0];
+
+    // A score past either end is clamped rather than rejected.
+    expect(scoresOf([{ ...base, score: 150 }])).toEqual([100]);
+    expect(scoresOf([{ ...base, score: -20 }])).toEqual([0]);
+    // Models wrap a number in a percent sign often enough that it is worth accepting.
+    expect(scoresOf([{ ...base, score: '88%' }])).toEqual([88]);
+    // A match with no score reads as zero, which sorts it last rather than dropping it.
+    expect(scoresOf([{ ...base, score: undefined }])).toEqual([0]);
   });
 
   it('reads anything that is not a picture comparison as a written-record match', () => {

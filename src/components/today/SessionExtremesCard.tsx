@@ -589,7 +589,7 @@ export const SessionExtremesCard: React.FC<SessionExtremesCardProps> = ({
 
           <div>
             <label className="mb-1 block text-xs font-medium text-zinc-300">
-              Acting as <span className="text-zinc-500">(one, not both)</span>
+              Acting as
             </label>
             <div className="grid grid-cols-2 gap-1 rounded-xl border border-zinc-800 bg-zinc-950 p-1">
               {(['support', 'resistance'] as ExtremeLevelType[]).map((value) => (

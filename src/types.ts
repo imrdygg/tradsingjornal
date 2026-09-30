@@ -73,6 +73,14 @@ export interface ImportantLevel {
    * "key". Stored the same way a trade's tags are, so one habit covers both.
    */
   tags?: string[];
+  /**
+   * Which side of price the level is expected to act on.
+   *
+   * Optional, and absent means unclassified: the level is a price and nothing is claimed
+   * about it. Where it is set, the level is tinted so a screen of them reads by colour —
+   * resistance in red, support in green — without reading a single label.
+   */
+  side?: 'support' | 'resistance';
 }
 
 export interface PlanChange {

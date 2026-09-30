@@ -42,6 +42,7 @@ export const ImportantLevelsEditor: React.FC<ImportantLevelsEditorProps> = ({
   const [newLabel, setNewLabel] = useState('');
   const [newNotes, setNewNotes] = useState('');
   const [newTags, setNewTags] = useState('');
+  const [newSide, setNewSide] = useState<ImportantLevel['side']>(undefined);
 
   /** The level currently open for editing, and the draft its fields are typed into. */
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -49,6 +50,7 @@ export const ImportantLevelsEditor: React.FC<ImportantLevelsEditorProps> = ({
   const [editLabel, setEditLabel] = useState('');
   const [editNotes, setEditNotes] = useState('');
   const [editTags, setEditTags] = useState('');
+  const [editSide, setEditSide] = useState<ImportantLevel['side']>(undefined);
 
   const handleAddLevel = () => {
     const priceNum = parseFloat(newPrice);
@@ -62,6 +64,7 @@ export const ImportantLevelsEditor: React.FC<ImportantLevelsEditorProps> = ({
       label: newLabel.trim() || undefined,
       notes: newNotes.trim() || undefined,
       tags: tags.length ? tags : undefined,
+      side: newSide,
     };
 
     onChange([...levels, newLevel]);
@@ -69,6 +72,7 @@ export const ImportantLevelsEditor: React.FC<ImportantLevelsEditorProps> = ({
     setNewLabel('');
     setNewNotes('');
     setNewTags('');
+    setNewSide(undefined);
   };
 
   const handleRemoveLevel = (id: string) => {
@@ -85,6 +89,7 @@ export const ImportantLevelsEditor: React.FC<ImportantLevelsEditorProps> = ({
     setEditLabel(level.label ?? '');
     setEditNotes(level.notes ?? '');
     setEditTags((level.tags ?? []).join(', '));
+    setEditSide(level.side);
   };
 
   const cancelEdit = () => setEditingId(null);
@@ -108,6 +113,7 @@ export const ImportantLevelsEditor: React.FC<ImportantLevelsEditorProps> = ({
               label: editLabel.trim() || undefined,
               notes: editNotes.trim() || undefined,
               tags: tags.length ? tags : undefined,
+              side: editSide,
             }
           : level
       )
@@ -135,6 +141,51 @@ export const ImportantLevelsEditor: React.FC<ImportantLevelsEditorProps> = ({
 
   const fieldClass =
     'rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 focus:border-zinc-600 focus:outline-none';
+
+  /**
+   * The card's colour says which side of price the level is expected to act on — red for
+   * resistance, green for support. The tints are deliberately faint: a screen of levels is
+   * read at a glance, and a saturated block behind every one would be hard on the eyes. An
+   * unclassified level keeps the neutral card it always had.
+   */
+  const sideCardClass = (side: ImportantLevel['side']) => {
+    if (side === 'resistance') return 'border-rose-900/70 bg-rose-950/25';
+    if (side === 'support') return 'border-emerald-900/70 bg-emerald-950/25';
+    return 'border-zinc-800 bg-zinc-950/60';
+  };
+
+  /** A two-way toggle. Pressing the active side again clears it back to unclassified. */
+  const renderSideToggle = (
+    value: ImportantLevel['side'],
+    setValue: (next: ImportantLevel['side']) => void,
+    idPrefix: string
+  ) => (
+    <div className="flex items-center gap-1" role="group" aria-label="Level side">
+      {(['support', 'resistance'] as const).map((side) => {
+        const active = value === side;
+        const tone =
+          side === 'support'
+            ? active
+              ? 'border-emerald-700 bg-emerald-900/40 text-emerald-200'
+              : 'border-zinc-700 text-zinc-400 hover:border-emerald-800 hover:text-emerald-300'
+            : active
+              ? 'border-rose-700 bg-rose-900/40 text-rose-200'
+              : 'border-zinc-700 text-zinc-400 hover:border-rose-800 hover:text-rose-300';
+        return (
+          <button
+            key={side}
+            type="button"
+            id={`${idPrefix}-${side}`}
+            aria-pressed={active}
+            onClick={() => setValue(active ? undefined : side)}
+            className={`rounded-lg border px-2 py-1 text-[10px] font-semibold uppercase tracking-wide transition-colors ${tone}`}
+          >
+            {side}
+          </button>
+        );
+      })}
+    </div>
+  );
 
   return (
     <div className="space-y-3">
@@ -202,6 +253,9 @@ export const ImportantLevelsEditor: React.FC<ImportantLevelsEditorProps> = ({
                     className={`${fieldClass} w-full sm:w-48`}
                   />
                 </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {renderSideToggle(editSide, setEditSide, `level-edit-side-${lvl.id}`)}
+                </div>
                 <div className="flex items-center justify-end gap-2">
                   <button
                     type="button"
@@ -226,7 +280,7 @@ export const ImportantLevelsEditor: React.FC<ImportantLevelsEditorProps> = ({
             ) : (
               <div
                 key={lvl.id}
-                className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-2.5 text-xs space-y-1.5"
+                className={`rounded-lg border p-2.5 text-xs space-y-1.5 ${sideCardClass(lvl.side)}`}
               >
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0">
@@ -235,6 +289,17 @@ export const ImportantLevelsEditor: React.FC<ImportantLevelsEditorProps> = ({
                     </span>
                     {lvl.label && (
                       <span className="font-medium text-zinc-300 truncate">{lvl.label}</span>
+                    )}
+                    {lvl.side && (
+                      <span
+                        className={`shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-mono uppercase ${
+                          lvl.side === 'resistance'
+                            ? 'border-rose-800 bg-rose-950/50 text-rose-300'
+                            : 'border-emerald-800 bg-emerald-950/50 text-emerald-300'
+                        }`}
+                      >
+                        {lvl.side}
+                      </span>
                     )}
                   </div>
                   {!disabled && (
@@ -324,6 +389,17 @@ export const ImportantLevelsEditor: React.FC<ImportantLevelsEditorProps> = ({
               onChange={(e) => setNewNotes(e.target.value)}
               className={`${fieldClass} w-full sm:w-44`}
             />
+          </div>
+
+          {/* Which side of price this level is expected to hold, so it reads by colour. */}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[10px] font-mono uppercase tracking-wider text-zinc-500">
+              Side
+            </span>
+            {renderSideToggle(newSide, setNewSide, 'level-side')}
+            <span className="text-[10px] text-zinc-500">
+              Colours the level — red for resistance, green for support.
+            </span>
           </div>
 
           {/* Its own row: tags are the one field here that is easier to type a list into. */}

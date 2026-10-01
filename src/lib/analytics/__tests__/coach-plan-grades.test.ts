@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import type { CoachPlan } from '../../../types';
 import {
   COACH_PLAN_GRADES,
+  COACH_PLAN_GRADE_AXIS,
+  buildCoachPlanGradeTrend,
   sortCoachPlansNewestFirst,
   summariseCoachPlanGrades,
 } from '../coach-plan-grades';
@@ -84,6 +86,33 @@ describe('summariseCoachPlanGrades', () => {
     expect(summary.averagePoints).toBeNull();
     expect(summary.averagePercent).toBeNull();
     expect(summary.distribution.every((row) => row.count === 0 && row.share === 0)).toBe(true);
+  });
+});
+
+describe('the grade trend over time', () => {
+  it('plots only graded plans, oldest first, with a cumulative average', () => {
+    const trend = buildCoachPlanGradeTrend([
+      plan({ id: 'new', createdAt: '2026-09-21T13:00:00.000Z', grade: 'A' }),
+      plan({ id: 'old', createdAt: '2026-09-17T13:00:00.000Z', grade: 'F' }),
+      plan({ id: 'mid', createdAt: '2026-09-19T13:00:00.000Z', grade: 'C' }),
+      // Ungraded: it has no point to place and must not bend the line.
+      plan({ id: 'ungraded', createdAt: '2026-09-22T13:00:00.000Z' }),
+    ]);
+
+    expect(trend.map((point) => point.id)).toEqual(['old', 'mid', 'new']);
+    expect(trend.map((point) => point.points)).toEqual([0, 2, 4]);
+    expect(trend[0].label).toBe('09-17');
+    // 0, then (0+2)/2 = 1, then (0+2+4)/3 = 2.
+    expect(trend.map((point) => point.runningAverage)).toEqual([0, 1, 2]);
+  });
+
+  it('has nothing to plot when nothing is graded', () => {
+    expect(buildCoachPlanGradeTrend([plan({ id: 'a' })])).toEqual([]);
+  });
+
+  it('reads the y-axis worst to best, so an upward line means better grades', () => {
+    expect(COACH_PLAN_GRADE_AXIS.map((tick) => tick.label)).toEqual(['F', 'D', 'C', 'B', 'A']);
+    expect(COACH_PLAN_GRADE_AXIS.map((tick) => tick.value)).toEqual([0, 1, 2, 3, 4]);
   });
 });
 

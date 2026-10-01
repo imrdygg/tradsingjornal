@@ -124,6 +124,25 @@ test('shows the coach plans, the grades and the exact feedback', async ({ page }
   const failedRow = panel.locator('[data-coach-plan-row="cp-f"]');
   await expect(failedRow).toContainText('F');
   await expect(failedRow).toContainText('You chased the top of the range');
+
+  // Two graded plans is a trend: the line is drawn, on an A–F axis.
+  const trend = panel.locator('#coach-plan-grade-trend');
+  await expect(trend).toBeVisible();
+  await expect(trend).toContainText('Grade over time');
+  await expect(trend.locator('svg')).toHaveCount(1);
+  await expect(trend).toContainText('Ungraded plans are not plotted');
+});
+
+test('waits for a second grade before drawing a trend line', async ({ page }) => {
+  await seedPlans(page, [
+    { id: 'only', createdAt: '2026-09-21T13:00:00.000Z', direction: 'long', grade: 'B' },
+  ]);
+  await page.reload();
+  await gotoAnalytics(page);
+
+  // A single graded plan is a point, not a trend, so the chart stays out of the way.
+  await expect(page.locator('#coach-plan-grades')).toBeVisible();
+  await expect(page.locator('#coach-plan-grade-trend')).toHaveCount(0);
 });
 
 test('says plainly when the coach has not made a plan yet', async ({ page }) => {

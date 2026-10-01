@@ -978,6 +978,58 @@ describe('the trader\u2019s own lessons', () => {
     const read = build().lessonRead;
     expect(read.total).toBe(0);
     expect(read.lessons).toEqual([]);
+    expect(read.repeats).toEqual([]);
+  });
+
+  it('groups the findings the trader keeps writing down again', () => {
+    const lessons = [
+      makeLesson({
+        id: 'a',
+        title: 'Overnight high gets swept before the open',
+        notes: 'The sweep takes the pre-open stops.',
+        kind: 'mistake',
+        tags: ['liquidity', 'pre-open'],
+        createdAt: '2026-09-10T09:00:00.000Z',
+      }),
+      makeLesson({
+        id: 'b',
+        title: 'Pre-open sweep of the overnight high',
+        notes: 'The sweep takes the pre-open stops.',
+        kind: 'mistake',
+        tags: ['liquidity', 'pre-open'],
+        createdAt: '2026-09-18T09:00:00.000Z',
+      }),
+      // A note about something else, so the grouping has to earn its one cluster.
+      makeLesson({
+        id: 'c',
+        title: 'Chased the open after a loss',
+        kind: 'psychology',
+        tags: ['fomo'],
+        createdAt: '2026-09-15T09:00:00.000Z',
+      }),
+    ];
+
+    const read = build({ lessons }).lessonRead;
+    expect(read.repeats).toHaveLength(1);
+    expect(read.repeats[0]).toMatchObject({
+      title: 'Overnight high gets swept before the open',
+      count: 2,
+      level: 'emerging',
+      kind: 'mistake',
+      firstDate: '2026-09-10',
+      lastDate: '2026-09-18',
+    });
+    expect(read.repeats[0].sharedTags).toEqual(['liquidity', 'pre-open']);
+    // Both members are named with the day each was written, oldest first.
+    expect(read.repeats[0].members).toEqual([
+      { title: 'Overnight high gets swept before the open', date: '2026-09-10' },
+      { title: 'Pre-open sweep of the overnight high', date: '2026-09-18' },
+    ]);
+  });
+
+  it('reads a library with nothing repeated as no repeats', () => {
+    const read = build({ lessons: [makeLesson()] }).lessonRead;
+    expect(read.repeats).toEqual([]);
   });
 });
 

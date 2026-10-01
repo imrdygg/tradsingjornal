@@ -221,6 +221,13 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
 }) => {
   const [newSetupName, setNewSetupName] = useState('');
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  /**
+   * A lesson the coach card asked to open. Held here because the card names a lesson and the
+   * list below owns the scrolling, so the request is passed down rather than the two touching.
+   */
+  const [lessonJump, setLessonJump] = useState<
+    { lessonId: string; at: number; highlightCluster?: boolean } | null
+  >(null);
   // The catalog is trimmed to the trader's two set-ups by default; this reveals the rest.
   // See the focus bar below for why the rest are hidden rather than removed.
   const [showAllSetups, setShowAllSetups] = useState(false);
@@ -455,6 +462,10 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
               {...lessonsCoach}
               setups={setups}
               lessons={lessons}
+              onJumpToLesson={(lessonId) =>
+                // A coach citation lights up the whole repeat the lesson belongs to.
+                setLessonJump({ lessonId, at: Date.now(), highlightCluster: true })
+              }
             />
           )}
           <LessonsView
@@ -463,6 +474,7 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
             userId={chartMatch?.userId ?? ''}
             onSave={(lesson) => onSaveLesson?.(lesson)}
             onDelete={(lessonId) => onDeleteLesson?.(lessonId)}
+            jumpRequest={lessonJump}
           />
         </div>
       )}

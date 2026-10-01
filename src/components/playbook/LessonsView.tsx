@@ -1,11 +1,13 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
+  AlertTriangle,
   Check,
   GraduationCap,
   Image as ImageIcon,
   Pencil,
   Play,
   Plus,
+  Repeat2,
   Search,
   Tag,
   Trash2,
@@ -24,6 +26,13 @@ import {
   lessonKindOf,
   sortLessonsNewestFirst,
 } from '../../lib/playbook/lessons';
+import {
+  findLessonRecurrence,
+  findSimilarLessons,
+  lessonRepeatCounts,
+  type LessonSimilarityMatch,
+} from '../../lib/analytics/lesson-recurrence';
+import { LessonRecurrencePanel } from './LessonRecurrencePanel';
 
 /**
  * The lessons library.
@@ -46,6 +55,14 @@ export interface LessonsViewProps {
   userId: string;
   onSave: (lesson: Lesson) => void;
   onDelete: (lessonId: string) => void;
+  /**
+   * A request to open one lesson, raised from outside the list — the coach card names the
+   * lessons behind a theme and lets the trader jump straight to one.
+   *
+   * `at` is a timestamp so two requests for the same lesson still re-trigger the jump; the
+   * value itself is never read.
+   */
+  jumpRequest?: { lessonId: string; at: number; highlightCluster?: boolean } | null;
 }
 
 /** One draft being typed, before it is saved as a lesson. */
@@ -102,6 +119,7 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
   userId,
   onSave,
   onDelete,
+  jumpRequest,
 }) => {
   const [draft, setDraft] = useState<LessonDraft | null>(null);
   const [error, setError] = useState('');
@@ -113,6 +131,14 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
     title: string;
     subtitle?: string;
   } | null>(null);
+  /**
+   * The lessons just jumped to, briefly ringed so they are found. Usually one lesson; a jump
+   * from the coach highlights the whole repeat the lesson belongs to, so the trader sees the
+   * note they were pointed at together with everything that says the same thing.
+   */
+  const [highlightLessonIds, setHighlightLessonIds] = useState<string[]>([]);
+  /** Existing lessons the draft reads like, shown as a warning until the trader confirms. */
+  const [similar, setSimilar] = useState<LessonSimilarityMatch[]>([]);
 
   const visible = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -143,14 +169,103 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
     return byKind;
   }, [lessons]);
 
+  // What keeps repeating, read from the whole library rather than only the visible page — filters
+  // narrow what is shown, not what has been written down.
+  const recurrence = useMemo(() => findLessonRecurrence(lessons), [lessons]);
+  const repeatCounts = useMemo(() => lessonRepeatCounts(recurrence), [recurrence]);
+
+  // The ring is a hint, not a state, so it fades on its own.
+  useEffect(() => {
+    if (highlightLessonIds.length === 0) return;
+    const timer = setTimeout(() => setHighlightLessonIds([]), 2600);
+    return () => clearTimeout(timer);
+  }, [highlightLessonIds]);
+
+  /**
+   * Opens a lesson the repeat panel points at.
+   *
+   * The lesson may be hidden by the current search or kind filter, so both are cleared first;
+   * the scroll then waits a frame for React to put the row back before it measures it.
+   */
+  const jumpToLesson = (lessonId: string, options: { withCluster?: boolean } = {}) => {
+    setSearch('');
+    setKindFilter('all');
+    // A coach citation highlights the whole repeat the lesson belongs to, so the other notes
+    // making the same point are found with it. The repeat panel's own members highlight alone.
+    const cluster = options.withCluster
+      ? recurrence.clusters.find((candidate) => candidate.lessonIds.includes(lessonId))
+      : undefined;
+    setHighlightLessonIds(cluster ? cluster.lessonIds : [lessonId]);
+    requestAnimationFrame(() => {
+      const row = document.querySelector<HTMLElement>(`[data-lesson-row="${lessonId}"]`);
+      row?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  };
+
+  // A jump asked for from outside the list runs the same path a row click does.
+  useEffect(() => {
+    if (!jumpRequest) return;
+    jumpToLesson(jumpRequest.lessonId, { withCluster: jumpRequest.highlightCluster });
+    // Keyed on the request's timestamp so repeating the same lesson still jumps.
+  }, [jumpRequest?.at]);
+
+  /**
+   * Changes one field of the open draft.
+   *
+   * Every edit also clears the duplicate warning: once the trader touches the words again, the
+   * warning is about a version of the note that no longer exists, so it is re-checked on saving.
+   */
+  const updateDraft = (patch: Partial<LessonDraft>) => {
+    setDraft((current) => (current ? { ...current, ...patch } : current));
+    setSimilar([]);
+  };
+
   const startAdd = () => {
     setError('');
+    setSimilar([]);
     setDraft(emptyDraft(userId));
   };
 
   const startEdit = (lesson: Lesson) => {
     setError('');
+    setSimilar([]);
     setDraft(draftFromLesson(lesson));
+  };
+
+  const closeDraft = () => {
+    setDraft(null);
+    setError('');
+    setSimilar([]);
+  };
+
+  /** The record a draft becomes, whether it is brand new or an edit of an existing lesson. */
+  const lessonFromDraft = (source: LessonDraft): Lesson => {
+    const now = new Date().toISOString();
+    const tags = source.tags
+      .split(',')
+      .map((tag) => tag.trim())
+      .filter(Boolean);
+    return {
+      id: source.id ?? `lesson-${Date.now()}`,
+      userId,
+      title: source.title.trim(),
+      notes: source.notes.trim(),
+      kind: source.kind,
+      setupId: source.setupId || undefined,
+      tags: tags.length ? tags : undefined,
+      media: source.media.length ? source.media : undefined,
+      // An edit of an existing lesson keeps the moment it was recorded; a new one takes now.
+      createdAt: source.id ? source.createdAt : now,
+      updatedAt: now,
+    };
+  };
+
+  const commitSave = () => {
+    if (!draft) return;
+    onSave(lessonFromDraft(draft));
+    setDraft(null);
+    setError('');
+    setSimilar([]);
   };
 
   const save = (event: React.FormEvent) => {
@@ -158,29 +273,30 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
     if (!draft) return;
     if (!draft.title.trim()) {
       setError('Give the lesson a title — what did you notice?');
+      setSimilar([]);
       return;
     }
-    const setupId = draft.setupId || undefined;
-    const tags = draft.tags
-      .split(',')
-      .map((tag) => tag.trim())
-      .filter(Boolean);
-    const now = new Date().toISOString();
-    onSave({
-      id: draft.id ?? `lesson-${Date.now()}`,
-      userId,
-      title: draft.title.trim(),
-      notes: draft.notes.trim(),
-      kind: draft.kind,
-      setupId,
-      tags: tags.length ? tags : undefined,
-      media: draft.media.length ? draft.media : undefined,
-      // An edit of an existing lesson keeps the moment it was recorded; a new one takes now.
-      createdAt: draft.id ? draft.createdAt : now,
-      updatedAt: now,
-    });
-    setDraft(null);
-    setError('');
+    // The warning is already on screen and the trader submitted again: that is a yes.
+    if (similar.length > 0) {
+      commitSave();
+      return;
+    }
+    const matches = findSimilarLessons(
+      {
+        id: draft.id ?? undefined,
+        title: draft.title,
+        notes: draft.notes,
+        kind: draft.kind,
+        tags: draft.tags.split(',').map((tag) => tag.trim()).filter(Boolean),
+      },
+      lessons
+    );
+    if (matches.length > 0) {
+      setError('');
+      setSimilar(matches);
+      return;
+    }
+    commitSave();
   };
 
   return (
@@ -206,6 +322,13 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
         </div>
       </div>
 
+      {/* What keeps repeating, read from the notes themselves — above the list it reads. */}
+      <LessonRecurrencePanel
+        report={recurrence}
+        lessons={lessons}
+        onJumpToLesson={jumpToLesson}
+      />
+
       {/* Add / edit form */}
       {draft ? (
         <form
@@ -219,7 +342,7 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
             </span>
             <button
               type="button"
-              onClick={() => setDraft(null)}
+              onClick={closeDraft}
               className="rounded-lg p-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
               title="Close"
             >
@@ -233,6 +356,75 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
             </div>
           )}
 
+          {/* The same finding written down before — a warning, never a block. */}
+          {similar.length > 0 && (
+            <div
+              id="lesson-duplicate-warning"
+              className="space-y-2 rounded-xl border border-amber-800/80 bg-amber-950/40 p-2.5"
+            >
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" />
+                <p className="text-xs leading-relaxed text-amber-200">
+                  You have already written this down. Open the note to compare, or add it anyway
+                  if it is a new observation that deserves its own entry.
+                </p>
+              </div>
+
+              <ul className="space-y-1.5">
+                {similar.map((match) => (
+                  <li
+                    key={match.lesson.id}
+                    data-lesson-duplicate={match.lesson.id}
+                    className="flex items-start justify-between gap-2 rounded-lg border border-amber-900/60 bg-amber-950/30 px-2.5 py-1.5"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-xs font-medium text-amber-100">
+                        {match.lesson.title}
+                      </p>
+                      <p className="mt-0.5 flex flex-wrap items-center gap-1.5 font-mono text-[9px] uppercase text-amber-400/80">
+                        <span>
+                          {match.reason === 'wording'
+                            ? `${Math.round(match.similarity * 100)}% same wording`
+                            : 'same tags'}
+                        </span>
+                        {match.sharedTags.length > 0 && (
+                          <span>· {match.sharedTags.join(', ')}</span>
+                        )}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      id={`lesson-duplicate-open-${match.lesson.id}`}
+                      onClick={() => jumpToLesson(match.lesson.id)}
+                      className="shrink-0 rounded-lg px-2 py-1 text-[10px] font-semibold text-amber-300 hover:bg-amber-900/50"
+                    >
+                      Review
+                    </button>
+                  </li>
+                ))}
+              </ul>
+
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  id="lesson-duplicate-dismiss"
+                  onClick={() => setSimilar([])}
+                  className="rounded-lg px-3 py-1.5 text-[11px] font-medium text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+                >
+                  Keep editing
+                </button>
+                <button
+                  type="button"
+                  id="lesson-duplicate-confirm"
+                  onClick={commitSave}
+                  className="rounded-lg border border-amber-800/80 bg-amber-500/10 px-3.5 py-1.5 text-[11px] font-semibold text-amber-200 transition-colors hover:bg-amber-500/20"
+                >
+                  Add anyway
+                </button>
+              </div>
+            </div>
+          )}
+
           <div>
             <label className="mb-1 block text-xs font-medium text-zinc-300" htmlFor="lesson-title">
               Title <span className="text-rose-400">*</span>
@@ -241,7 +433,7 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
               id="lesson-title"
               type="text"
               value={draft.title}
-              onChange={(event) => setDraft({ ...draft, title: event.target.value })}
+              onChange={(event) => updateDraft({ title: event.target.value })}
               placeholder="e.g. Overnight high sweeps the pre-open range before reversing"
               className={fieldClass}
             />
@@ -255,7 +447,7 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
               id="lesson-notes"
               rows={4}
               value={draft.notes}
-              onChange={(event) => setDraft({ ...draft, notes: event.target.value })}
+              onChange={(event) => updateDraft({ notes: event.target.value })}
               placeholder="Write it in your own words: what happened, why it caught your eye, and what you want to remember about it."
               className={fieldClass}
             />
@@ -270,7 +462,7 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
                 id="lesson-kind"
                 value={draft.kind}
                 onChange={(event) =>
-                  setDraft({ ...draft, kind: event.target.value as LessonKind })
+                  updateDraft({ kind: event.target.value as LessonKind })
                 }
                 className={fieldClass}
               >
@@ -292,7 +484,7 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
               <select
                 id="lesson-setup"
                 value={draft.setupId}
-                onChange={(event) => setDraft({ ...draft, setupId: event.target.value })}
+                onChange={(event) => updateDraft({ setupId: event.target.value })}
                 className={fieldClass}
               >
                 <option value="">None</option>
@@ -312,7 +504,7 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
                 id="lesson-tags"
                 type="text"
                 value={draft.tags}
-                onChange={(event) => setDraft({ ...draft, tags: event.target.value })}
+                onChange={(event) => updateDraft({ tags: event.target.value })}
                 placeholder="liquidity, pre-open"
                 className={fieldClass}
               />
@@ -321,7 +513,7 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
 
           <ImageUploader
             images={draft.media}
-            onChange={(media) => setDraft({ ...draft, media })}
+            onChange={(media) => updateDraft({ media })}
             onPreviewImage={(index) =>
               setLightbox({
                 images: draft.media,
@@ -339,7 +531,7 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
           <div className="flex items-center justify-end gap-2 border-t border-zinc-800 pt-3">
             <button
               type="button"
-              onClick={() => setDraft(null)}
+              onClick={closeDraft}
               className="rounded-xl px-4 py-2 text-xs font-medium text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
             >
               Cancel
@@ -439,7 +631,11 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
               <div
                 key={lesson.id}
                 data-lesson-row={lesson.id}
-                className="rounded-2xl border border-zinc-800/80 bg-zinc-900/50 p-3.5 space-y-2"
+                className={`rounded-2xl border bg-zinc-900/50 p-3.5 space-y-2 transition-colors ${
+                  highlightLessonIds.includes(lesson.id)
+                    ? 'border-emerald-500/80 ring-2 ring-emerald-500/40'
+                    : 'border-zinc-800/80'
+                }`}
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 space-y-1">
@@ -455,6 +651,16 @@ export const LessonsView: React.FC<LessonsViewProps> = ({
                       {setupName && (
                         <span className="rounded border border-zinc-700 px-1.5 py-0.5 font-mono text-[9px] uppercase text-zinc-400">
                           {setupName}
+                        </span>
+                      )}
+                      {repeatCounts[lesson.id] > 1 && (
+                        <span
+                          data-lesson-repeat-badge={lesson.id}
+                          title={`This note is one of ${repeatCounts[lesson.id]} lessons that keep saying the same thing`}
+                          className="inline-flex items-center gap-1 rounded border border-amber-900 bg-amber-950/70 px-1.5 py-0.5 font-mono text-[9px] uppercase font-bold text-amber-300"
+                        >
+                          <Repeat2 className="h-3 w-3" />
+                          Repeats ×{repeatCounts[lesson.id]}
                         </span>
                       )}
                     </div>

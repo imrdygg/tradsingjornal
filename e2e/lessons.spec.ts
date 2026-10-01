@@ -139,6 +139,86 @@ test('writes, files, finds, edits and keeps a lesson', async ({ page }) => {
 });
 
 /**
+ * The repetition read: writing the same finding down twice raises the panel, badges both lessons
+ * and names the group, without any AI call being made.
+ */
+test('flags a lesson the trader keeps writing down again', async ({ page }) => {
+  await gotoLessons(page);
+
+  await addLesson(page, {
+    title: 'Overnight high gets swept before the open',
+    kind: 'mistake',
+    tags: 'liquidity, pre-open',
+  });
+
+  // One lesson cannot repeat itself, so the panel is not there yet.
+  await expect(page.locator('#lesson-recurrence')).toHaveCount(0);
+
+  await addLesson(page, {
+    title: 'Pre-open sweep of the overnight high',
+    kind: 'mistake',
+    tags: 'liquidity, pre-open',
+  });
+
+  // This note reads like the first, so the save-time warning has to be acknowledged first.
+  await page.locator('#lesson-duplicate-confirm').click();
+
+  const panel = page.locator('#lesson-recurrence');
+  await expect(panel).toBeVisible();
+  await expect(panel).toContainText('Repeating lessons');
+  await expect(panel.locator('[data-lesson-repeat-cluster]')).toHaveCount(1);
+  // Both members are badged, and the shared tags the panel grouped them by are named.
+  await expect(page.locator('[data-lesson-repeat-badge]')).toHaveCount(2);
+  await expect(panel).toContainText('pre-open');
+
+  // Opening a member from the panel rings its row in the list below.
+  const member = panel.locator('[data-lesson-repeat-member]').first();
+  const memberId = await member.getAttribute('data-lesson-repeat-member');
+  await member.click();
+  await expect(page.locator(`[data-lesson-row="${memberId}"]`)).toHaveClass(/ring-2/);
+});
+
+/**
+ * The save-time duplicate read: writing a second lesson that reads like one already saved raises
+ * a warning naming the original, and the trader still gets the last word.
+ */
+test('warns when a new lesson repeats one already saved', async ({ page }) => {
+  await gotoLessons(page);
+
+  await addLesson(page, {
+    title: 'Overnight high gets swept before the open',
+    kind: 'mistake',
+    tags: 'liquidity, pre-open',
+  });
+  await expect(page.locator('[data-lesson-row]')).toHaveCount(1);
+
+  // Write a second note that says the same thing in different words.
+  await page.locator('#lesson-add').click();
+  await page.locator('#lesson-title').fill('Pre-open sweep of the overnight high');
+  await page.locator('#lesson-kind').selectOption('mistake');
+  await page.locator('#lesson-tags').fill('liquidity, pre-open');
+  await page.locator('#lesson-save').click();
+
+  // The warning names the original and holds the save back.
+  const warning = page.locator('#lesson-duplicate-warning');
+  await expect(warning).toBeVisible();
+  await expect(warning.locator('[data-lesson-duplicate]')).toHaveCount(1);
+  await expect(warning).toContainText('Overnight high gets swept before the open');
+  await expect(page.locator('[data-lesson-row]')).toHaveCount(1);
+
+  // Dismissing it clears the warning; saving again re-checks and raises it again.
+  await page.locator('#lesson-duplicate-dismiss').click();
+  await expect(page.locator('#lesson-duplicate-warning')).toHaveCount(0);
+  await page.locator('#lesson-save').click();
+  await expect(page.locator('#lesson-duplicate-warning')).toBeVisible();
+
+  // Confirming that it is genuinely new saves it as its own lesson.
+  await page.locator('#lesson-duplicate-confirm').click();
+  await expect(page.locator('[data-lesson-row]')).toHaveCount(2);
+  await expect(page.getByText('You have already written this down')).toHaveCount(0);
+});
+
+/**
  * The media half of a lesson: a screenshot attaches, saves with the lesson, is counted for the
  * coach's read, and survives a reload — the whole point being that the picture the trader took
  * at the time is still there weeks later.

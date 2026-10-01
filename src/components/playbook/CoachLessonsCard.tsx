@@ -72,6 +72,11 @@ export interface CoachLessonsCardProps {
   coachPlans?: CoachPlan[];
   /** Records that the coach has read these lessons, so the library can show what is new. */
   onMarkRead?: (lessonIds: string[], at: string) => void;
+  /**
+   * Opens a lesson in the library when a theme cites it, so the trader can read the exact
+   * note the coach is summarising rather than taking the citation on trust.
+   */
+  onJumpToLesson?: (lessonId: string) => void;
 }
 
 interface ReadState {
@@ -92,6 +97,26 @@ const IDLE: ReadState = { loading: false, result: null, failure: null };
  * library. Video clips are dropped here, and a lesson with no usable still is simply skipped —
  * the digest still tells the coach the lesson exists.
  */
+/**
+ * The lesson a theme cited, matched by its title and the day it was written.
+ *
+ * The read names lessons by title and date rather than by id, so this is how a citation is
+ * resolved back to something clickable. A title alone would be ambiguous when a trader reuses
+ * one, so the date is checked too when the model gave it. A citation that no longer matches a
+ * saved lesson is simply not clickable.
+ */
+function resolveCitedLesson(
+  lessons: Lesson[],
+  ref: { title: string; date: string }
+): Lesson | undefined {
+  const title = ref.title.trim().toLowerCase();
+  if (!title) return undefined;
+  return lessons.find((lesson) => {
+    if (lesson.title.trim().toLowerCase() !== title) return false;
+    return !ref.date || (lesson.createdAt ?? '').slice(0, 10) === ref.date;
+  });
+}
+
 function collectLessonImages(lessons: Lesson[]): { label: string; dataUrl: string }[] {
   const out: { label: string; dataUrl: string }[] = [];
   let total = 0;
@@ -124,6 +149,7 @@ export const CoachLessonsCard: React.FC<CoachLessonsCardProps> = ({
   lessons,
   coachPlans,
   onMarkRead,
+  onJumpToLesson,
 }) => {
   const digest = useMemo(
     () =>
@@ -276,6 +302,13 @@ export const CoachLessonsCard: React.FC<CoachLessonsCardProps> = ({
                     <Sparkles className="mr-1 inline h-3 w-3 text-violet-300" />
                     Themes in your own notes
                   </span>
+                  {onJumpToLesson &&
+                    answer.themes.some((theme) => (theme.lessons ?? []).length > 0) && (
+                      <p className="text-[10px] leading-relaxed text-zinc-500">
+                        Tap a lesson to open it below — if it is part of a repeat, the whole
+                        group lights up with it.
+                      </p>
+                    )}
                   {answer.themes.map((theme, index) => (
                     <div
                       key={index}
@@ -286,6 +319,43 @@ export const CoachLessonsCard: React.FC<CoachLessonsCardProps> = ({
                         <p className="text-[11px] text-zinc-500 mt-1 leading-relaxed">
                           {theme.evidence}
                         </p>
+                      )}
+                      {/* The exact notes behind the theme, so it can be checked at a glance. */}
+                      {(theme.lessons ?? []).length > 0 && (
+                        <ul className="mt-2 space-y-0.5 border-t border-zinc-800/80 pt-2">
+                          {(theme.lessons ?? []).map((lesson, lessonIndex) => {
+                            const cited = resolveCitedLesson(lessons, lesson);
+                            const body = (
+                              <>
+                                <span className="shrink-0 font-mono text-zinc-500">
+                                  {lesson.date || '—'}
+                                </span>
+                                <span className="min-w-0 flex-1 truncate text-zinc-400">
+                                  {lesson.title}
+                                </span>
+                              </>
+                            );
+                            return (
+                              <li key={`${lesson.title}-${lessonIndex}`}>
+                                {cited && onJumpToLesson ? (
+                                  <button
+                                    type="button"
+                                    data-coach-lesson-cite={cited.id}
+                                    onClick={() => onJumpToLesson(cited.id)}
+                                    title="Open this lesson in the library below"
+                                    className="flex w-full items-baseline gap-2 rounded-lg px-1.5 py-1 text-left text-[10px] leading-snug transition-colors hover:bg-zinc-800/60"
+                                  >
+                                    {body}
+                                  </button>
+                                ) : (
+                                  <div className="flex items-baseline gap-2 px-1.5 py-1 text-[10px] leading-snug">
+                                    {body}
+                                  </div>
+                                )}
+                              </li>
+                            );
+                          })}
+                        </ul>
                       )}
                     </div>
                   ))}

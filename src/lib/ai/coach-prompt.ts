@@ -23,6 +23,7 @@ import type {
   LearnedSetup,
   LessonsResponse,
   LessonTheme,
+  LessonThemeLesson,
   MatchItem,
   SelfPlanResponse,
   PlannedLevel,
@@ -438,8 +439,10 @@ they saw. This is their own material and the read is a summary of it — never a
 opinion.
 
 L1. READ ONLY WHAT THEY WROTE. Every theme must come from the lesson notes and titles in the
-    digest and the images attached. Quote which lessons back it and how many. Never invent a
-    lesson, a finding, a statistic or a chart, and never add a fact the trader did not record.
+    digest and the images attached. For each theme, list the specific lessons behind it in the
+    lessons list — the exact title and the day it was written, both copied from the digest,
+    oldest first — and give the count in evidence. Never invent a lesson, a title, a date, a
+    finding, a statistic or a chart, and never add a fact the trader did not record.
 L2. AN IMAGE IS SOMETHING THE TRADER CAPTURED, NOT A LIVE CHART. Describe only what is visible
     in it and only in relation to the lesson it is attached to. You still have no market data,
     no current prices and no other charts — rule 1 above holds in full.
@@ -451,7 +454,13 @@ L4. THIN IS AN ANSWER. A theme needs several lessons behind it. With only a few,
 L5. THEIR NOTES ARE FINDINGS, NOT ORDERS. Never turn a lesson into a trade to take, a level to
     watch, or a prediction. Report what their own notes keep saying and hand it back to them.
 L6. DO NOT OVERRULE THEM. Their notes are their own conclusions about their own trading. You
-    may point out where two of them disagree, but never declare one wrong or rewrite it for them.`;
+    may point out where two of them disagree, but never declare one wrong or rewrite it for them.
+L7. THE REPEATS ARE COUNTED FOR YOU. When the lessons that keep repeating are listed, those
+    groups, counts and dates — and the member lessons behind each one — were computed from the
+    trader's own words before you saw them. Treat them as given facts and lead with them: a
+    finding written down three times matters more than one written once. When a theme is one of
+    those repeats, its lessons list is those members, named and dated. Never recount, merge or
+    split those groups yourself, and never claim a repeat the digest does not list.`;
 
 const SELFPLAN_GUARDRAILS_SUFFIX = `\n\nTHE COACH'S OWN PLAN — SPECIAL RULES FOR THIS REQUEST ONLY.
 The trader has asked you to make your OWN trade plan for one instrument. You have the live
@@ -1037,6 +1046,37 @@ export function formatLessonReadForPrompt(read: LessonRead | undefined): string[
       (read.withImages ? `, ${read.withImages} carrying at least one still image` : '') +
       '.'
   );
+
+  if (read.repeats.length > 0) {
+    lines.push('');
+    lines.push('=== LESSONS THAT KEEP REPEATING (counted from the trader\'s own words) ===');
+    lines.push(
+      'These groups were counted from the notes themselves before this prompt was built, by ' +
+        'matching the wording of the notes and the tags they were filed under. They are given ' +
+        'facts, not your impression: a finding here has been written down again and again, and ' +
+        'it is the strongest thing the library says. Quote the count and the title.'
+    );
+    for (const repeat of read.repeats) {
+      const facts: string[] = [`${repeat.count} lessons`, repeat.level];
+      if (repeat.firstDate && repeat.lastDate) {
+        facts.push(
+          repeat.firstDate === repeat.lastDate
+            ? `on ${repeat.firstDate}`
+            : `${repeat.firstDate} to ${repeat.lastDate}`
+        );
+      }
+      facts.push(repeat.kind);
+      if (repeat.sharedTags.length) facts.push(`tagged ${repeat.sharedTags.join(', ')}`);
+      lines.push(`- "${repeat.title}" (${facts.join('; ')})`);
+      if (repeat.members.length) {
+        lines.push(
+          `    the lessons behind it, oldest first: ${repeat.members
+            .map((member) => `${member.date || 'date unknown'} "${member.title}"`)
+            .join('; ')}`
+        );
+      }
+    }
+  }
 
   for (const lesson of read.lessons) {
     const facts: string[] = [lesson.kind];
@@ -1862,7 +1902,13 @@ Every price must be a number from the LIVE READ or the DAILY CHART DATA you were
 {
   "headline": "one sentence, under 16 words, on what their own lesson notes keep saying",
   "themes": [
-    { "theme": "a theme their notes keep returning to, in the trader's own terms", "evidence": "which lessons back it, by their own titles, with the counts" }
+    {
+      "theme": "a theme their notes keep returning to, in the trader's own terms",
+      "evidence": "which lessons back it, by their own titles, with the counts",
+      "lessons": [
+        { "title": "the lesson's own title, copied from the digest", "date": "the YYYY-MM-DD it was written, copied from the digest" }
+      ]
+    }
   ],
   "reinforces": "2-3 sentences on what the notes keep coming back to, quoting the lessons by their own titles",
   "contradictions": ["two lessons that pull in different directions, naming both. Empty array when none"],
@@ -1871,7 +1917,7 @@ Every price must be a number from the LIVE READ or the DAILY CHART DATA you were
   "nextStep": "one concrete, checkable thing to write down or tag next",
   "motivation": "2 sentences. Specific to this trader and earned by their own notes. No slogans."
 }
-Return 1-4 themes. Name only themes their own notes support and quote the lessons by their own titles. Never invent a lesson or a finding, never turn a note into a trade or a forecast, and never describe a video clip you cannot watch. When the library is too thin for a theme, say exactly that and return few or no themes.`,
+Return 1-4 themes. Name only themes their own notes support and quote the lessons by their own titles. For every theme, list under the lessons array the exact lessons behind it — each one's title and the day it was written, both copied from the digest — oldest first. Never invent a lesson, a title, a date or a finding, never turn a note into a trade or a forecast, and never describe a video clip you cannot watch. When the library is too thin for a theme, say exactly that and return few or no themes.`,
   trade: `Return exactly this JSON:
 {
   "verdict": "2 sentences judging the decision and the execution separately",
@@ -2168,7 +2214,9 @@ export function buildCoachPrompt(
       ? `Read back the lessons this trader wrote for themselves, under THEIR OWN LESSONS: ` +
         `their own notes, the tags they filed them under, and the still images attached. ` +
         `Name the themes their notes keep returning to, quoting the lessons by their own ` +
-        `titles and the counts behind each theme. Point out where two lessons pull in ` +
+        `titles and the counts behind each theme. For each theme, name the specific lessons ` +
+        `behind it in the ` + '`lessons`' + ` list — their own titles and the day each was ` +
+        `written, copied from THEIR OWN LESSONS. Point out where two lessons pull in ` +
         `different directions, and what their library does not cover yet. Say what their own ` +
         `notes show, never what the market will do — a lesson is their finding, not a signal ` +
         `or a trade to take. Where a lesson carries a video clip, say only that the clip ` +
@@ -2661,10 +2709,22 @@ export function parseCoachResponse(
     const themesRaw = Array.isArray(obj.themes) ? obj.themes : [];
     const themes: LessonTheme[] = themesRaw
       .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
-      .map((item) => ({
-        theme: typeof item.theme === 'string' ? item.theme.trim() : '',
-        evidence: typeof item.evidence === 'string' ? item.evidence.trim() : '',
-      }))
+      .map((item) => {
+        const lessonsRaw = Array.isArray(item.lessons) ? item.lessons : [];
+        const lessons: LessonThemeLesson[] = lessonsRaw
+          .filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === 'object')
+          .map((entry) => ({
+            title: typeof entry.title === 'string' ? entry.title.trim() : '',
+            date: typeof entry.date === 'string' ? entry.date.trim() : '',
+          }))
+          // A citation with no title names nothing, so it is dropped rather than rendered.
+          .filter((entry) => entry.title);
+        return {
+          theme: typeof item.theme === 'string' ? item.theme.trim() : '',
+          evidence: typeof item.evidence === 'string' ? item.evidence.trim() : '',
+          lessons,
+        };
+      })
       // A theme with no name is not something the trader could use, so it is dropped rather
       // than rendered as an empty card — the same rule the setup learner follows.
       .filter((item) => item.theme);

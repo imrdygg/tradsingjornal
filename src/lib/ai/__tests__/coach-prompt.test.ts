@@ -1307,6 +1307,38 @@ describe('lessons mode', () => {
     );
   });
 
+  it('renders the repeats counted from the notes, and leads the guardrails with them', () => {
+    const digest = digestFor({
+      lessons: [
+        { ...lesson, id: 'l1', createdAt: '2026-09-10T09:00:00.000Z' },
+        {
+          ...lesson,
+          id: 'l2',
+          title: 'Pre-open sweep of the overnight high',
+          createdAt: '2026-09-18T09:00:00.000Z',
+        },
+      ],
+    });
+    const text = formatDigestForPrompt(digest, 'lessons');
+    expect(text).toContain('LESSONS THAT KEEP REPEATING');
+    expect(text).toContain('2 lessons');
+    expect(text).toContain('2026-09-10 to 2026-09-18');
+    // The specific lessons behind the repeat are named, each with the day it was written.
+    expect(text).toContain('the lessons behind it, oldest first');
+    expect(text).toContain('2026-09-10 "Overnight high gets swept before the open reverses"');
+    expect(text).toContain('2026-09-18 "Pre-open sweep of the overnight high"');
+
+    // The repeats are the one read's material, so no other answer carries them.
+    expect(formatDigestForPrompt(digest, 'brief')).not.toContain('LESSONS THAT KEEP REPEATING');
+
+    expect(buildCoachPrompt('lessons', digest).systemInstruction).toContain(
+      'THE REPEATS ARE COUNTED FOR YOU'
+    );
+    expect(buildCoachPrompt('brief', digest).systemInstruction).not.toContain(
+      'THE REPEATS ARE COUNTED FOR YOU'
+    );
+  });
+
   it('names the attached still images in order', () => {
     const { userPrompt } = buildCoachPrompt(
       'lessons',
@@ -1336,6 +1368,8 @@ describe('lessons mode', () => {
 
     expect(parsed.themes).toHaveLength(1);
     expect(parsed.themes[0].theme).toBe('The open');
+    // A theme that cited no lessons parses as an empty list rather than crashing.
+    expect(parsed.themes[0].lessons).toEqual([]);
 
     expect(() =>
       parseCoachResponse('lessons', {
@@ -1345,6 +1379,35 @@ describe('lessons mode', () => {
         motivation: 'm',
       })
     ).toThrow(/headline/);
+  });
+
+  it('parses the lessons cited behind each theme, with their dates', () => {
+    const parsed = parseCoachResponse('lessons', {
+      headline: 'Your notes keep returning to the open.',
+      themes: [
+        {
+          theme: 'The open',
+          evidence: '3 lessons, first written 2026-09-01',
+          lessons: [
+            { title: 'Sweep of the overnight high', date: '2026-09-01' },
+            { title: 'Pre-open fade', date: '2026-09-09' },
+            // A citation with no title names nothing, so it is dropped.
+            { title: '', date: '2026-09-10' },
+          ],
+        },
+      ],
+      reinforces: 'You keep writing about the open.',
+      contradictions: [],
+      gaps: [],
+      howToApply: 'Use the notes as a checklist.',
+      nextStep: 'Tag the next one.',
+      motivation: 'Three weeks of notes without a gap.',
+    }) as LessonsResponse;
+
+    expect(parsed.themes[0].lessons).toEqual([
+      { title: 'Sweep of the overnight high', date: '2026-09-01' },
+      { title: 'Pre-open fade', date: '2026-09-09' },
+    ]);
   });
 });
 

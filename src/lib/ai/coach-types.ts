@@ -528,11 +528,27 @@ export interface MatchResponse {
   motivation: string;
 }
 
+/** One lesson a theme was drawn from, named as the trader wrote it. */
+export interface LessonThemeLesson {
+  /** The lesson's own title. */
+  title: string;
+  /** The day the trader wrote it, YYYY-MM-DD. */
+  date: string;
+}
+
 /** One theme the coach found across the trader's own lessons. */
 export interface LessonTheme {
   theme: string;
   /** Which lessons it was drawn from, by their own titles, with the counts behind it. */
   evidence: string;
+  /**
+   * The specific lessons behind the theme, oldest first, each with the day it was written.
+   *
+   * Naming them is what makes a theme checkable: the trader can open the exact notes the
+   * coach is summarising and see the day each was recorded. Empty only when the model gave
+   * no titles, which the read's own rules tell it not to do.
+   */
+  lessons: LessonThemeLesson[];
 }
 
 /**

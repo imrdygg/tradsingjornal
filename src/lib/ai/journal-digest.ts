@@ -43,6 +43,10 @@ import {
   type ExtremeRatingBucket,
   type ExtremeRatingStats,
 } from '../analytics/session-extremes';
+import {
+  findLessonRecurrence,
+  type LessonRecurrenceLevel,
+} from '../analytics/lesson-recurrence';
 
 /**
  * The journal digest is the *only* factual basis the AI coach is allowed to use.
@@ -235,6 +239,40 @@ export interface DigestLesson {
   videoCount: number;
 }
 
+/** One lesson behind a repeat, named as the trader wrote it. */
+export interface DigestLessonRef {
+  /** The lesson's own title. */
+  title: string;
+  /** The day the trader wrote it, YYYY-MM-DD. */
+  date: string;
+}
+
+/**
+ * One finding the trader keeps writing down again, as the coach may report it.
+ *
+ * The grouping is computed before the model ever sees the notes — by matching the wording of
+ * the notes and the tags they were filed under — so a repeat is a counted fact rather than the
+ * model's impression. Only the counts, the titles and the days travel: the notes themselves are
+ * already in the list below, and quoting them twice would only pad the prompt.
+ */
+export interface DigestLessonRepeat {
+  /** The title of the earliest lesson that wrote the finding down. */
+  title: string;
+  /** How many lessons say the same thing. */
+  count: number;
+  /** How strongly it repeats: 2 is emerging, 3+ recurring, 5+ chronic. */
+  level: LessonRecurrenceLevel;
+  /** YYYY-MM-DD of the first and last time it was written down. */
+  firstDate: string;
+  lastDate: string;
+  /** The most common kind among the lessons that make up the repeat. */
+  kind: string;
+  /** Tags shared by two or more of them, as the trader spelled them. */
+  sharedTags: string[];
+  /** The specific lessons behind the repeat, earliest first, bounded, with their days. */
+  members: DigestLessonRef[];
+}
+
 /**
  * The trader's own written lessons, as the one dedicated read may quote them.
  *
@@ -252,6 +290,13 @@ export interface LessonRead {
   omitted: number;
   /** How many of the listed lessons carry at least one still image. */
   withImages: number;
+  /**
+   * Findings the trader keeps writing down again, strongest first.
+   *
+   * Counted here from the notes the coach is shown, so every repeat has its own lessons in
+   * the list below rather than pointing at material the prompt does not carry.
+   */
+  repeats: DigestLessonRepeat[];
 }
 
 /** One coach plan the trader graded, reduced to what the coach may learn from. */
@@ -926,6 +971,10 @@ function buildExtremeRead(extremes: SessionExtreme[], todayTradeDate: string): E
 function buildLessonRead(lessons: Lesson[], setups: Setup[]): LessonRead {
   const maxLessons = 40;
   const maxNotes = 1500;
+  // Repeats are the headline of the read, so a handful is plenty; the rest of the library is
+  // still in the list, and a short list keeps the prompt focused on the strongest finding.
+  const maxRepeats = 6;
+  const maxMemberRefs = 8;
   const setupNameById = new Map(setups.map((setup) => [setup.id, setup.name]));
   // A local test rather than the media helper: that module imports the Supabase client, and
   // this one is bundled into the dependency-free coach function, so it must not pull it in.
@@ -936,7 +985,8 @@ function buildLessonRead(lessons: Lesson[], setups: Setup[]): LessonRead {
     .filter((lesson) => lesson && typeof lesson.title === 'string')
     .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
 
-  const listed = newestFirst.slice(0, maxLessons).map((lesson): DigestLesson => {
+  const bounded = newestFirst.slice(0, maxLessons);
+  const listed = bounded.map((lesson): DigestLesson => {
     const rawNotes = (lesson.notes ?? '').trim();
     const notes =
       rawNotes.length > maxNotes
@@ -957,11 +1007,37 @@ function buildLessonRead(lessons: Lesson[], setups: Setup[]): LessonRead {
     };
   });
 
+  // The repeats are read from the same bounded set the coach is shown, so a group always has
+  // its own lessons in the list rather than pointing at material the prompt does not carry.
+  const lessonById = new Map(bounded.map((lesson) => [lesson.id, lesson]));
+  const repeats = findLessonRecurrence(bounded).clusters
+    .slice(0, maxRepeats)
+    .map(
+      (cluster): DigestLessonRepeat => ({
+        title: cluster.representativeTitle || lessonById.get(cluster.representativeId)?.title.trim() || '',
+        count: cluster.count,
+        level: cluster.level,
+        firstDate: cluster.firstDate,
+        lastDate: cluster.lastDate,
+        kind: cluster.dominantKind,
+        sharedTags: cluster.sharedTags.slice(0, 8),
+        members: cluster.lessonIds
+          .map((id) => lessonById.get(id))
+          .filter((lesson): lesson is Lesson => !!lesson)
+          .slice(0, maxMemberRefs)
+          .map((lesson) => ({
+            title: lesson.title.trim(),
+            date: (lesson.createdAt ?? '').slice(0, 10),
+          })),
+      })
+    );
+
   return {
     lessons: listed,
     total: newestFirst.length,
     omitted: Math.max(0, newestFirst.length - listed.length),
     withImages: listed.filter((lesson) => lesson.imageCount > 0).length,
+    repeats,
   };
 }
 

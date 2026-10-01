@@ -99,4 +99,72 @@ test.describe('What Today shows on load', () => {
     // banner for a day that is only now being completed.
     await expect(page.locator('#review-trend')).toContainText('1 reviewed day');
   });
+
+  test('shows the media attached to a review with the focus it backs', async ({ page }) => {
+    const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    await page.addInitScript(
+      ({ image }) => {
+        localStorage.setItem(
+          'ptj_trading_days_v1',
+          JSON.stringify([
+            {
+              id: 'day-prev',
+              userId: 'u1',
+              tradeDate: '2026-09-24',
+              status: 'completed',
+              riskMode: 'normal',
+              normalLossLimit: 100,
+              plannedLossLimit: 100,
+              contractsPlanned: 1,
+              primaryInstrument: 'MES',
+              allowedSessions: ['Regular Session'],
+              marketBias: 'neutral',
+              watchedSetups: [],
+              importantLevels: [],
+              waitingFor: '',
+              stayOutIf: '',
+              planChanges: [],
+              createdAt: '2026-09-24T12:00:00.000Z',
+              updatedAt: '2026-09-24T12:00:00.000Z',
+            },
+          ])
+        );
+        localStorage.setItem(
+          'ptj_reviews_v1',
+          JSON.stringify([
+            {
+              id: 'rev-prev',
+              userId: 'u1',
+              tradingDayId: 'day-prev',
+              questions: {},
+              disciplineScore: 100,
+              scoringDetails: [],
+              didWell: 'Waited for the retest.',
+              didPoorly: '',
+              tomorrowFocus: 'Only take the first retest of the level.',
+              media: [image, 'https://example.com/walkthrough.mp4'],
+              createdAt: '2026-09-24T20:00:00.000Z',
+              updatedAt: '2026-09-24T20:00:00.000Z',
+            },
+          ])
+        );
+      },
+      { image }
+    );
+    await page.reload();
+
+    // The lesson carried forward is on the page, and the media behind it comes with it: a
+    // screenshot and a talk-through clip, both reachable from the banner rather than only
+    // from the review form.
+    const banner = page.locator('[data-lesson-state="new"]');
+    await expect(banner).toContainText('Only take the first retest of the level.');
+    await expect(banner.getByText(/1 image\(s\)/)).toBeVisible();
+    await expect(banner.getByText(/1 clip\(s\)/)).toBeVisible();
+    await expect(banner.locator('[data-lesson-media]')).toHaveCount(2);
+
+    // And the last review's own card shows the same media under its focus.
+    const card = page.locator('#latest-review');
+    await expect(card).toContainText('Only take the first retest of the level.');
+    await expect(card.locator('[data-lesson-media]')).toHaveCount(2);
+  });
 });

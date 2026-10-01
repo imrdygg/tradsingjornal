@@ -77,7 +77,22 @@ export type CoachMode =
    * An answer to a question the trader typed about their OWN trading, e.g. "why do I keep
    * giving back the morning?" — journal data only, no market opinion.
    */
-  | 'ask';
+  | 'ask'
+  /**
+   * A read of the lessons the trader wrote for themselves — their own notes, tags and
+   * attached still images — asked for on its own. Journal material only, never folded into
+   * the other reads, and no market opinion: it summarizes what the trader already concluded.
+   */
+  | 'lessons'
+  /**
+   * The coach's own trade plan for one instrument, made from the live market read alone.
+   *
+   * The trader does not set its levels: the coach commits to a direction, an entry, a stop
+   * and a target from the quote and the recent daily bars, and the trader grades it and
+   * writes feedback afterwards. An opinion mode, so it may name levels — but only numbers it
+   * was handed, and it is stored so the grade has something to land on.
+   */
+  | 'selfplan';
 
 /** The plan fields the coach will draft text for, one at a time. */
 export type PlanFieldName = 'waitingFor' | 'stayOutIf';
@@ -513,6 +528,38 @@ export interface MatchResponse {
   motivation: string;
 }
 
+/** One theme the coach found across the trader's own lessons. */
+export interface LessonTheme {
+  theme: string;
+  /** Which lessons it was drawn from, by their own titles, with the counts behind it. */
+  evidence: string;
+}
+
+/**
+ * The read of the trader's own written lessons.
+ *
+ * A summary of their OWN material, in their own terms — the themes their notes keep
+ * returning to, where two notes disagree, and what the library does not yet cover. It never
+ * predicts anything and never turns a note into advice about the market: the lessons are the
+ * trader's findings, and the coach's job is to read them back and point at the gaps.
+ */
+export interface LessonsResponse {
+  headline: string;
+  /** The themes that hold across several lessons. Empty when the library is too thin. */
+  themes: LessonTheme[];
+  /** What the notes keep coming back to, in the trader's own terms. */
+  reinforces: string;
+  /** Where two lessons pull in different directions, naming both. Empty when none. */
+  contradictions: string[];
+  /** What the library does not cover yet that would sharpen it, counts only. */
+  gaps: string[];
+  /** How the trader could use their own notes, without predicting anything. */
+  howToApply: string;
+  /** One concrete thing to write down or tag next. */
+  nextStep: string;
+  motivation: string;
+}
+
 /**
  * The setups the coach read out of the trader's own trade history.
  *
@@ -604,6 +651,33 @@ export interface PostCloseResponse {
   motivation: string;
 }
 
+/**
+ * The coach's own plan for one instrument.
+ *
+ * Every level is a number drawn from the live read it was handed. `direction` is always long
+ * or short rather than skip: the plan exists to be graded, and a standing-aside answer cannot
+ * be. When the read fails, the endpoint refuses the request instead of letting the model
+ * invent prices.
+ */
+export interface SelfPlanResponse {
+  headline: string;
+  /** The instrument the plan is for, echoed back as it was handed in. */
+  symbol: string;
+  direction: 'long' | 'short';
+  entry: number;
+  stop: number;
+  target: number;
+  confidence: 'low' | 'medium' | 'high';
+  /** Why the coach would take this trade, in its own words. */
+  entryReason: string;
+  /** Why it would get out, whether by target or because the call is wrong. */
+  exitReason: string;
+  /** What would prove this plan wrong. */
+  invalidation: string;
+  /** The plan in plain words, labelled as an opinion. */
+  rationale: string;
+}
+
 export type CoachResponse =
   | BriefResponse
   | WeeklyResponse
@@ -623,7 +697,9 @@ export type CoachResponse =
   | PlanBuildResponse
   | ScaleInResponse
   | EntryCallResponse
-  | ChartReadResponse;
+  | ChartReadResponse
+  | LessonsResponse
+  | SelfPlanResponse;
 
 export function isCoachEntryCall(value: unknown): value is CoachEntryCall {
   if (!value || typeof value !== 'object') return false;

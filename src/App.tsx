@@ -88,6 +88,8 @@ import {
   LevelTouch,
   SessionExtreme,
   ChartSearch,
+  Lesson,
+  CoachPlan,
   ImportantLevel,
 } from './types';
 import type { SyncStatus } from './components/layout/SyncStatusBadge';
@@ -214,6 +216,13 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   const [chartSearches, setChartSearches] = useState<ChartSearch[]>(() =>
     storage.getChartSearches()
   );
+  // The lessons the trader wrote for themselves: their own notes, tags and media, held with
+  // the rest of the state so they are saved and synced by the same debounced write.
+  const [lessons, setLessons] = useState<Lesson[]>(() => storage.getLessons());
+  // The plans the coach made on its own, with the trader's grades and feedback. Held with
+  // the journal so a plan and its grade are saved and carried between devices by the same
+  // debounced write.
+  const [coachPlans, setCoachPlans] = useState<CoachPlan[]>(() => storage.getCoachPlans());
 
   const [activeTab, setActiveTab] = useState<NavTab>('today');
 
@@ -295,6 +304,8 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       levelTouches,
       sessionExtremes,
       chartSearches,
+      lessons,
+      coachPlans,
       lessonAck,
     }),
     [
@@ -308,6 +319,8 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       levelTouches,
       sessionExtremes,
       chartSearches,
+      lessons,
+      coachPlans,
       lessonAck,
     ]
   );
@@ -343,6 +356,8 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       setLevelTouches(next.levelTouches ?? []);
       setSessionExtremes(next.sessionExtremes ?? []);
       setChartSearches(next.chartSearches ?? []);
+      setLessons(next.lessons ?? []);
+      setCoachPlans(next.coachPlans ?? []);
       setLessonAck(next.lessonAck ?? null);
     },
     [userId]
@@ -1010,6 +1025,44 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
    */
   const handleSaveChartSearch = (search: ChartSearch) => {
     setChartSearches(storage.saveChartSearch(search));
+  };
+
+  /**
+   * Records one lesson, new or edited. Storage upserts by id, so an edit rewrites the same
+   * record — the media already attached stays put — rather than adding a second copy.
+   */
+  const handleSaveLesson = (lesson: Lesson) => {
+    setLessons(storage.saveLesson(lesson));
+  };
+
+  const handleDeleteLesson = (lessonId: string) => {
+    setLessons(storage.deleteLesson(lessonId));
+  };
+
+  /**
+   * Marks the lessons the coach just read, so the library can show what is new since then.
+   *
+   * Written straight to storage rather than through a full lesson save: this only touches
+   * `lastReadAt` on the ids that were in the read, and it must not disturb the notes or media
+   * a save would rewrite.
+   */
+  const handleMarkLessonsRead = (lessonIds: string[], at: string) => {
+    if (!lessonIds.length) return;
+    setLessons(storage.markLessonsRead(lessonIds, at));
+  };
+
+  /**
+   * Records one of the coach's own plans, new or newly graded.
+   *
+   * Storage upserts by id, so grading re-writes the plan that was on screen rather than
+   * adding a second copy — the grade attaches to the levels and reasoning it judged.
+   */
+  const handleSaveCoachPlan = (plan: CoachPlan) => {
+    setCoachPlans(storage.saveCoachPlan(plan));
+  };
+
+  const handleDeleteCoachPlan = (planId: string) => {
+    setCoachPlans(storage.deleteCoachPlan(planId));
   };
 
   const handleDeleteChartSearch = (searchId: string) => {
@@ -1761,6 +1814,9 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             onDeleteChartSearch={handleDeleteChartSearch}
             onAddSetups={(drafts) => drafts.forEach(handleAddSetup)}
             userId={userId}
+            coachPlans={coachPlans}
+            onSaveCoachPlan={handleSaveCoachPlan}
+            onDeleteCoachPlan={handleDeleteCoachPlan}
           />
         );
 
@@ -1844,6 +1900,21 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               // drafts land in the playbook exactly as the playbook's own read leaves them.
               onAddSetups: (drafts) => drafts.forEach(handleAddSetup),
               userId,
+            }}
+            lessons={lessons}
+            onSaveLesson={handleSaveLesson}
+            onDeleteLesson={handleDeleteLesson}
+            lessonsCoach={{
+              trades,
+              tradingDays,
+              reviews,
+              instruments,
+              todayTradeDate: todayTradingDay.tradeDate,
+              timezone: profile.timezone,
+              maxDrawdown: profile.maxDrawdown ?? null,
+              levelTouches,
+              sessionExtremes,
+              onMarkRead: handleMarkLessonsRead,
             }}
           />
         );

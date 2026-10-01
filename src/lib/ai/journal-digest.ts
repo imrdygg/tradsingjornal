@@ -1,6 +1,8 @@
 import {
   DailyReview,
   Instrument,
+  Lesson,
+  CoachPlan,
   LevelKind,
   LevelTouch,
   QuestionAnswer,
@@ -212,6 +214,79 @@ export interface ExtremeRead {
   minRated: number;
 }
 
+/** One lesson the trader wrote for themselves, reduced to what the coach may read. */
+export interface DigestLesson {
+  date: string;
+  title: string;
+  /** What they wrote, trimmed. Null when they saved only a title and media. */
+  notes: string | null;
+  kind: string;
+  /** The setup the lesson relates to, when it names one. */
+  setupName: string | null;
+  tags: string[];
+  /** How many still images are attached, without sending the bytes here. */
+  imageCount: number;
+  /**
+   * How many video clips are attached.
+   *
+   * Counted so the coach can say the trader has a clip for this lesson, and that it cannot
+   * watch it. The clips themselves are the trader's own and are never sent.
+   */
+  videoCount: number;
+}
+
+/**
+ * The trader's own written lessons, as the one dedicated read may quote them.
+ *
+ * This is the material the trader collected for themselves — a pattern they noticed, a
+ * mistake they keep making, a note on how they behave. It is read on request and never
+ * folded into the other coach answers, so the notes travel in the digest but only the
+ * `lessons` mode formats them into a prompt.
+ */
+export interface LessonRead {
+  /** The lessons, newest first. */
+  lessons: DigestLesson[];
+  /** Total lessons the trader has saved. */
+  total: number;
+  /** Lessons omitted from the bounded list above. */
+  omitted: number;
+  /** How many of the listed lessons carry at least one still image. */
+  withImages: number;
+}
+
+/** One coach plan the trader graded, reduced to what the coach may learn from. */
+export interface DigestCoachPlan {
+  date: string;
+  symbol: string;
+  direction: string;
+  entry: number;
+  stop: number;
+  target: number;
+  confidence: string;
+  grade: string | null;
+  feedback: string | null;
+}
+
+/**
+ * The plans the coach made on its own, with the trader's grades and feedback.
+ *
+ * This is the loop that lets the coach improve at planning: its own recent calls, and the
+ * trader's judgement of them. The feedback is quoted back so a habit the trader keeps
+ * correcting is visible the next time a plan is asked for. Read only by the self-plan mode.
+ */
+export interface CoachPlanRead {
+  /** The coach's recent plans, newest first. */
+  plans: DigestCoachPlan[];
+  /** How many plans the coach has made in total. */
+  total: number;
+  /** How many of them the trader has graded. */
+  graded: number;
+  /** Plans omitted from the bounded list above. */
+  omitted: number;
+  /** The trader's written feedback, newest first, for the coach to learn from. */
+  feedback: string[];
+}
+
 /**
  * The two windows the recent-form comparison is built from.
  *
@@ -382,6 +457,16 @@ export interface JournalDigest {
    * open kept it?".
    */
   extremeRead: ExtremeRead;
+  /**
+   * The lessons the trader wrote for themselves, with notes, tags and media counts. Read
+   * only by the dedicated lessons mode; other reads are not shown them.
+   */
+  lessonRead: LessonRead;
+  /**
+   * The coach's own past plans, with the trader's grades and feedback. Read only by the
+   * self-plan mode, so a plan the trader marked down shapes the next plan and nothing else.
+   */
+  coachPlanRead: CoachPlanRead;
   /**
    * The most recent closed trades, one entry each, newest first.
    *
@@ -832,6 +917,104 @@ function buildExtremeRead(extremes: SessionExtreme[], todayTradeDate: string): E
   };
 }
 
+/**
+ * Bounds one lesson's notes so a long written note cannot fill the whole prompt.
+ *
+ * The trader's own words are the point of the read, so this trims rather than drops, on a
+ * character boundary and at a word where possible.
+ */
+function buildLessonRead(lessons: Lesson[], setups: Setup[]): LessonRead {
+  const maxLessons = 40;
+  const maxNotes = 1500;
+  const setupNameById = new Map(setups.map((setup) => [setup.id, setup.name]));
+  // A local test rather than the media helper: that module imports the Supabase client, and
+  // this one is bundled into the dependency-free coach function, so it must not pull it in.
+  const looksLikeVideo = (url: string) =>
+    url.startsWith('data:video/') || /\.(mp4|webm|mov|m4v|ogv|ogg)(\?|#|$)/i.test(url);
+
+  const newestFirst = [...lessons]
+    .filter((lesson) => lesson && typeof lesson.title === 'string')
+    .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
+
+  const listed = newestFirst.slice(0, maxLessons).map((lesson): DigestLesson => {
+    const rawNotes = (lesson.notes ?? '').trim();
+    const notes =
+      rawNotes.length > maxNotes
+        ? `${(trimWord(rawNotes.slice(0, maxNotes)) ?? '').trimEnd()}…`
+        : rawNotes;
+    const media = lesson.media ?? [];
+    const videoCount = media.filter((item) => looksLikeVideo(item)).length;
+    return {
+      date: (lesson.createdAt ?? '').slice(0, 10),
+      title: lesson.title.trim().slice(0, 200),
+      notes: notes || null,
+      kind: lesson.kind ?? 'other',
+      setupName:
+        lesson.setupId ? setupNameById.get(lesson.setupId) ?? null : null,
+      tags: (lesson.tags ?? []).slice(0, 8),
+      imageCount: media.length - videoCount,
+      videoCount,
+    };
+  });
+
+  return {
+    lessons: listed,
+    total: newestFirst.length,
+    omitted: Math.max(0, newestFirst.length - listed.length),
+    withImages: listed.filter((lesson) => lesson.imageCount > 0).length,
+  };
+}
+
+/**
+ * Bounds the coach's own plan history so a long record cannot fill the prompt.
+ *
+ * The plans carry levels, so this keeps a readable recent window; the feedback is listed
+ * separately because it is the trader's voice, which is what the model is meant to learn
+ * from, and it is quoted in full length up to a bound rather than counted.
+ */
+function buildCoachPlanRead(plans: CoachPlan[]): CoachPlanRead {
+  const maxPlans = 12;
+  const maxFeedback = 10;
+  const maxFeedbackChars = 600;
+
+  const newestFirst = [...plans]
+    .filter((plan) => plan && typeof plan.symbol === 'string')
+    .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
+
+  const listed = newestFirst.slice(0, maxPlans).map((plan): DigestCoachPlan => ({
+    date: (plan.createdAt ?? '').slice(0, 10),
+    symbol: plan.symbol,
+    direction: plan.direction,
+    entry: plan.entry,
+    stop: plan.stop,
+    target: plan.target,
+    confidence: plan.confidence,
+    grade: plan.grade ?? null,
+    feedback: plan.feedback?.trim() || null,
+  }));
+
+  const feedback = listed
+    .map((plan) =>
+      plan.feedback
+        ? `${plan.symbol} ${plan.direction} on ${plan.date} ` +
+          `(${plan.grade ? `graded ${plan.grade}` : 'no grade'}): ${plan.feedback}`
+        : ''
+    )
+    .filter(Boolean)
+    .slice(0, maxFeedback)
+    .map((line) =>
+      line.length > maxFeedbackChars ? `${line.slice(0, maxFeedbackChars).trimEnd()}…` : line
+    );
+
+  return {
+    plans: listed,
+    total: newestFirst.length,
+    graded: newestFirst.filter((plan) => plan.grade).length,
+    omitted: Math.max(0, newestFirst.length - listed.length),
+    feedback,
+  };
+}
+
 export function buildJournalDigest(input: {
   trades: Trade[];
   tradingDays: TradingDay[];
@@ -861,6 +1044,16 @@ export function buildJournalDigest(input: {
    * as a finding.
    */
   sessionExtremes?: SessionExtreme[];
+  /**
+   * The trader's own written lessons, with the media counts. Read only by the dedicated
+   * lessons mode; absent is read as "nothing written down", never as an empty finding.
+   */
+  lessons?: Lesson[];
+  /**
+   * The plans the coach made on its own, with the trader's grades and feedback. Read only by
+   * the self-plan mode; absent is read as "no plans made yet".
+   */
+  coachPlans?: CoachPlan[];
   /**
    * How many per-trade rows the digest carries, newest first.
    *
@@ -1094,6 +1287,12 @@ export function buildJournalDigest(input: {
   // ---- Where the session extremes printed --------------------------------
   const extremeRead = buildExtremeRead(input.sessionExtremes ?? [], todayTradeDate);
 
+  // ---- The trader's own written lessons -----------------------------------
+  const lessonRead = buildLessonRead(input.lessons ?? [], setups);
+
+  // ---- The coach's own plans, and how the trader judged them ---------------
+  const coachPlanRead = buildCoachPlanRead(input.coachPlans ?? []);
+
   // ---- The week, one setup at a time --------------------------------------
   // The same seven days read twice: what each setup's trades paid, and how its levels held.
   // Built here rather than per mode so the numbers the coach writes about are the numbers
@@ -1244,6 +1443,8 @@ export function buildJournalDigest(input: {
     behavior,
     levelEdge,
     extremeRead,
+    lessonRead,
+    coachPlanRead,
     setupWeek,
     tradeSamples,
     traderOwnWords: {

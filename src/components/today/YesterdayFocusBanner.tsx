@@ -1,8 +1,10 @@
-import React from 'react';
-import { Lightbulb, Check, Pin } from 'lucide-react';
+import React, { useState } from 'react';
+import { Lightbulb, Check, Pin, Image as ImageIcon, Play, Video } from 'lucide-react';
+import { ImageLightboxModal } from '../common/ImageLightboxModal';
+import { isVideoUrl } from '../../lib/media/media-utils';
 
 interface YesterdayFocusBannerProps {
-  yesterdayFocus: { date: string; focus: string } | null;
+  yesterdayFocus: { date: string; focus: string; media?: string[] } | null;
   /** Whether this exact lesson has been accepted. Persisted, not component state. */
   acknowledged?: boolean;
   /** When it was accepted, for the line that says it is being held. */
@@ -27,7 +29,82 @@ export const YesterdayFocusBanner: React.FC<YesterdayFocusBannerProps> = ({
   acknowledgedAt = null,
   onAcknowledge,
 }) => {
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   if (!yesterdayFocus || !yesterdayFocus.focus) return null;
+
+  const media = yesterdayFocus.media ?? [];
+
+  /**
+   * The media the trader attached to last night's review.
+   *
+   * It sits inside the lesson on purpose: the sentence says what to hold, and the
+   * screenshots and the clip say what it looked like and what they meant by it. A clip is
+   * the trader talking to themselves, so it is shown here rather than hidden behind a click
+   * into the review form.
+   */
+  const mediaStrip = media.length > 0 && (
+    <div className="mt-2.5 space-y-1.5">
+      <div className="flex items-center gap-2 text-[10px] font-mono opacity-70">
+        <ImageIcon className="h-3 w-3" />
+        {media.filter((item) => !isVideoUrl(item)).length} image(s)
+        {media.some((item) => isVideoUrl(item)) && (
+          <span className="flex items-center gap-1">
+            <Video className="h-3 w-3" />
+            {media.filter((item) => isVideoUrl(item)).length} clip(s)
+          </span>
+        )}
+      </div>
+      <div className="flex items-center gap-2 overflow-x-auto pb-1">
+        {media.map((item, index) => {
+          const video = isVideoUrl(item);
+          return (
+            <button
+              key={index}
+              type="button"
+              data-lesson-media={index}
+              onClick={() => setLightboxIndex(index)}
+              className="group relative h-16 w-24 shrink-0 overflow-hidden rounded-lg border border-current/20 bg-black/40 transition-transform hover:scale-105 active:scale-95"
+              title={video ? 'Play clip' : 'View screenshot'}
+            >
+              {video ? (
+                <video
+                  src={item}
+                  muted
+                  playsInline
+                  preload="metadata"
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <img
+                  src={item}
+                  alt={`Lesson attachment ${index + 1}`}
+                  className="h-full w-full object-cover"
+                />
+              )}
+              <span className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
+                {video ? (
+                  <Play className="h-4 w-4 fill-current" />
+                ) : (
+                  <ImageIcon className="h-4 w-4" />
+                )}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+
+  const lightbox = lightboxIndex !== null && (
+    <ImageLightboxModal
+      isOpen={true}
+      onClose={() => setLightboxIndex(null)}
+      images={media}
+      initialIndex={lightboxIndex}
+      title="Yesterday's lesson"
+      subtitle={yesterdayFocus.focus}
+    />
+  );
 
   const heldSince = acknowledgedAt
     ? new Date(acknowledgedAt).toLocaleTimeString('en-US', {
@@ -62,12 +139,14 @@ export const YesterdayFocusBanner: React.FC<YesterdayFocusBannerProps> = ({
             <p className="mt-1 text-xs sm:text-sm font-medium text-emerald-50/90 italic">
               "{yesterdayFocus.focus}"
             </p>
+            {mediaStrip}
             <p className="mt-1.5 text-[10px] text-emerald-300/60 leading-relaxed">
               Acknowledged, so it stays on this page for the rest of the day. A new lesson
               replaces it once the next end-of-day review is written.
             </p>
           </div>
         </div>
+        {lightbox}
       </div>
     );
   }
@@ -94,6 +173,7 @@ export const YesterdayFocusBanner: React.FC<YesterdayFocusBannerProps> = ({
             <p className="mt-1 text-xs sm:text-sm font-medium text-amber-100 italic">
               "{yesterdayFocus.focus}"
             </p>
+            {mediaStrip}
             <p className="mt-1.5 text-[10px] text-amber-300/60 leading-relaxed">
               Acknowledging holds this on the page for the day, and opens your review trend
               underneath it.
@@ -112,6 +192,7 @@ export const YesterdayFocusBanner: React.FC<YesterdayFocusBannerProps> = ({
           </button>
         )}
       </div>
+      {lightbox}
     </div>
   );
 };

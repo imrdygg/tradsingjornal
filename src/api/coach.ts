@@ -74,7 +74,7 @@ interface ApiResponse {
  * knows the meaning of gets updated without being read. Bump it when the request or response
  * contract changes in a way a caller could notice.
  */
-export const ENDPOINT_VERSION = 17;
+export const ENDPOINT_VERSION = 19;
 
 /** Total time to spend trying models before returning what we have. */
 const REQUEST_BUDGET_MS = 45_000;
@@ -840,7 +840,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       error:
         'Unknown coach mode. Expected brief, weekly, setups, form, edge, learn, match, ' +
         'extremes, extremecall, trade, prep, postclose, planreview, planfield, planbuild, ' +
-        'scalein, entrycall, chartread or ask.',
+        'scalein, entrycall, chartread, ask, lessons or selfplan.',
     });
     return;
   }
@@ -912,11 +912,13 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     extras.question = question.slice(0, 800);
   }
 
-  // The chart images the two image modes read. Re-validated here, because a request body is
-  // untrusted input whatever the client did: a malformed or oversized image is dropped rather
-  // than forwarded, and only the labels ever reach the prompt text.
+  // The images the image modes read — trade charts for the learner and picture search, the
+  // trader's own note screenshots for the lesson read. Re-validated here, because a request
+  // body is untrusted input whatever the client did: a malformed or oversized image is dropped
+  // rather than forwarded, and only the labels ever reach the prompt text. A lesson's video
+  // clips are cloud URLs, so they fail the data-URL check and are never sent to the model.
   let imageParts: CoachImagePart[] = [];
-  if (mode === 'learn' || mode === 'match') {
+  if (mode === 'learn' || mode === 'match' || mode === 'lessons') {
     imageParts = readCoachImages(extrasRaw.images);
     extras.imageLabels = imageParts.map((part) => part.label);
     // The picture search is meaningless without a picture to search with: an empty array
@@ -939,6 +941,17 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     extras.instrument = symbol;
   }
 
+  // The self-plan is a live call on one instrument, so it needs the instrument named. The
+  // quote and the bars are fetched below, and the plan is built only from those.
+  if (mode === 'selfplan') {
+    const symbol = typeof extrasRaw.instrument === 'string' ? extrasRaw.instrument.trim().toUpperCase() : '';
+    if (!symbol) {
+      res.status(400).json({ error: 'Self-plan mode needs the instrument to plan for.' });
+      return;
+    }
+    extras.instrument = symbol;
+  }
+
   // The live futures read, for the modes whose guardrails allow it to be quoted. The
   // symbol is taken from the position or entry when the request did not name one, so a
   // caller cannot ask about one instrument while describing another.
@@ -952,11 +965,25 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     extras.instrumentQuote = await getInstrumentQuote(instrument);
   }
 
-  // The daily-bar series behind a chart read. Only that mode's guardrails allow it to
-  // be quoted; a failed fetch degrades to ok:false with a reason, and the model must
-  // stand aside rather than describe a chart it never saw.
-  if (mode === 'chartread') {
+  // The daily-bar series behind a chart read, and behind the coach's own plan. Only those
+  // modes' guardrails allow it to be quoted; a failed fetch degrades to ok:false with a
+  // reason, and the model must stand aside rather than describe a chart it never saw.
+  if (mode === 'chartread' || mode === 'selfplan') {
     extras.chartSeries = await getDailyBars(extras.instrument || '');
+  }
+
+  // The self-plan is the one mode the trader asks for a committed call, and its guardrails
+  // forbid a stand-aside. That is only honest when there is something to call: with neither
+  // a live quote nor a bar series the plan would be invented, so the request is refused
+  // here rather than handed to the model to guess at. A chart read may still degrade in the
+  // prompt; the self-plan may not.
+  if (mode === 'selfplan' && !extras.instrumentQuote?.ok && !extras.chartSeries?.ok) {
+    res.status(503).json({
+      error:
+        'No live price or daily bars are available for that instrument right now, so the coach cannot make an honest call. Try again shortly.',
+      code: 'server',
+    });
+    return;
   }
 
   // Only requests that would actually reach Gemini are counted, so a malformed request

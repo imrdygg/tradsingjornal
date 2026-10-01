@@ -18,6 +18,8 @@ import {
 } from '../../types';
 import { calculateDisciplineScore } from '../../lib/analytics/discipline';
 import { ModalOverlay } from '../common/ModalOverlay';
+import { ImageUploader } from '../common/ImageUploader';
+import { ImageLightboxModal } from '../common/ImageLightboxModal';
 
 interface DailyReviewModalProps {
   isOpen: boolean;
@@ -53,6 +55,9 @@ export const DailyReviewModal: React.FC<DailyReviewModalProps> = ({
   const [didWell, setDidWell] = useState('');
   const [didPoorly, setDidPoorly] = useState('');
   const [tomorrowFocus, setTomorrowFocus] = useState('');
+  // Screenshots and a short clip of the trader talking themselves through the session.
+  const [media, setMedia] = useState<string[]>([]);
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -61,6 +66,7 @@ export const DailyReviewModal: React.FC<DailyReviewModalProps> = ({
       setDidWell(existingReview.didWell || '');
       setDidPoorly(existingReview.didPoorly || '');
       setTomorrowFocus(existingReview.tomorrowFocus || '');
+      setMedia(existingReview.media ?? []);
     } else {
       setQuestions({
         followedSetups: 'yes',
@@ -76,6 +82,7 @@ export const DailyReviewModal: React.FC<DailyReviewModalProps> = ({
       setDidWell('');
       setDidPoorly('');
       setTomorrowFocus('');
+      setMedia([]);
     }
     setError('');
   }, [isOpen, existingReview]);
@@ -140,6 +147,7 @@ export const DailyReviewModal: React.FC<DailyReviewModalProps> = ({
       didWell: didWell.trim(),
       didPoorly: didPoorly.trim(),
       tomorrowFocus: tomorrowFocus.trim(),
+      media: media.length ? media : undefined,
       createdAt: existingReview ? existingReview.createdAt : new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -377,6 +385,24 @@ export const DailyReviewModal: React.FC<DailyReviewModalProps> = ({
               className="w-full rounded-lg border border-amber-800/80 bg-zinc-950 p-2 text-xs text-zinc-100 placeholder-zinc-600 focus:border-amber-600 focus:outline-none"
               required
             />
+
+            {/*
+              The media that backs the focus. Attach the screenshots of what you saw and a
+              short clip of you talking it through — both travel with the lesson into
+              tomorrow's "Yesterday's Lesson" box, so the next session starts from your own
+              voice rather than one sentence.
+            */}
+            <div className="pt-1.5">
+              <ImageUploader
+                images={media}
+                onChange={setMedia}
+                onPreviewImage={(index) => setLightboxIndex(index)}
+                maxImages={6}
+                label="Screenshots & a talk-through clip"
+                helperText="Attach the charts that show what you mean, or record a short clip of yourself explaining the lesson. Both appear with the lesson tomorrow morning."
+                idPrefix="review-media"
+              />
+            </div>
           </div>
 
           {/* Action buttons */}
@@ -397,6 +423,17 @@ export const DailyReviewModal: React.FC<DailyReviewModalProps> = ({
           </div>
         </form>
       </div>
+
+      {lightboxIndex !== null && media.length > 0 && (
+        <ImageLightboxModal
+          isOpen={true}
+          onClose={() => setLightboxIndex(null)}
+          images={media}
+          initialIndex={lightboxIndex}
+          title={`End-of-day review — ${day.tradeDate}`}
+          subtitle={tomorrowFocus || undefined}
+        />
+      )}
     </ModalOverlay>
   );
 };

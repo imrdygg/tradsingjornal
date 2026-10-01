@@ -489,8 +489,62 @@ export interface DailyReview {
   didWell: string;
   didPoorly: string;
   tomorrowFocus: string;
+  /**
+   * Screenshots and short clips attached to this review.
+   *
+   * The trader's own record of the session, in pictures and their own voice: screenshots
+   * of what they saw, and a clip of them talking themselves through it. Images are data
+   * URLs, clips are cloud URLs, the same shape a trade's media takes. It travels with the
+   * carried-forward lesson, so tomorrow morning's "Yesterday's Lesson" box can show the
+   * media behind the focus and not only the sentence.
+   */
+  media?: string[];
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * The trade plan the coach made entirely on its own.
+ *
+ * Different from the day's plan the trader writes: this one is the coach's own call, from
+ * the live market read alone, and the trader does not set its levels. It is kept as a record
+ * so it can be graded after the fact — the grade and the trader's written feedback are the
+ * only things that tell the coach whether its plans are any good, and they travel back into
+ * its next one.
+ */
+export type CoachPlanGrade = 'A' | 'B' | 'C' | 'D' | 'F';
+
+export type CoachPlanConfidence = 'low' | 'medium' | 'high';
+
+export interface CoachPlan {
+  id: string;
+  userId: string;
+  /** The coach's one-line summary of the call. */
+  headline?: string;
+  /** The moment the plan was made, so a graded plan keeps the market it was made against. */
+  createdAt: string;
+  /** The instrument the plan is for, by symbol. */
+  symbol: string;
+  /** The live price the call was made against, when the read worked. */
+  marketPrice: number | null;
+  direction: 'long' | 'short';
+  entry: number;
+  stop: number;
+  target: number;
+  confidence: CoachPlanConfidence;
+  /** Why it would take the trade. */
+  entryReason: string;
+  /** Why it would get out, in its own words. */
+  exitReason: string;
+  /** What would prove the call wrong. */
+  invalidation: string;
+  /** The plan in its own words, plainly labelled as an opinion. */
+  rationale: string;
+  /** The trader's own grade of the plan, once they have judged it. */
+  grade?: CoachPlanGrade;
+  /** The trader's written feedback, fed back into the coach's later plans. */
+  feedback?: string;
+  gradedAt?: string;
 }
 
 export interface UserProfile {
@@ -601,6 +655,45 @@ export interface PatternStudy {
   checklist: string[];
   notes: string;
   entries: PatternStudyEntry[];
+  updatedAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// Lessons — the trader's own documented findings
+//
+// The playbook holds two things the trader makes: the setups they trade, and the reference
+// material behind them. A lesson is a third thing and deliberately different: something the
+// trader noticed while watching the market and wrote down for themselves, with the media that
+// shows it. It is their own note first — the coach may read it on request, but it is not a
+// signal, a setup or a claim about the future.
+// ---------------------------------------------------------------------------
+
+/** What a saved lesson is mainly about, so a growing library can be filtered. */
+export type LessonKind = 'pattern' | 'behavior' | 'mistake' | 'psychology' | 'other';
+
+export interface Lesson {
+  id: string;
+  userId: string;
+  /** The trader's own title: what they noticed. */
+  title: string;
+  /** What they wrote down about it, in their own words. */
+  notes: string;
+  kind: LessonKind;
+  /** The setup this lesson was noticed on, when it relates to one the trader trades. */
+  setupId?: string;
+  /**
+   * Attached media: images as data URLs, video clips as cloud URLs.
+   *
+   * Videos are the trader's own to review. The coach can read text and images but cannot
+   * watch a clip, so only notes and images are ever sent to it and a saved video never
+   * leaves the device except to the trader's own media bucket.
+   */
+  media?: string[];
+  /** Free-form labels, stored the same way a trade's tags are. */
+  tags?: string[];
+  /** When the coach last read this lesson, so the card can show what is new since then. */
+  lastReadAt?: string;
+  createdAt: string;
   updatedAt: string;
 }
 

@@ -3,11 +3,13 @@
 // as an HTML error page rather than JSON, which is indistinguishable from the function
 // not being deployed — hence keeping this dependency-free.
 import type {
+  CoachPlanRead,
   DigestLevelTouch,
   DigestStatLine,
   DigestTradeSample,
   ExtremeRead,
   JournalDigest,
+  LessonRead,
   LevelEdge,
 } from './journal-digest';
 import { hourLabel } from '../analytics/session-extremes';
@@ -19,7 +21,10 @@ import type {
   CoachResponse,
   CoachTradeFacts,
   LearnedSetup,
+  LessonsResponse,
+  LessonTheme,
   MatchItem,
+  SelfPlanResponse,
   PlannedLevel,
   PlanFieldName,
   WeeklyPattern,
@@ -90,6 +95,18 @@ export const COACH_MODES: readonly CoachMode[] = [
   // Free-form: the trader's own question about their own trading. Deliberately NOT in
   // COACH_OPINION_MODES below — a question is not a licence to read the market.
   'ask',
+  /**
+   * The coach's own trade plan for one instrument, made from the live read alone. Its levels
+   * are the coach's, not the trader's, and it is stored so the trader can grade it and write
+   * feedback that shapes the next plan.
+   */
+  'selfplan',
+  /**
+   * The lesson read: the trader's own written notes, tags and still images, read back on
+   * request. Kept to its own mode so lessons never bleed into the other answers; journal
+   * material only, and no market opinion.
+   */
+  'lessons',
 ];
 
 /**
@@ -105,6 +122,9 @@ export const COACH_OPINION_MODES: readonly CoachMode[] = [
   'scalein',
   'entrycall',
   'chartread',
+  // The self-plan is the trader's own ask for the coach's call, made from the live read and
+  // nothing else. It is an opinion by construction, so it belongs on this list.
+  'selfplan',
   // Added last, and only after the trader asked for it in as many words: a call on the levels
   // they logged is still an opinion about the market, so it belongs on this list — and every
   // rule the other opinion modes carry applies to it unchanged.
@@ -151,11 +171,15 @@ export function coachGuardrails(
   withLevelEdge = false,
   withLearn = false,
   withExtremes = false,
-  withMatch = false
+  withMatch = false,
+  withLessons = false,
+  withSelfPlan = false
 ): string {
   let text = COACH_GUARDRAILS;
   if (withLearn) text += LEARN_GUARDRAILS_SUFFIX;
   if (withMatch) text += MATCH_GUARDRAILS_SUFFIX;
+  if (withLessons) text += LESSONS_GUARDRAILS_SUFFIX;
+  if (withSelfPlan) text += SELFPLAN_GUARDRAILS_SUFFIX;
   if (withLevelEdge) text += LEVEL_EDGE_GUARDRAILS_SUFFIX;
   if (withExtremes) text += EXTREMES_GUARDRAILS_SUFFIX;
   if (withMarketData) text += MARKET_GUARDRAILS_SUFFIX;
@@ -397,6 +421,53 @@ M8. THE SCORE IS A RESEMBLANCE, NOT A PROBABILITY. For each match, give a score 
     the chance the trade works, a win rate, or a quality grade — so never write it as a
     percentage of success, and never let a high score change how you describe what the trade
     did. Order the matches by their own scores, highest first.`;
+
+const LESSONS_GUARDRAILS_SUFFIX = `\n\nTHE TRADER'S OWN LESSONS — SPECIAL RULES FOR THIS REQUEST ONLY.
+You have been asked to read back the lessons this trader wrote for themselves: their own
+notes, the tags they filed them under, and, where they attached one, a still image of what
+they saw. This is their own material and the read is a summary of it — never a market
+opinion.
+
+L1. READ ONLY WHAT THEY WROTE. Every theme must come from the lesson notes and titles in the
+    digest and the images attached. Quote which lessons back it and how many. Never invent a
+    lesson, a finding, a statistic or a chart, and never add a fact the trader did not record.
+L2. AN IMAGE IS SOMETHING THE TRADER CAPTURED, NOT A LIVE CHART. Describe only what is visible
+    in it and only in relation to the lesson it is attached to. You still have no market data,
+    no current prices and no other charts — rule 1 above holds in full.
+L3. A VIDEO CLIP IS THE TRADER'S OWN AND YOU CANNOT WATCH IT. Where a lesson carries one, say
+    only that a clip is attached and that its content is not visible to you, and ask them to
+    write the point down. Never guess what a clip shows or describe it as if you had seen it.
+L4. THIN IS AN ANSWER. A theme needs several lessons behind it. With only a few, say so, return
+    few or no themes and make nextStep about writing more down. Never pad the list to look useful.
+L5. THEIR NOTES ARE FINDINGS, NOT ORDERS. Never turn a lesson into a trade to take, a level to
+    watch, or a prediction. Report what their own notes keep saying and hand it back to them.
+L6. DO NOT OVERRULE THEM. Their notes are their own conclusions about their own trading. You
+    may point out where two of them disagree, but never declare one wrong or rewrite it for them.`;
+
+const SELFPLAN_GUARDRAILS_SUFFIX = `\n\nTHE COACH'S OWN PLAN — SPECIAL RULES FOR THIS REQUEST ONLY.
+The trader has asked you to make your OWN trade plan for one instrument. You have the live
+read and the recent daily bars for it, and none of the trader's own levels — that is
+deliberate: they want your independent call, not a re-run of theirs.
+
+P1. THE LEVELS ARE YOURS TO NAME, FROM THE READ ONLY. Every price in the plan — entry, stop
+    and target — must sit inside the range the live read and the daily bars you were handed
+    actually show. Never state any other price, and never invent one. Rule 1 above is narrowed
+    only as far as those numbers go.
+P2. COMMIT. This plan exists to be graded, so return long or short, never a stand-aside: pick
+    the side the data you were handed supports best. If the read is missing or unreadable the
+    request is refused before it reaches you, so you are never asked to plan blind.
+P3. SAY WHY. entryReason says what the plan is waiting for; exitReason says how it ends,
+    whether that is the target or the stop; invalidation says plainly what would prove the call
+    wrong. All three are required.
+P4. LOW CONFIDENCE IS AN ANSWER. If the read is thin, say so in confidence and rationale
+    rather than dressing a weak setup up. Standing by a low-confidence call is honest; a
+    confident one on nothing is not.
+P5. THIS IS AN OPINION, NOT A SIGNAL. Label the rationale as your own read and say plainly it
+    can be wrong. Never promise an outcome, never name a win rate, and never tell the trader
+    to size the position a particular way.
+P6. LEARN FROM THE GRADES. When THE TRADER'S GRADES OF YOUR PAST PLANS appears, treat it as
+    the trader's own judgement of your planning and let it shape this plan. Quote the specific
+    note you are answering where one applies, and never argue with a grade.`;
 
 /** The trader's own words for what happened to a touch, so the prompt reads plainly. */
 function touchOutcomeWord(outcome: DigestLevelTouch['outcome']): string {
@@ -880,6 +951,127 @@ export function formatMatchImagesForPrompt(labels: string[] | undefined): string
 }
 
 /**
+ * Names the still images attached to the trader's own lessons, in order.
+ *
+ * Unlike the setup learner, these pictures are the trader's own note-taking rather than a
+ * screenshot of a recorded trade, so the text says exactly that — and it is the only place a
+ * lesson's media is ever described to the model. A video clip never appears here: it cannot
+ * be watched, so the digest counts it and this block names only the stills.
+ */
+export function formatLessonImagesForPrompt(labels: string[] | undefined): string {
+  const list = labels ?? [];
+  if (!list.length) {
+    return (
+      '\n\n=== THE IMAGES ATTACHED TO THESE LESSONS ===\n' +
+      'No still image was attached to any of these lessons, so work from the written notes ' +
+      'alone. Say so in gaps if a picture would have changed the read.'
+    );
+  }
+
+  const lines: string[] = [];
+  lines.push('');
+  lines.push('=== THE IMAGES ATTACHED TO THESE LESSONS ===');
+  lines.push(
+    `${list.length} still image(s) the trader attached to their own lessons follow this text, ` +
+      'in this order. Each is a picture they captured for their notes — not a live chart of the ' +
+      'market now, and not a picture of a logged trade.'
+  );
+  list.forEach((label, index) => lines.push(`- IMAGE ${index + 1}: ${label}`));
+  return `\n\n${lines.join('\n').trim()}`;
+}
+
+/**
+ * The trader's own written lessons, as the dedicated read may quote them.
+ *
+ * Rendered only for the `lessons` mode: the notes are the trader's own material and are kept
+ * out of every other answer, so this function is not called anywhere else. Media is counted
+ * rather than described, and a video clip is named only as something the coach cannot watch.
+ */
+export function formatLessonReadForPrompt(read: LessonRead | undefined): string[] {
+  const lines: string[] = [];
+  if (!read || read.total === 0) return lines;
+
+  lines.push('');
+  lines.push('=== THEIR OWN LESSONS (what the trader wrote down for themselves) ===');
+  lines.push(
+    'These are the lessons the trader keeps in their playbook: things they noticed and wrote ' +
+      'down for themselves, filed under a kind and sometimes a tag, with the media they saved. ' +
+      'They are the trader\'s own findings, in their own words — not a signal, not a setup and ' +
+      'not a claim about what the market will do. Quote them by the title the trader gave them.'
+  );
+  lines.push(
+    `${read.total} lesson(s) saved, ${read.lessons.length} listed here` +
+      (read.withImages ? `, ${read.withImages} carrying at least one still image` : '') +
+      '.'
+  );
+
+  for (const lesson of read.lessons) {
+    const facts: string[] = [lesson.kind];
+    if (lesson.tags.length) facts.push(`tagged ${lesson.tags.join(', ')}`);
+    if (lesson.setupName) facts.push(`tied to the ${lesson.setupName} setup`);
+    lines.push(`- ${lesson.date} "${lesson.title}" (${facts.join('; ')})`);
+    if (lesson.notes) lines.push(`    their note: "${lesson.notes}"`);
+    const mediaBits: string[] = [];
+    if (lesson.imageCount > 0) mediaBits.push(`${lesson.imageCount} still image(s)`);
+    if (lesson.videoCount > 0) {
+      mediaBits.push(
+        `${lesson.videoCount} video clip(s) you cannot watch — say only that a clip exists`
+      );
+    }
+    if (mediaBits.length) lines.push(`    attached: ${mediaBits.join(', ')}`);
+  }
+
+  if (read.omitted > 0) {
+    lines.push(
+      `${read.omitted} older lesson(s) omitted; only the latest ${read.lessons.length} are listed.`
+    );
+  }
+
+  return lines;
+}
+
+/**
+ * The coach's own past plans and the trader's grades of them.
+ *
+ * Rendered only for the self-plan mode: this is the feedback loop that lets the coach learn
+ * how the trader wants a plan written, and it belongs beside the plan it is about rather than
+ * in every other answer.
+ */
+export function formatCoachPlanReadForPrompt(read: CoachPlanRead | undefined): string[] {
+  const lines: string[] = [];
+  if (!read || read.total === 0) return lines;
+
+  lines.push('');
+  lines.push('=== THE TRADER\'S GRADES OF YOUR PAST PLANS (your own record, judged by them) ===');
+  lines.push(
+    'These are plans YOU made before, and the grade and note the trader gave each one. ' +
+      "They are the trader's judgement of your planning, and the only signal you have about " +
+      'whether your calls were any use. Let them shape this plan.'
+  );
+
+  for (const plan of read.plans) {
+    lines.push(
+      `- ${plan.date} ${plan.symbol} ${plan.direction} · entry ${plan.entry}, stop ${plan.stop}, ` +
+        `target ${plan.target} · confidence ${plan.confidence} · ` +
+        (plan.grade ? `graded ${plan.grade}` : 'not graded yet')
+    );
+    if (plan.feedback) lines.push(`    their feedback: "${plan.feedback}"`);
+  }
+
+  if (read.feedback.length) {
+    lines.push('');
+    lines.push('Their written feedback, newest first (read these closely and answer them):');
+    for (const note of read.feedback) lines.push(`- ${note}`);
+  }
+
+  if (read.omitted > 0) {
+    lines.push(`${read.omitted} older plan(s) omitted; only the latest ${read.plans.length} are listed.`);
+  }
+
+  return lines;
+}
+
+/**
  * Renders the digest as compact text for the prompt. Deliberately explicit about
  * thin data so the model cannot mistake a small sample for a finding.
  *
@@ -922,6 +1114,15 @@ export function formatDigestForPrompt(digest: JournalDigest, mode?: CoachMode): 
       );
     }
     lines.push('');
+  }
+  // The trader's own lessons are read on request only, so this section is added for that
+  // one mode and never for any other answer.
+  if (mode === 'lessons') {
+    lines.push(...formatLessonReadForPrompt(digest.lessonRead));
+  }
+  // The coach's own plan history is the one place its past grades shape an answer.
+  if (mode === 'selfplan') {
+    lines.push(...formatCoachPlanReadForPrompt(digest.coachPlanRead));
   }
   lines.push('=== WHAT THE JOURNAL RECORDS ===');
   lines.push(
@@ -1605,6 +1806,35 @@ Return 1-3 setups, best supported first. Return an empty setups array when the r
   "motivation": "2 sentences. Specific to this trader and earned by their data. No slogans."
 }
 Return 0-5 matches, ordered by score, highest first. Every match must be a trade that appears in TRADE SAMPLES \u2014 never invent one, and never name a textbook pattern the trader does not use. Copy each match's date, symbol and direction exactly as they appear. Only include a trade that genuinely resembles the chart: a loose or forced match is worse than none, and a trade scoring below 50 does not belong in the list. Return an empty matches array when nothing in the record resembles the chart and say so in patternRead. Never predict direction, never state a price or level, and never call a resemblance a reason to trade it.`,
+  selfplan: `Return exactly this JSON:
+{
+  "headline": "one sentence, under 16 words, naming your call",
+  "symbol": "the instrument the plan is for, copied from the request",
+  "direction": "long or short: the side you would take. Never a stand-aside",
+  "entry": 0,
+  "stop": 0,
+  "target": 0,
+  "confidence": "one of low, medium, high",
+  "entryReason": "what the plan is waiting for, in plain words",
+  "exitReason": "how it ends: the target or the stop, in plain words",
+  "invalidation": "what would prove this call wrong",
+  "rationale": "3-5 sentences: your read of the data you were handed, the side, why the entry, stop and target sit where they do, and plainly that this is your opinion and can be wrong"
+}
+Every price must be a number from the LIVE READ or the DAILY CHART DATA you were handed — never invented. Commit to long or short: this plan exists to be graded, so a stand-aside is not an answer. Never name a win rate and never tell the trader how to size the position.`,
+  lessons: `Return exactly this JSON:
+{
+  "headline": "one sentence, under 16 words, on what their own lesson notes keep saying",
+  "themes": [
+    { "theme": "a theme their notes keep returning to, in the trader's own terms", "evidence": "which lessons back it, by their own titles, with the counts" }
+  ],
+  "reinforces": "2-3 sentences on what the notes keep coming back to, quoting the lessons by their own titles",
+  "contradictions": ["two lessons that pull in different directions, naming both. Empty array when none"],
+  "gaps": ["what the library does not cover yet that would sharpen it, counts only. Empty array when it covers what it needs"],
+  "howToApply": "2-3 sentences on how the trader could use their own notes, stated as what their notes already show, never a market prediction",
+  "nextStep": "one concrete, checkable thing to write down or tag next",
+  "motivation": "2 sentences. Specific to this trader and earned by their own notes. No slogans."
+}
+Return 1-4 themes. Name only themes their own notes support and quote the lessons by their own titles. Never invent a lesson or a finding, never turn a note into a trade or a forecast, and never describe a video clip you cannot watch. When the library is too thin for a theme, say exactly that and return few or no themes.`,
   trade: `Return exactly this JSON:
 {
   "verdict": "2 sentences judging the decision and the execution separately",
@@ -1897,6 +2127,25 @@ export function buildCoachPrompt(
         `Where it asks about the market, or about anything the journal does not record, say ` +
         `exactly what you cannot know instead of guessing, and answer whatever part of it ` +
         `their own data does settle.`
+      : mode === 'lessons'
+      ? `Read back the lessons this trader wrote for themselves, under THEIR OWN LESSONS: ` +
+        `their own notes, the tags they filed them under, and the still images attached. ` +
+        `Name the themes their notes keep returning to, quoting the lessons by their own ` +
+        `titles and the counts behind each theme. Point out where two lessons pull in ` +
+        `different directions, and what their library does not cover yet. Say what their own ` +
+        `notes show, never what the market will do — a lesson is their finding, not a signal ` +
+        `or a trade to take. Where a lesson carries a video clip, say only that the clip ` +
+        `exists and that you cannot watch it. When the library is nearly empty, say exactly ` +
+        `that and make nextStep about writing more down.`
+      : mode === 'selfplan'
+      ? `Make your OWN trade plan for the instrument under LIVE READ, from its live quote and ` +
+        `the recent daily bars you were handed — and none of the trader's own levels, which ` +
+        `are deliberately withheld because they want your independent call, not a re-run of ` +
+        `theirs. Commit to a side: long or short, never a stand-aside. Give the entry, the ` +
+        `stop and the target as prices from the read, a confidence, why you would enter, why ` +
+        `you would exit, and what would prove the call wrong. Where THE TRADER'S GRADES OF ` +
+        `YOUR PAST PLANS appears, let their notes and grades shape how you write this one. ` +
+        `State plainly that this is your opinion and can be wrong.`
       : `Critique the single trade described below. Judge the decision and the execution separately. ` +
         `Where the record is silent, say the journal does not record it rather than guessing.`;
 
@@ -1945,11 +2194,13 @@ export function buildCoachPrompt(
       ? `\n\n${formatQuestionForPrompt(extras.question)}`
       : '';
 
-  // The daily-bar series behind a chart read. Fetched server-side; a chart read without
-  // the series degrades inside the formatter to a plain "data unavailable" block, and
-  // the guardrails make the model stand aside rather than describe a chart it cannot see.
+  // The daily-bar series behind a chart read, and behind the coach's own plan. Fetched
+  // server-side; a read without the series degrades inside the formatter to a plain "data
+  // unavailable" block, and the guardrails make the model stand aside rather than describe
+  // a chart it cannot see. The self-plan needs it for the same reason the chart read does:
+  // its entry, stop and target have to sit inside a range it was actually handed.
   const chartBlock =
-    mode === 'chartread' && extras?.chartSeries
+    (mode === 'chartread' || mode === 'selfplan') && extras?.chartSeries
       ? `\n\n${formatDailyBarsForPrompt(extras.chartSeries)}`
       : '';
 
@@ -1962,6 +2213,8 @@ export function buildCoachPrompt(
       ? formatImageBlockForPrompt(extras?.imageLabels)
       : mode === 'match'
       ? formatMatchImagesForPrompt(extras?.imageLabels)
+      : mode === 'lessons'
+      ? formatLessonImagesForPrompt(extras?.imageLabels)
       : '';
 
   const userPrompt =
@@ -1986,7 +2239,13 @@ export function buildCoachPrompt(
       // Gated on the mode: a picture search is the one mode where the trader's uploaded chart
       // and their own trade screenshots are both in play, so it is the one place the rules
       // have to say which picture is which.
-      mode === 'match'
+      mode === 'match',
+      // Gated on the mode for the same reason: the lesson notes are the trader's own material,
+      // read on request, so the rules about quoting them travel with that one read.
+      mode === 'lessons',
+      // And the self-plan rules, which narrow the market ban to the numbers it was handed and
+      // require a committed call rather than a stand-aside.
+      mode === 'selfplan'
     ),
     userPrompt,
   };
@@ -2354,6 +2613,60 @@ export function parseCoachResponse(
       notInJournal: asLooseText(obj.notInJournal),
       nextStep: asLooseText(obj.nextStep),
     };
+  }
+
+  if (mode === 'lessons') {
+    const themesRaw = Array.isArray(obj.themes) ? obj.themes : [];
+    const themes: LessonTheme[] = themesRaw
+      .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+      .map((item) => ({
+        theme: typeof item.theme === 'string' ? item.theme.trim() : '',
+        evidence: typeof item.evidence === 'string' ? item.evidence.trim() : '',
+      }))
+      // A theme with no name is not something the trader could use, so it is dropped rather
+      // than rendered as an empty card — the same rule the setup learner follows.
+      .filter((item) => item.theme);
+
+    const response: LessonsResponse = {
+      headline: asText(obj.headline, 'headline'),
+      themes,
+      reinforces: asText(obj.reinforces, 'reinforces'),
+      // Both may legitimately be empty: a library with no disagreements has none to name,
+      // and one that already covers what it needs has no gap.
+      contradictions: asTextList(obj.contradictions, 'contradictions'),
+      gaps: asTextList(obj.gaps, 'gaps'),
+      howToApply: asText(obj.howToApply, 'howToApply'),
+      nextStep: asText(obj.nextStep, 'nextStep'),
+      motivation: asText(obj.motivation, 'motivation'),
+    };
+    return response;
+  }
+
+  if (mode === 'selfplan') {
+    const entry = asNumberOrNull(obj.entry, 'entry');
+    const stop = asNumberOrNull(obj.stop, 'stop');
+    const target = asNumberOrNull(obj.target, 'target');
+    // A plan without real levels is not a plan the trader could grade, so missing numbers
+    // are refused rather than rendered as blanks.
+    if (entry === null || stop === null || target === null) {
+      throw new Error('The self plan must name a numeric entry, stop and target.');
+    }
+    const response: SelfPlanResponse = {
+      headline: asText(obj.headline, 'headline'),
+      // The instrument is the one that was asked for, so a caller cannot be shown a plan for
+      // a symbol it did not request.
+      symbol: (extras?.instrument || asLooseText(obj.symbol) || '').trim(),
+      direction: asEnum(obj.direction, ['long', 'short'] as const, 'long'),
+      entry,
+      stop,
+      target,
+      confidence: asEnum(obj.confidence, ['low', 'medium', 'high'] as const, 'low'),
+      entryReason: asText(obj.entryReason, 'entryReason'),
+      exitReason: asText(obj.exitReason, 'exitReason'),
+      invalidation: asText(obj.invalidation, 'invalidation'),
+      rationale: asText(obj.rationale, 'rationale'),
+    };
+    return response;
   }
 
   if (mode === 'prep') {

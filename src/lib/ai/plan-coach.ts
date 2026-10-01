@@ -1,4 +1,5 @@
 import type {
+  CoachPlan,
   DailyReview,
   ImportantLevel,
   Instrument,
@@ -49,6 +50,13 @@ export interface PlanCoachContext {
   timezone: string;
   /** The level-touch log, when the caller has it, so the coach can find the edge. */
   levelTouches?: LevelTouch[];
+  /**
+   * The coach's own past plans, with the trader's grades and feedback.
+   *
+   * Travels with the self-plan request only: it is the loop that lets the coach learn how
+   * the trader wants a plan written, and nowhere else needs it.
+   */
+  coachPlans?: CoachPlan[];
 }
 
 export function buildPlanCoachDigest(context: PlanCoachContext): JournalDigest {
@@ -62,6 +70,7 @@ export function buildPlanCoachDigest(context: PlanCoachContext): JournalDigest {
     todayTradeDate: context.day.tradeDate,
     timezone: context.timezone,
     levelTouches: context.levelTouches,
+    coachPlans: context.coachPlans,
   });
 }
 
@@ -158,6 +167,19 @@ export function askPlanField(
 export function askPlanBuild(context: PlanCoachContext): Promise<CoachResult> {
   return requestCoach('planbuild', buildPlanCoachDigest(context), undefined, {
     instrument: context.day.primaryInstrument,
+  });
+}
+
+/**
+ * The coach's own plan for one instrument, from the live read alone.
+ *
+ * Nothing of the trader's own levels travels with this: the whole point is an independent
+ * call the trader can grade. Their past grades and feedback do travel, so the coach learns
+ * how they want a plan written.
+ */
+export function askSelfPlan(context: PlanCoachContext, symbol: string): Promise<CoachResult> {
+  return requestCoach('selfplan', buildPlanCoachDigest(context), undefined, {
+    instrument: symbol,
   });
 }
 

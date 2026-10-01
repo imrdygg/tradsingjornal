@@ -1,6 +1,8 @@
-import React, { useMemo } from 'react';
-import { Award, PenLine } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { Award, PenLine, Image as ImageIcon, Play, Video } from 'lucide-react';
 import type { DailyReview, TradingDay } from '../../types';
+import { ImageLightboxModal } from '../common/ImageLightboxModal';
+import { isVideoUrl } from '../../lib/media/media-utils';
 
 interface LatestReviewCardProps {
   reviews: DailyReview[];
@@ -47,6 +49,8 @@ export const LatestReviewCard: React.FC<LatestReviewCardProps> = ({
   }, [reviews, tradingDays]);
 
   const isToday = latest?.date === todayTradeDate;
+  const media = latest?.review.media ?? [];
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   return (
     <div
@@ -94,6 +98,60 @@ export const LatestReviewCard: React.FC<LatestReviewCardProps> = ({
             <p className="mt-0.5 font-medium italic text-amber-100">
               "{latest.review.tomorrowFocus}"
             </p>
+
+            {/* The media attached to the review, shown with the focus it backs. */}
+            {media.length > 0 && (
+              <div className="mt-2 space-y-1.5">
+                <div className="flex items-center gap-2 font-mono text-[10px] text-amber-300/70">
+                  <ImageIcon className="h-3 w-3" />
+                  {media.filter((item) => !isVideoUrl(item)).length} image(s)
+                  {media.some((item) => isVideoUrl(item)) && (
+                    <span className="flex items-center gap-1">
+                      <Video className="h-3 w-3" />
+                      {media.filter((item) => isVideoUrl(item)).length} clip(s)
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                  {media.map((item, index) => {
+                    const video = isVideoUrl(item);
+                    return (
+                      <button
+                        key={index}
+                        type="button"
+                        data-lesson-media={index}
+                        onClick={() => setLightboxIndex(index)}
+                        className="group relative h-16 w-24 shrink-0 overflow-hidden rounded-lg border border-amber-900/50 bg-black/40 transition-transform hover:scale-105 active:scale-95"
+                        title={video ? 'Play clip' : 'View screenshot'}
+                      >
+                        {video ? (
+                          <video
+                            src={item}
+                            muted
+                            playsInline
+                            preload="metadata"
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <img
+                            src={item}
+                            alt={`Review attachment ${index + 1}`}
+                            className="h-full w-full object-cover"
+                          />
+                        )}
+                        <span className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
+                          {video ? (
+                            <Play className="h-4 w-4 fill-current text-amber-200" />
+                          ) : (
+                            <ImageIcon className="h-4 w-4 text-amber-200" />
+                          )}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       ) : (
@@ -101,6 +159,17 @@ export const LatestReviewCard: React.FC<LatestReviewCardProps> = ({
           Finish a review and it stays here, with the focus you set for the next session, until
           you write the next one.
         </p>
+      )}
+
+      {lightboxIndex !== null && media.length > 0 && (
+        <ImageLightboxModal
+          isOpen={true}
+          onClose={() => setLightboxIndex(null)}
+          images={media}
+          initialIndex={lightboxIndex}
+          title="End-of-day review"
+          subtitle={latest?.review.tomorrowFocus}
+        />
       )}
     </div>
   );

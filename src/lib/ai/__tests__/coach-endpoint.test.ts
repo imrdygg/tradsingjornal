@@ -79,6 +79,8 @@ describe('mode coverage', () => {
         'entrycall',
         'chartread',
         'ask',
+        'lessons',
+        'selfplan',
       ].sort()
     );
   });

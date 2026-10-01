@@ -12,6 +12,8 @@ import {
   LevelTouch,
   SessionExtreme,
   ChartSearch,
+  Lesson,
+  CoachPlan,
 } from '../../types';
 import {
   DEFAULT_INSTRUMENTS,
@@ -115,6 +117,8 @@ const STORAGE_KEYS = {
   LEVEL_TOUCHES: 'ptj_level_touches_v1',
   SESSION_EXTREMES: 'ptj_session_extremes_v1',
   CHART_SEARCHES: 'ptj_chart_searches_v1',
+  LESSONS: 'ptj_lessons_v1',
+  COACH_PLANS: 'ptj_coach_plans_v1',
   SETUP_CATALOG: 'ptj_setup_catalog_v1',
   LESSON_ACK: 'ptj_lesson_ack_v1',
   RECOVERY: 'ptj_recovery_v1',
@@ -202,6 +206,22 @@ export interface StorageState {
    * trader's own material, so a reset clears it with the journal it was searched against.
    */
   chartSearches?: ChartSearch[];
+  /**
+   * The lessons the trader has written down for themselves, with their own media.
+   *
+   * Playbook material rather than journal entries: a lesson is what the trader concluded,
+   * not a record of one session, so a reset keeps it and only a sign-out clears it. Optional
+   * so a snapshot saved before the feature existed still loads, and every reader treats a
+   * missing list as empty rather than as an error.
+   */
+  lessons?: Lesson[];
+  /**
+   * The plans the coach made on its own, with the trader's grades and feedback.
+   *
+   * Optional for the same reason as the lists above. Journal material rather than settings:
+   * a plan is tied to the market it was made against, so a reset clears it with the days.
+   */
+  coachPlans?: CoachPlan[];
   /**
    * The carried-forward lesson the trader has acknowledged, if any.
    *
@@ -976,7 +996,15 @@ export const storage = {
     return ack;
   },
 
-  getYesterdayFocus(): { date: string; focus: string } | null {
+  /**
+   * The lesson carried forward from the most recent completed review.
+   *
+   * Carries the review's own media as well as its focus, so the banner that shows the
+   * lesson can also show the screenshots and the clip the trader attached to it. The
+   * acknowledgement still keys on the date and the focus text, so extra fields here do not
+   * disturb which lesson counts as accepted.
+   */
+  getYesterdayFocus(): { date: string; focus: string; reviewId: string; media: string[] } | null {
     const days = this.getTradingDays()
       .filter((d) => d.status === 'completed')
       .sort((a, b) => b.tradeDate.localeCompare(a.tradeDate));
@@ -988,6 +1016,8 @@ export const storage = {
         return {
           date: day.tradeDate,
           focus: rev.tomorrowFocus.trim(),
+          reviewId: rev.id,
+          media: rev.media ?? [],
         };
       }
     }
@@ -1007,6 +1037,8 @@ export const storage = {
       levelTouches: this.getLevelTouches(),
       sessionExtremes: this.getSessionExtremes(),
       chartSearches: this.getChartSearches(),
+      lessons: this.getLessons(),
+      coachPlans: this.getCoachPlans(),
       lessonAck: this.getLessonAck(),
     };
     return JSON.stringify(state, null, 2);
@@ -1040,6 +1072,8 @@ export const storage = {
       if (parsed.levelTouches) setItem(STORAGE_KEYS.LEVEL_TOUCHES, parsed.levelTouches);
       if (parsed.sessionExtremes) setItem(STORAGE_KEYS.SESSION_EXTREMES, parsed.sessionExtremes);
       if (parsed.chartSearches) setItem(STORAGE_KEYS.CHART_SEARCHES, parsed.chartSearches);
+      if (parsed.lessons) setItem(STORAGE_KEYS.LESSONS, parsed.lessons);
+      if (parsed.coachPlans) setItem(STORAGE_KEYS.COACH_PLANS, parsed.coachPlans);
       // Written even when null (an explicit "nothing acknowledged"), so adopting a snapshot
       // carries that state across too. A backup taken before this existed has no key at
       // all and leaves what is here untouched.
@@ -1186,6 +1220,83 @@ export const storage = {
     setItem(STORAGE_KEYS.CHART_SEARCHES, []);
   },
 
+  getLessons(): Lesson[] {
+    return getItem<Lesson[]>(STORAGE_KEYS.LESSONS, []);
+  },
+
+  /**
+   * Upserts one lesson, newest first, keyed by id.
+   *
+   * A lesson is edited as it grows — the note gets rewritten, a second clip is attached, a
+   * tag is added — so this is both the create and the update path, the same way the
+   * level-touch log is. The list is not capped: these are the trader's own findings, and
+   * dropping the oldest to make room would delete the very material the feature exists to
+   * keep. Charts attached as screenshots are data URLs, so storage pressure is handled
+   * where every other attachment is, by the failure report rather than by silent deletion.
+   */
+  saveLesson(lesson: Lesson): Lesson[] {
+    const lessons = this.getLessons();
+    const index = lessons.findIndex((existing) => existing.id === lesson.id);
+    const updated: Lesson = { ...lesson, updatedAt: new Date().toISOString() };
+    const next =
+      index >= 0
+        ? [...lessons.slice(0, index), updated, ...lessons.slice(index + 1)]
+        : [updated, ...lessons];
+    setItem(STORAGE_KEYS.LESSONS, next);
+    return next;
+  },
+
+  deleteLesson(id: string): Lesson[] {
+    const next = this.getLessons().filter((lesson) => lesson.id !== id);
+    setItem(STORAGE_KEYS.LESSONS, next);
+    return next;
+  },
+
+  /**
+   * Stamps the lessons the coach just read with the moment it happened.
+   *
+   * A separate write from `saveLesson` on purpose: it only touches `lastReadAt` on the ids
+   * that were in the read, so it can never rewrite a note or drop media, and it leaves
+   * `updatedAt` alone because nothing the trader wrote changed.
+   */
+  markLessonsRead(ids: string[], at: string): Lesson[] {
+    const wanted = new Set(ids);
+    const next = this.getLessons().map((lesson) =>
+      wanted.has(lesson.id) ? { ...lesson, lastReadAt: at } : lesson
+    );
+    setItem(STORAGE_KEYS.LESSONS, next);
+    return next;
+  },
+
+  /** The coach's own plans, newest first. */
+  getCoachPlans(): CoachPlan[] {
+    return getItem<CoachPlan[]>(STORAGE_KEYS.COACH_PLANS, []);
+  },
+
+  /**
+   * Upserts one coach plan, newest first.
+   *
+   * The create path and the grading path are the same write on purpose: grading a plan is
+   * not a new record, it is the trader's judgement landing on the plan they were shown, and
+   * it has to keep the levels and reasoning that were actually on screen.
+   */
+  saveCoachPlan(plan: CoachPlan): CoachPlan[] {
+    const plans = this.getCoachPlans();
+    const index = plans.findIndex((existing) => existing.id === plan.id);
+    const next =
+      index >= 0
+        ? [...plans.slice(0, index), plan, ...plans.slice(index + 1)]
+        : [plan, ...plans];
+    setItem(STORAGE_KEYS.COACH_PLANS, next);
+    return next;
+  },
+
+  deleteCoachPlan(id: string): CoachPlan[] {
+    const next = this.getCoachPlans().filter((plan) => plan.id !== id);
+    setItem(STORAGE_KEYS.COACH_PLANS, next);
+    return next;
+  },
+
   /**
    * Clears every journal entry — trades, daily plans and reviews — while
    * keeping the trader's settings, instruments and playbook set-ups. This is
@@ -1212,6 +1323,8 @@ export const storage = {
       // The picture searches matched against the trades that are about to be deleted, so
       // they go with them rather than outliving the journal they describe.
       STORAGE_KEYS.CHART_SEARCHES,
+      // A coach plan is tied to the day's market, so it goes with the days it was made for.
+      STORAGE_KEYS.COACH_PLANS,
       STORAGE_KEYS.LESSON_ACK,
       // "Nothing can be undone" is the promise this reset makes, so the copy set aside
       // from before it goes too rather than becoming a way to undo it after all.
@@ -1243,6 +1356,8 @@ export const storage = {
       STORAGE_KEYS.LEVEL_TOUCHES,
       STORAGE_KEYS.SESSION_EXTREMES,
       STORAGE_KEYS.CHART_SEARCHES,
+      STORAGE_KEYS.LESSONS,
+      STORAGE_KEYS.COACH_PLANS,
       STORAGE_KEYS.SETUP_CATALOG,
       STORAGE_KEYS.LESSON_ACK,
       STORAGE_KEYS.RECOVERY,

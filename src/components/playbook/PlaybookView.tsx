@@ -23,8 +23,10 @@ import {
   ChartSearch,
   DailyReview,
   Instrument,
+  Lesson,
   LevelTouch,
   PatternStudy,
+  SessionExtreme,
   Setup,
   Trade,
   TradingDay,
@@ -36,6 +38,8 @@ import { Collapse } from '../common/Collapse';
 import { SetupDiagram } from './SetupDiagram';
 import { SetupGuide, resolveSetupGuide } from './setup-guides';
 import { ChartPatternsView } from './ChartPatternsView';
+import { LessonsView } from './LessonsView';
+import { CoachLessonsCard } from './CoachLessonsCard';
 import { EdgeFinderCard } from './EdgeFinderCard';
 import { CoachSetupsCard } from './CoachSetupsCard';
 import { ChartMatchCard } from '../trades/ChartMatchCard';
@@ -135,6 +139,30 @@ interface PlaybookViewProps {
     onAddSetups?: (setups: Setup[]) => void;
     userId?: string;
   };
+  /**
+   * The lessons the trader wrote for themselves: the library they build up, and the handlers
+   * for adding, editing and deleting one. Always set by the app; omitting it leaves the
+   * Lessons tab out rather than rendering a broken one.
+   */
+  lessons?: Lesson[];
+  onSaveLesson?: (lesson: Lesson) => void;
+  onDeleteLesson?: (lessonId: string) => void;
+  /**
+   * The journal the lesson read is built from. Omitted hides the coach card, the same way
+   * `edgeFinder` and `coachSetups` do, so the tab still works for a caller with no records.
+   */
+  lessonsCoach?: {
+    trades: Trade[];
+    tradingDays: TradingDay[];
+    reviews: DailyReview[];
+    instruments: Instrument[];
+    todayTradeDate: string;
+    timezone: string;
+    maxDrawdown?: number | null;
+    levelTouches?: LevelTouch[];
+    sessionExtremes?: SessionExtreme[];
+    onMarkRead?: (lessonIds: string[], at: string) => void;
+  };
 }
 
 /** Small labelled block used inside each setup's guide container. */
@@ -177,6 +205,10 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
   coachSetups,
   levelTouchLog,
   chartMatch,
+  lessons = [],
+  onSaveLesson,
+  onDeleteLesson,
+  lessonsCoach,
 }) => {
   const [newSetupName, setNewSetupName] = useState('');
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
@@ -199,7 +231,9 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
    * a two-way switch rather than one long page: the trader either wants the setups they
    * actually trade, or the reference study material behind them.
    */
-  const [section, setSection] = useState<'setups' | 'patterns'>(focusPatternId ? 'patterns' : 'setups');
+  const [section, setSection] = useState<'setups' | 'patterns' | 'lessons'>(
+    focusPatternId ? 'patterns' : 'setups'
+  );
 
   // A deep link has to be able to arrive on the pattern it names, not just the tab.
   useEffect(() => {
@@ -375,6 +409,7 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
         {([
           { id: 'setups' as const, label: `My setups (${setups.length})` },
           { id: 'patterns' as const, label: `Chart patterns (${PATTERNS.length})` },
+          { id: 'lessons' as const, label: `Lessons (${lessons.length})` },
         ]).map((entry) => (
           <button
             key={entry.id}
@@ -401,6 +436,26 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
           focusPatternId={focusPatternId}
           onOpenPattern={onOpenPattern}
         />
+      )}
+
+      {section === 'lessons' && (
+        <div className="space-y-6">
+          {/* The read comes first: the library below is what it reads. */}
+          {lessonsCoach && (
+            <CoachLessonsCard
+              {...lessonsCoach}
+              setups={setups}
+              lessons={lessons}
+            />
+          )}
+          <LessonsView
+            lessons={lessons}
+            setups={setups}
+            userId={chartMatch?.userId ?? ''}
+            onSave={(lesson) => onSaveLesson?.(lesson)}
+            onDelete={(lessonId) => onDeleteLesson?.(lessonId)}
+          />
+        </div>
       )}
 
       {section === 'setups' && (

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { DailyReview, DailyReviewQuestions, LevelTouch, Setup, Trade, TradingDay } from '../../../types';
+import { CoachPlan, DailyReview, DailyReviewQuestions, Lesson, LevelTouch, Setup, Trade, TradingDay } from '../../../types';
 import { buildJournalDigest, FULL_HISTORY_TRADE_SAMPLES } from '../journal-digest';
 import { DEFAULT_INSTRUMENTS } from '../../trading/instruments';
 
@@ -80,6 +80,20 @@ function makeReview(overrides: Partial<DailyReview> = {}): DailyReview {
     tomorrowFocus: 'Hold the planned size.',
     createdAt: '2026-09-18T20:00:00.000Z',
     updatedAt: '2026-09-18T20:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function makeLesson(overrides: Partial<Lesson> = {}): Lesson {
+  return {
+    id: 'lesson-1',
+    userId: 'u1',
+    title: 'Overnight high gets swept before the open reverses',
+    notes: 'The sweep takes the pre-open stops, then the move fades back inside the range.',
+    kind: 'pattern',
+    tags: ['liquidity'],
+    createdAt: '2026-09-20T18:30:00.000Z',
+    updatedAt: '2026-09-20T18:30:00.000Z',
     ...overrides,
   };
 }
@@ -922,5 +936,111 @@ describe('trade samples', () => {
     // A caller cannot ask past the ceiling, nor for fewer than one.
     expect(build({ trades, tradeSampleLimit: 10_000 }).tradeSamples).toHaveLength(60);
     expect(build({ trades, tradeSampleLimit: 0 }).tradeSamples).toHaveLength(1);
+  });
+});
+
+describe('the trader\u2019s own lessons', () => {
+  it('counts media and resolves the setup a lesson names, without sending bytes', () => {
+    const digest = build({
+      setups: [{ id: 's1', name: 'Support', active: true, createdAt: '2026-09-01T00:00:00.000Z' }],
+      lessons: [
+        makeLesson({
+          setupId: 's1',
+          media: ['data:image/jpeg;base64,AAAA', 'https://example.com/clip.mp4'],
+        }),
+      ],
+    });
+
+    const read = digest.lessonRead;
+    expect(read.total).toBe(1);
+    expect(read.lessons[0].setupName).toBe('Support');
+    expect(read.lessons[0].imageCount).toBe(1);
+    expect(read.lessons[0].videoCount).toBe(1);
+    expect(read.withImages).toBe(1);
+    // The images travel as their own request parts; the digest only says how many.
+    expect(JSON.stringify(read)).not.toContain('base64');
+  });
+
+  it('lists newest first and counts what it left out', () => {
+    const lessons = Array.from({ length: 45 }, (_, i) =>
+      makeLesson({
+        id: `lesson-${i}`,
+        createdAt: `2026-09-${String((i % 28) + 1).padStart(2, '0')}T12:00:00.000Z`,
+      })
+    );
+    const read = build({ lessons }).lessonRead;
+    expect(read.total).toBe(45);
+    expect(read.lessons).toHaveLength(40);
+    expect(read.omitted).toBe(5);
+  });
+
+  it('reads an empty library as nothing written down', () => {
+    const read = build().lessonRead;
+    expect(read.total).toBe(0);
+    expect(read.lessons).toEqual([]);
+  });
+});
+
+function makeCoachPlan(overrides: Partial<CoachPlan> = {}): CoachPlan {
+  return {
+    id: 'cp1',
+    userId: 'u1',
+    createdAt: '2026-09-19T13:00:00.000Z',
+    symbol: 'MES',
+    marketPrice: 7740,
+    direction: 'long',
+    entry: 7742,
+    stop: 7732,
+    target: 7760,
+    confidence: 'medium',
+    entryReason: 'A hold above the prior close.',
+    exitReason: 'Target or the stop.',
+    invalidation: 'A break back below the overnight low.',
+    rationale: 'My own read, and it can be wrong.',
+    ...overrides,
+  };
+}
+
+/**
+ * The coach's own plans and the trader's judgement of them. This is the only input that
+ * lets the coach improve at planning, so what it carries — and what it deliberately does
+ * not — is asserted here.
+ */
+describe("the coach's own plans and the trader's grades", () => {
+  it('counts the plans, the graded ones and how many were left out', () => {
+    const plans = Array.from({ length: 15 }, (_, i) =>
+      makeCoachPlan({
+        id: `cp-${i}`,
+        createdAt: `2026-09-${String((i % 28) + 1).padStart(2, '0')}T12:00:00.000Z`,
+        grade: i < 4 ? 'B' : undefined,
+      })
+    );
+    const read = build({ coachPlans: plans }).coachPlanRead;
+    expect(read.total).toBe(15);
+    expect(read.graded).toBe(4);
+    expect(read.plans).toHaveLength(12);
+    expect(read.omitted).toBe(3);
+  });
+
+  it('quotes the trader\u2019s written feedback newest first, with the plan it graded', () => {
+    const read = build({
+      coachPlans: [
+        makeCoachPlan({ id: 'a', createdAt: '2026-09-18T13:00:00.000Z', grade: 'C', feedback: 'Target was too far.' }),
+        makeCoachPlan({ id: 'b', createdAt: '2026-09-20T13:00:00.000Z', grade: 'A', feedback: 'That entry was right.' }),
+      ],
+    }).coachPlanRead;
+
+    expect(read.plans[0].date).toBe('2026-09-20');
+    expect(read.plans[0].grade).toBe('A');
+    expect(read.feedback[0]).toContain('That entry was right.');
+    expect(read.feedback[0]).toContain('graded A');
+    expect(read.feedback[1]).toContain('Target was too far.');
+  });
+
+  it('reads an empty history as nothing to learn from yet', () => {
+    const read = build().coachPlanRead;
+    expect(read.total).toBe(0);
+    expect(read.plans).toEqual([]);
+    expect(read.feedback).toEqual([]);
   });
 });

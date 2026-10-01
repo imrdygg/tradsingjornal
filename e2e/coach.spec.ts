@@ -20,7 +20,9 @@ async function gotoTab(page: Page, tab: string, heading: RegExp) {
   } else {
     await mobile.click();
   }
-  await expect(page.getByRole('heading', { name: heading })).toBeVisible();
+  // The tab's own title is its only h1. Scoped to that level because a card heading can
+  // legitimately mention the coach ("the coach's own call") and must not read as the page.
+  await expect(page.getByRole('heading', { name: heading, level: 1 })).toBeVisible();
 }
 
 /** The form asks for entry/exit/why/note/tags; the times and the rest are under "More options". */
@@ -54,6 +56,24 @@ test.describe('Coach tab', () => {
     // With an empty journal the coach is told, in the UI, that it has nothing.
     await expect(page.getByText(/No closed trades have been logged yet/i)).toBeVisible();
     await expect(page.getByText(/No end-of-day reviews completed/i)).toBeVisible();
+  });
+
+  test('offers the coach its own plan to grade, with nothing graded before one is made', async ({
+    page,
+  }) => {
+    await gotoTab(page, 'coach', /Coach/i);
+
+    // The card is on the tab, states what it will do, and can name an instrument to plan.
+    const card = page.locator('#coach-self-plan');
+    await expect(card).toBeVisible();
+    await expect(card).toContainText(/ignores your own levels/i);
+    await expect(page.locator('#coach-self-plan-symbol')).toBeVisible();
+    await expect(page.locator('#coach-self-plan-generate')).toBeVisible();
+
+    // Nothing is graded until a plan exists: the grade controls appear with the plan, not
+    // before it, so the trader is never asked to judge something they have not seen.
+    await expect(page.locator('#coach-plan-feedback')).toHaveCount(0);
+    await expect(page.locator('#coach-plan-grade-A')).toHaveCount(0);
   });
 
   test('names the one outside number it uses before the trader relies on it', async ({ page }) => {

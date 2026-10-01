@@ -16,11 +16,14 @@ import type {
   ChartReadResponse,
   CoachTradeFacts,
   LearnedSetup,
+  LessonsResponse,
   MatchResponse,
+  SelfPlanResponse,
 } from '../coach-types';
 import { buildJournalDigest } from '../journal-digest';
 import type { DailyBars, MarketBrief } from '../market-data';
 import {
+  CoachPlan,
   DailyReview,
   DailyReviewQuestions,
   LevelTouch,
@@ -1252,6 +1255,221 @@ describe('match mode', () => {
     }) as MatchResponse;
 
     expect(parsed.matches[0].compared).toBe('written-record');
+  });
+});
+
+/**
+ * The lesson read is the one place the coach looks at the trader's own notes. It is kept to
+ * its own mode on purpose, so what is asserted here is both that the notes reach that read and
+ * that they are kept out of every other one — and that a video clip is named as something the
+ * model cannot watch rather than silently dropped or imagined.
+ */
+describe('lessons mode', () => {
+  const lesson = {
+    id: 'l1',
+    userId: 'u1',
+    title: 'Overnight high gets swept before the open reverses',
+    notes: 'The sweep takes the pre-open stops, then the move fades back inside the range.',
+    kind: 'pattern' as const,
+    tags: ['liquidity'],
+    createdAt: '2026-09-20T18:30:00.000Z',
+    updatedAt: '2026-09-20T18:30:00.000Z',
+  };
+
+  it('renders the notes only for its own mode', () => {
+    const digest = digestFor({ lessons: [lesson] });
+    const lessonsText = formatDigestForPrompt(digest, 'lessons');
+    expect(lessonsText).toContain('THEIR OWN LESSONS');
+    expect(lessonsText).toContain('Overnight high gets swept before the open reverses');
+    expect(lessonsText).toContain('The sweep takes the pre-open stops');
+
+    // Every other answer is kept clear of the trader's own notes.
+    expect(formatDigestForPrompt(digest, 'brief')).not.toContain('THEIR OWN LESSONS');
+    expect(formatDigestForPrompt(digest)).not.toContain('THEIR OWN LESSONS');
+  });
+
+  it('says a video clip exists and that the model cannot watch it', () => {
+    const digest = digestFor({
+      lessons: [{ ...lesson, media: ['https://example.com/clip.mp4'] }],
+    });
+    const text = formatDigestForPrompt(digest, 'lessons');
+    expect(text).toContain('1 video clip(s) you cannot watch');
+    expect(text).not.toContain('https://example.com/clip.mp4');
+  });
+
+  it('adds the lesson guardrails only for this mode', () => {
+    const digest = digestFor({ lessons: [lesson] });
+    expect(buildCoachPrompt('lessons', digest).systemInstruction).toContain(
+      "THE TRADER'S OWN LESSONS"
+    );
+    expect(buildCoachPrompt('brief', digest).systemInstruction).not.toContain(
+      "THE TRADER'S OWN LESSONS"
+    );
+  });
+
+  it('names the attached still images in order', () => {
+    const { userPrompt } = buildCoachPrompt(
+      'lessons',
+      digestFor({ lessons: [lesson] }),
+      undefined,
+      undefined,
+      { imageLabels: [`2026-09-20 lesson "${lesson.title}"`] }
+    );
+    expect(userPrompt).toContain('THE IMAGES ATTACHED TO THESE LESSONS');
+    expect(userPrompt).toContain('IMAGE 1: 2026-09-20 lesson');
+  });
+
+  it('drops a theme with no name and requires the read to be present', () => {
+    const parsed = parseCoachResponse('lessons', {
+      headline: 'Your notes keep returning to the open.',
+      themes: [
+        { theme: 'The open', evidence: '3 lessons' },
+        { theme: '', evidence: 'nameless' },
+      ],
+      reinforces: 'You keep writing about the open.',
+      contradictions: [],
+      gaps: [],
+      howToApply: 'Use the notes as a checklist.',
+      nextStep: 'Tag the next one.',
+      motivation: 'Three weeks of notes without a gap.',
+    }) as LessonsResponse;
+
+    expect(parsed.themes).toHaveLength(1);
+    expect(parsed.themes[0].theme).toBe('The open');
+
+    expect(() =>
+      parseCoachResponse('lessons', {
+        reinforces: 'x',
+        howToApply: 'y',
+        nextStep: 'z',
+        motivation: 'm',
+      })
+    ).toThrow(/headline/);
+  });
+});
+
+/**
+ * The self-plan mode: the one place the coach makes its own call on a market.
+ *
+ * The trader asked for a plan they can grade rather than one that agrees with them, so
+ * what is asserted here is that the mode is gated like the other opinion modes, that it
+ * commits to a side and real levels, and that only the trader's own past grades reach it.
+ */
+describe('selfplan mode', () => {
+  const plan: CoachPlan = {
+    id: 'cp1',
+    userId: 'u1',
+    createdAt: '2026-09-19T13:00:00.000Z',
+    symbol: 'MES',
+    marketPrice: 7740,
+    direction: 'long',
+    entry: 7742,
+    stop: 7732,
+    target: 7760,
+    confidence: 'medium',
+    entryReason: 'A hold above the prior close.',
+    exitReason: 'Target or the stop, whichever prints first.',
+    invalidation: 'A break back below the overnight low.',
+    rationale: 'My own read, and it can be wrong.',
+    grade: 'B',
+    feedback: 'Entry was too close to the level.',
+  };
+
+  it('is an opinion mode, so the live read is allowed to reach it', () => {
+    expect(allowsMarketOpinion('selfplan')).toBe(true);
+  });
+
+  it('hands the coach the daily bars, so its levels sit inside a range it was given', () => {
+    const chartSeries: DailyBars = {
+      ok: true,
+      symbol: 'MES',
+      yahooSymbol: 'MES=F',
+      fetchedAt: '2026-09-18T13:00:00.000Z',
+      bars: [
+        { date: '2026-09-17', open: 7720, high: 7745, low: 7715, close: 7740, volume: 1100 },
+      ],
+    };
+    const { userPrompt } = buildCoachPrompt('selfplan', digestFor(), undefined, undefined, {
+      instrument: 'MES',
+      chartSeries,
+    });
+    expect(userPrompt).toContain('DAILY CHART DATA: MES');
+
+    // The bars stay gated to the modes that were promised them.
+    expect(
+      buildCoachPrompt('brief', digestFor(), undefined, undefined, { chartSeries }).userPrompt
+    ).not.toContain('DAILY CHART DATA');
+  });
+
+  it('adds the self-plan guardrails only for this mode', () => {
+    const digest = digestFor();
+    expect(buildCoachPrompt('selfplan', digest).systemInstruction).toContain(
+      "THE COACH'S OWN PLAN"
+    );
+    expect(buildCoachPrompt('brief', digest).systemInstruction).not.toContain(
+      "THE COACH'S OWN PLAN"
+    );
+  });
+
+  it("renders the trader's grades of past plans only for this mode", () => {
+    const digest = digestFor({ coachPlans: [plan] });
+    const self = formatDigestForPrompt(digest, 'selfplan');
+    expect(self).toContain("THE TRADER'S GRADES OF YOUR PAST PLANS");
+    expect(self).toContain('Entry was too close to the level.');
+    // And the grades never leak into any other answer.
+    expect(formatDigestForPrompt(digest, 'brief')).not.toContain(
+      "THE TRADER'S GRADES OF YOUR PAST PLANS"
+    );
+    expect(formatDigestForPrompt(digest)).not.toContain(
+      "THE TRADER'S GRADES OF YOUR PAST PLANS"
+    );
+  });
+
+  it('asks for a committed call rather than a stand-aside', () => {
+    expect(COACH_RESPONSE_SHAPES.selfplan).toContain('stand-aside is not an answer');
+    expect(COACH_RESPONSE_SHAPES.selfplan).toContain('never invented');
+  });
+
+  it('parses a plan and takes the symbol from the request, not the answer', () => {
+    const parsed = parseCoachResponse(
+      'selfplan',
+      {
+        headline: 'Long above the prior close',
+        symbol: 'NQ',
+        direction: 'LONG',
+        entry: '7,742.00',
+        stop: 7732,
+        target: 7760,
+        confidence: 'MEDIUM',
+        entryReason: 'Hold above the prior close.',
+        exitReason: 'Target or stop.',
+        invalidation: 'Below the overnight low.',
+        rationale: 'My own read, and it can be wrong.',
+      },
+      { instrument: 'MES' }
+    ) as SelfPlanResponse;
+
+    expect(parsed.symbol).toBe('MES');
+    expect(parsed.direction).toBe('long');
+    expect(parsed.confidence).toBe('medium');
+    expect(parsed.entry).toBe(7742);
+  });
+
+  it('refuses a plan without real levels, since it could not be graded', () => {
+    expect(() =>
+      parseCoachResponse('selfplan', {
+        headline: 'x',
+        direction: 'long',
+        entry: 7742,
+        stop: null,
+        target: 7760,
+        confidence: 'medium',
+        entryReason: 'a',
+        exitReason: 'b',
+        invalidation: 'c',
+        rationale: 'd',
+      })
+    ).toThrow(/entry, stop and target/);
   });
 });
 

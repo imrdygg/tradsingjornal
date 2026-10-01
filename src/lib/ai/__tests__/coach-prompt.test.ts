@@ -1411,6 +1411,23 @@ describe('selfplan mode', () => {
     );
   });
 
+  it('does not also hand the coach the general "standing aside is a real answer" rules', () => {
+    // The self-plan is an opinion mode, but the two rule sets conflict: the general suffix
+    // makes a stand-aside a first-class answer, while the self-plan requires a committed
+    // call. Left in, it produced the flat "nothing lines up" plan the trader was stuck with.
+    const selfPlan = buildCoachPrompt('selfplan', digestFor()).systemInstruction;
+    expect(selfPlan).not.toContain('STANDING ASIDE IS A REAL ANSWER');
+    expect(selfPlan).toContain('COMMIT');
+
+    // The other opinion modes keep it, unchanged.
+    expect(buildCoachPrompt('planbuild', digestFor()).systemInstruction).toContain(
+      'STANDING ASIDE IS A REAL ANSWER'
+    );
+    expect(buildCoachPrompt('entrycall', digestFor()).systemInstruction).toContain(
+      'STANDING ASIDE IS A REAL ANSWER'
+    );
+  });
+
   it("renders the trader's grades of past plans only for this mode", () => {
     const digest = digestFor({ coachPlans: [plan] });
     const self = formatDigestForPrompt(digest, 'selfplan');
@@ -1453,6 +1470,25 @@ describe('selfplan mode', () => {
     expect(parsed.direction).toBe('long');
     expect(parsed.confidence).toBe('medium');
     expect(parsed.entry).toBe(7742);
+  });
+
+  it('refuses a stand-aside instead of quietly coercing it into a long plan', () => {
+    // The complaint this mode exists to fix was the coach answering "flat". A flat answer is
+    // not a plan the trader can grade, so it is refused rather than shown as a long one.
+    expect(() =>
+      parseCoachResponse('selfplan', {
+        headline: 'Nothing lines up',
+        direction: 'flat',
+        entry: 7742,
+        stop: 7732,
+        target: 7760,
+        confidence: 'low',
+        entryReason: 'a',
+        exitReason: 'b',
+        invalidation: 'c',
+        rationale: 'd',
+      })
+    ).toThrow(/long or short/);
   });
 
   it('refuses a plan without real levels, since it could not be graded', () => {

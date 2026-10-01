@@ -22,6 +22,12 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/');
 });
 
+/** A one-pixel PNG, enough to prove review media is stored and read back. */
+const PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+  'base64'
+);
+
 /** Writes the day's review from the card on Today, the way the trader reaches it. */
 async function writeReview(page: Page) {
   await page.locator('#latest-review-open').click();
@@ -98,6 +104,42 @@ test.describe('What Today shows on load', () => {
     // And the trend counts it, without the lesson banner having been accepted — there is no
     // banner for a day that is only now being completed.
     await expect(page.locator('#review-trend')).toContainText('1 reviewed day');
+  });
+
+  test('attaches media to a review, and reopening the review still has it', async ({ page }) => {
+    await page.locator('#latest-review-open').click();
+    await expect(page.getByText(/Daily Reflections/i).first()).toBeVisible();
+
+    // Attach the picture from inside the form, the way the trader records the session.
+    await page.locator('#review-media-file-input').setInputFiles({
+      name: 'session.png',
+      mimeType: 'image/png',
+      buffer: PNG,
+    });
+    await expect(page.locator('#review-media-container')).toContainText('1 / 6 attached');
+
+    await page.getByPlaceholder(/Waited patiently/).fill('Sat out the first five minutes.');
+    await page.getByPlaceholder(/Moved initial stop/).fill('Sized up after the first winner.');
+    await page
+      .getByPlaceholder(/Honor original stop/)
+      .fill('Only take the first retest of the level.');
+    await page.getByRole('button', { name: /Save Daily Review/i }).click();
+
+    // The review card shows the attachment with the focus it backs.
+    const card = page.locator('#latest-review');
+    await expect(card).toContainText('Only take the first retest of the level.');
+    await expect(card.locator('[data-lesson-media]')).toHaveCount(1);
+
+    // Reopening the review must show the attachment still there, not silently dropped.
+    await page.locator('#latest-review-open').click();
+    await expect(page.locator('#review-media-container')).toContainText('1 / 6 attached');
+    await page.keyboard.press('Escape');
+
+    // And the lesson it set is carried forward with the picture behind it, so the next
+    // session starts from the screenshot and not only the sentence.
+    const banner = page.locator('[data-lesson-state="new"]');
+    await expect(banner).toContainText('Only take the first retest of the level.');
+    await expect(banner.locator('[data-lesson-media]')).toHaveCount(1);
   });
 
   test('shows the media attached to a review with the focus it backs', async ({ page }) => {

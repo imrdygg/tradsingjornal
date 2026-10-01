@@ -9,6 +9,12 @@ import { expect, test, type Page } from '@playwright/test';
  * reload — plus the dedicated coach card that reads the library on request.
  */
 
+/** A one-pixel PNG, enough to prove an attachment is compressed, stored and read back. */
+const PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+  'base64'
+);
+
 async function gotoLessons(page: Page) {
   const desktop = page.locator('#nav-btn-playbook');
   const mobile = page.locator('#mobile-nav-playbook');
@@ -130,4 +136,44 @@ test('writes, files, finds, edits and keeps a lesson', async ({ page }) => {
   await expect(rows).toHaveCount(1);
   await rows.first().locator('button[title="Delete this lesson"]').click();
   await expect(page.getByText('No lessons saved yet')).toBeVisible();
+});
+
+/**
+ * The media half of a lesson: a screenshot attaches, saves with the lesson, is counted for the
+ * coach's read, and survives a reload — the whole point being that the picture the trader took
+ * at the time is still there weeks later.
+ */
+test('attaches a screenshot and keeps it through the save and a reload', async ({ page }) => {
+  await gotoLessons(page);
+  await addLesson(page, { title: 'Sweep of the overnight high', kind: 'pattern' });
+
+  // Reopen the row to attach the picture to the lesson that already exists.
+  const row = page.locator('[data-lesson-row]').first();
+  const lessonId = await row.getAttribute('data-lesson-row');
+  await page.locator(`#lesson-edit-${lessonId}`).click();
+  await page.locator('#lesson-media-file-input').setInputFiles({
+    name: 'sweep.png',
+    mimeType: 'image/png',
+    buffer: PNG,
+  });
+  await expect(page.locator('#lesson-media-container')).toContainText('1 / 6 attached');
+  await page.locator('#lesson-save').click();
+
+  await expect(row).toContainText('1 image(s)');
+  await expect(row.locator('img')).toHaveCount(1);
+
+  // The coach card counts the still image it will send with the read.
+  const coachCard = page.locator('#playbook-coach-lessons');
+  await expect(coachCard.locator('#coach-lessons-facts')).toContainText('Screenshots sent');
+  await expect(coachCard).toContainText('1 still image(s) travel with the read');
+
+  // Reload: the compressed data URL is still on the lesson, and still counted.
+  await page.reload();
+  await gotoLessons(page);
+  const reloaded = page.locator(`[data-lesson-row="${lessonId}"]`);
+  await expect(reloaded).toContainText('1 image(s)');
+  await expect(reloaded.locator('img')).toHaveCount(1);
+  await expect(page.locator('#playbook-coach-lessons')).toContainText(
+    '1 still image(s) travel with the read'
+  );
 });

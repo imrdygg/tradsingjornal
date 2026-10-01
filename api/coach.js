@@ -543,7 +543,7 @@ function coachGuardrails(withMarketData, withOpinion = false, withLevelEdge = fa
   if (withLevelEdge) text += LEVEL_EDGE_GUARDRAILS_SUFFIX;
   if (withExtremes) text += EXTREMES_GUARDRAILS_SUFFIX;
   if (withMarketData) text += MARKET_GUARDRAILS_SUFFIX;
-  if (withOpinion) text += OPINION_GUARDRAILS_SUFFIX;
+  if (withOpinion && !withSelfPlan) text += OPINION_GUARDRAILS_SUFFIX;
   return text;
 }
 var COACH_GUARDRAILS = `You are the performance coach built into one futures trader's private journal.
@@ -2191,12 +2191,16 @@ function parseCoachResponse(mode, raw, extras) {
     if (entry === null || stop === null || target === null) {
       throw new Error("The self plan must name a numeric entry, stop and target.");
     }
+    const directionRaw = typeof obj.direction === "string" ? obj.direction.trim().toLowerCase() : "";
+    if (directionRaw !== "long" && directionRaw !== "short") {
+      throw new Error("The self plan must commit to long or short.");
+    }
     const response = {
       headline: asText(obj.headline, "headline"),
       // The instrument is the one that was asked for, so a caller cannot be shown a plan for
       // a symbol it did not request.
       symbol: (extras?.instrument || asLooseText(obj.symbol) || "").trim(),
-      direction: asEnum(obj.direction, ["long", "short"], "long"),
+      direction: directionRaw,
       entry,
       stop,
       target,

@@ -183,7 +183,12 @@ export function coachGuardrails(
   if (withLevelEdge) text += LEVEL_EDGE_GUARDRAILS_SUFFIX;
   if (withExtremes) text += EXTREMES_GUARDRAILS_SUFFIX;
   if (withMarketData) text += MARKET_GUARDRAILS_SUFFIX;
-  if (withOpinion) text += OPINION_GUARDRAILS_SUFFIX;
+  // The self-plan is an opinion mode, but it is the one placed where a called-off answer is
+  // not allowed: the trader asked for a plan to grade. The general opinion suffix makes
+  // standing aside a first-class answer, which would fight the self-plan's own rules and is
+  // exactly the flat, "nothing lines up" answer the trader is trying to avoid, so the
+  // self-plan's stricter suffix stands in for it.
+  if (withOpinion && !withSelfPlan) text += OPINION_GUARDRAILS_SUFFIX;
   return text;
 }
 
@@ -2651,12 +2656,19 @@ export function parseCoachResponse(
     if (entry === null || stop === null || target === null) {
       throw new Error('The self plan must name a numeric entry, stop and target.');
     }
+    // This is the one mode where a stand-aside is not an answer. If the model returns one
+    // anyway, the request is refused rather than quietly coerced into a long plan the coach
+    // never actually called — a direction the trader was not given cannot be graded.
+    const directionRaw = typeof obj.direction === 'string' ? obj.direction.trim().toLowerCase() : '';
+    if (directionRaw !== 'long' && directionRaw !== 'short') {
+      throw new Error('The self plan must commit to long or short.');
+    }
     const response: SelfPlanResponse = {
       headline: asText(obj.headline, 'headline'),
       // The instrument is the one that was asked for, so a caller cannot be shown a plan for
       // a symbol it did not request.
       symbol: (extras?.instrument || asLooseText(obj.symbol) || '').trim(),
-      direction: asEnum(obj.direction, ['long', 'short'] as const, 'long'),
+      direction: directionRaw,
       entry,
       stop,
       target,

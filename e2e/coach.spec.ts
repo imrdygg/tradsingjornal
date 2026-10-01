@@ -76,6 +76,23 @@ test.describe('Coach tab', () => {
     await expect(page.locator('#coach-plan-grade-A')).toHaveCount(0);
   });
 
+  test('reports honestly when its own plan cannot be made, rather than inventing one', async ({
+    page,
+  }) => {
+    await gotoTab(page, 'coach', /Coach/i);
+
+    await expect(page.locator('#coach-error-self-plan')).toHaveCount(0);
+    await page.locator('#coach-self-plan-generate').click();
+
+    // vite dev has no serverless function, so the call fails. It must say so plainly — and
+    // leave nothing to grade, because a plan nobody made is not a plan.
+    const error = page.locator('#coach-error-self-plan');
+    await expect(error).toBeVisible();
+    await expect(error).toContainText(/Coach not available here/i);
+    await expect(page.locator('#coach-plan-feedback')).toHaveCount(0);
+    await expect(page.locator('#coach-plan-grade-A')).toHaveCount(0);
+  });
+
   test('names the one outside number it uses before the trader relies on it', async ({ page }) => {
     await gotoTab(page, 'coach', /Coach/i);
 

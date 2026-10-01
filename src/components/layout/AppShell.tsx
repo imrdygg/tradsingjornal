@@ -53,6 +53,13 @@ interface AppShellProps {
   syncStatus?: SyncStatus;
   lastSyncedAt?: Date | null;
   onRetrySync?: () => void;
+  /**
+   * Coach calls waiting on the trader — ungraded or with no result marked.
+   *
+   * Shown as a count on the Calls tab so a call made and forgotten about is visible from any
+   * other tab, which is the whole point of keeping them as drafts. Zero hides the badge.
+   */
+  pendingCalls?: number;
   children: React.ReactNode;
 }
 
@@ -73,6 +80,7 @@ export const AppShell: React.FC<AppShellProps> = ({
   syncStatus,
   lastSyncedAt,
   onRetrySync,
+  pendingCalls = 0,
   children,
 }) => {
   const todayDate = getCurrentTradingDate(timezone);
@@ -204,6 +212,7 @@ export const AppShell: React.FC<AppShellProps> = ({
             {navItems.map((item) => {
               const Icon = item.icon;
               const isActive = currentTab === item.id;
+              const badge = item.id === 'calls' ? pendingCalls : 0;
               return (
                 <button
                   key={item.id}
@@ -217,6 +226,15 @@ export const AppShell: React.FC<AppShellProps> = ({
                 >
                   <Icon className="h-3.5 w-3.5" />
                   {item.label}
+                  {badge > 0 && (
+                    <span
+                      id={`nav-badge-${item.id}`}
+                      title={`${badge} call(s) waiting to be graded or marked`}
+                      className="rounded-full bg-sky-500/20 px-1.5 py-0.5 font-mono text-[10px] font-bold text-sky-300"
+                    >
+                      {badge}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -356,18 +374,30 @@ export const AppShell: React.FC<AppShellProps> = ({
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = currentTab === item.id;
+            const badge = item.id === 'calls' ? pendingCalls : 0;
             return (
               <button
                 key={item.id}
                 id={`mobile-nav-${item.id}`}
                 onClick={() => onSelectTab(item.id)}
-                className={`flex flex-col items-center justify-center rounded-lg py-1 text-[9px] transition-colors ${
+                className={`relative flex flex-col items-center justify-center rounded-lg py-1 text-[9px] transition-colors ${
                   isActive
                     ? 'bg-zinc-900 font-medium text-zinc-100'
                     : 'text-zinc-400 hover:text-zinc-200'
                 }`}
               >
-                <Icon className={`mb-0.5 h-4 w-4 ${isActive ? 'text-zinc-100' : 'text-zinc-400'}`} />
+                <span className="relative mb-0.5">
+                  <Icon className={`h-4 w-4 ${isActive ? 'text-zinc-100' : 'text-zinc-400'}`} />
+                  {badge > 0 && (
+                    <span
+                      id={`mobile-nav-badge-${item.id}`}
+                      title={`${badge} call(s) waiting to be graded or marked`}
+                      className="absolute -right-2 -top-1.5 rounded-full bg-sky-500 px-1 font-mono text-[8px] font-bold leading-tight text-zinc-950"
+                    >
+                      {badge}
+                    </span>
+                  )}
+                </span>
                 <span className="w-full truncate text-center">{item.label}</span>
               </button>
             );

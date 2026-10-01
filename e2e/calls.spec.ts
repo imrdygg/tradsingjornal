@@ -260,6 +260,86 @@ test.describe('The Calls tab', () => {
   });
 });
 
+test.describe('The badge on the Calls tab', () => {
+  test('counts the calls still waiting to be graded or marked', async ({ page }) => {
+    await seedCalls(page, [
+      // Ungraded and unmarked.
+      {
+        id: 'pending-both',
+        createdAt: '2026-09-23T13:00:00.000Z',
+        direction: 'long',
+        entry: 7740,
+        stop: 7730,
+        target: 7760,
+        headline: 'Nothing done with this one',
+      },
+      // Graded, but no result marked.
+      {
+        id: 'pending-result',
+        createdAt: '2026-09-22T13:00:00.000Z',
+        direction: 'long',
+        entry: 7740,
+        stop: 7730,
+        target: 7760,
+        headline: 'Judged but unsettled',
+        grade: 'B',
+      },
+      // Fully done with: neither outstanding.
+      {
+        id: 'settled',
+        createdAt: '2026-09-21T13:00:00.000Z',
+        direction: 'long',
+        entry: 7740,
+        stop: 7730,
+        target: 7760,
+        headline: 'Graded and marked',
+        grade: 'A',
+        outcome: 'target',
+      },
+    ]);
+    await page.reload();
+
+    // Two calls are waiting — one on each job — and the badge says so from any tab.
+    const badge = page.locator('#nav-badge-calls:visible, #mobile-nav-badge-calls:visible');
+    await expect(badge).toHaveCount(1);
+    await expect(badge).toHaveText('2');
+  });
+
+  test('clears the badge when a call is marked from the Calls tab', async ({ page }) => {
+    await seedCalls(page, [
+      {
+        id: 'only-pending',
+        createdAt: '2026-09-23T13:00:00.000Z',
+        direction: 'long',
+        entry: 7740,
+        stop: 7730,
+        target: 7760,
+        headline: 'Judged, waiting on the result',
+        grade: 'C',
+      },
+    ]);
+    await page.reload();
+
+    const badge = page.locator('#nav-badge-calls:visible, #mobile-nav-badge-calls:visible');
+    await expect(badge).toHaveText('1');
+
+    await gotoCalls(page);
+    await page.locator('#coach-plan-outcome-stopped').click();
+    await page.locator('#coach-plan-save-grade').click();
+
+    // Nothing is outstanding, so the badge goes away rather than sitting on a stale count.
+    await expect(page.locator('#nav-badge-calls')).toHaveCount(0);
+    await expect(page.locator('#mobile-nav-badge-calls')).toHaveCount(0);
+  });
+
+  test('shows no badge on a journal with nothing outstanding', async ({ page }) => {
+    await seedCalls(page, []);
+    await page.reload();
+    await expect(page.locator('#nav-badge-calls')).toHaveCount(0);
+    await expect(page.locator('#mobile-nav-badge-calls')).toHaveCount(0);
+  });
+});
+
 test.describe('History moved to the account menu', () => {
   test('is reachable from the avatar menu and no longer takes a tab', async ({ page }) => {
     await expect(page.locator('#nav-btn-history')).toHaveCount(0);

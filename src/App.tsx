@@ -7,6 +7,7 @@ import {
 import { YesterdayFocusBanner } from './components/today/YesterdayFocusBanner';
 import { DrawdownRoomStrip } from './components/today/DrawdownRoomStrip';
 import { realizedPnL } from './lib/analytics/realized-pnl';
+import { summariseCoachPlanPending } from './lib/analytics/coach-plan-grades';
 import { TodaySummary } from './components/today/TodaySummary';
 import { ImportantLevelsEditor } from './components/today/ImportantLevelsEditor';
 import { GlobalSearch } from './components/common/GlobalSearch';
@@ -523,6 +524,17 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
    * resolved here rather than in each of them — one place decides what a slot is worth.
    */
   const riskTiers = useMemo(() => riskTierAmounts(profile), [profile]);
+
+  /**
+   * Coach calls still waiting on the trader — ungraded, or with no result marked.
+   *
+   * Held here rather than in the shell so the header only learns a number, and derived from
+   * the same state the Calls tab renders, so the badge can never disagree with the page.
+   */
+  const pendingCoachCalls = useMemo(
+    () => summariseCoachPlanPending(coachPlans).pending,
+    [coachPlans]
+  );
 
   // Today's Trades
   const todayTrades = useMemo(() => {
@@ -2010,6 +2022,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       syncStatus={syncStatus}
       lastSyncedAt={lastSyncedAt}
       onRetrySync={retrySave}
+      pendingCalls={pendingCoachCalls}
     >
       {storageFailure && (
         <StorageWarningBanner

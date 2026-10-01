@@ -205,6 +205,33 @@ export function summariseCoachPlanOutcomes(plans: CoachPlan[]): CoachPlanOutcome
 }
 
 /**
+ * The calls still waiting on the trader, for the badge on the Calls tab.
+ *
+ * Two different things can be outstanding on one call: a grade (how it was written) and a
+ * result (what it actually did). They are counted separately because they are separate jobs,
+ * and `pending` counts a call once however many of them it is waiting on, so the badge reads
+ * as "calls to look at" rather than double-counting one call.
+ */
+export interface CoachPlanPending {
+  /** Calls waiting on a grade or a result — the number the badge shows. */
+  pending: number;
+  /** Calls with no grade yet. */
+  ungraded: number;
+  /** Calls with no result marked yet. */
+  unmarked: number;
+}
+
+export function summariseCoachPlanPending(plans: CoachPlan[]): CoachPlanPending {
+  const ungraded = plans.filter((plan) => !plan.grade).length;
+  const unmarked = plans.filter((plan) => !plan.outcome).length;
+  return {
+    ungraded,
+    unmarked,
+    pending: plans.filter((plan) => !plan.grade || !plan.outcome).length,
+  };
+}
+
+/**
  * The coach's plans newest first.
  *
  * Sorted on a copy rather than in place so the panel never reorders the journal's own list,

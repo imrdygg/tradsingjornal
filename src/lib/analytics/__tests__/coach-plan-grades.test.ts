@@ -9,6 +9,7 @@ import {
   sortCoachPlansNewestFirst,
   summariseCoachPlanGrades,
   summariseCoachPlanOutcomes,
+  summariseCoachPlanPending,
 } from '../coach-plan-grades';
 
 function plan(overrides: Partial<CoachPlan> = {}): CoachPlan {
@@ -157,6 +158,35 @@ describe('scoring what the calls did', () => {
     // The unscorable call is counted as settled but contributes no R.
     expect(summary.netR).toBe(2);
     expect(summary.averageR).toBe(2);
+  });
+});
+
+describe('what is still waiting on the trader', () => {
+  it('counts a call once however many things it is waiting on', () => {
+    const pending = summariseCoachPlanPending([
+      // Ungraded and unmarked: waiting on both, but only one call to look at.
+      plan({ id: 'a' }),
+      // Graded but no result marked.
+      plan({ id: 'b', grade: 'B' }),
+      // Nothing outstanding.
+      plan({ id: 'c', grade: 'A', outcome: 'target' }),
+    ]);
+
+    expect(pending.ungraded).toBe(1);
+    expect(pending.unmarked).toBe(2);
+    expect(pending.pending).toBe(2);
+  });
+
+  it('is nothing when every call has been judged and marked', () => {
+    expect(summariseCoachPlanPending([plan({ grade: 'A', outcome: 'target' })])).toEqual({
+      ungraded: 0,
+      unmarked: 0,
+      pending: 0,
+    });
+  });
+
+  it('is nothing for a journal with no calls at all', () => {
+    expect(summariseCoachPlanPending([]).pending).toBe(0);
   });
 });
 

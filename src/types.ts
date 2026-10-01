@@ -516,6 +516,23 @@ export type CoachPlanGrade = 'A' | 'B' | 'C' | 'D' | 'F';
 
 export type CoachPlanConfidence = 'low' | 'medium' | 'high';
 
+/**
+ * What actually happened to a call the coach made.
+ *
+ * The coach plans against the live market and the journal records no price history for it, so
+ * the only honest way to know whether a call was right is for the trader to mark it. That mark
+ * is what turns a pile of graded opinions into a win rate and an R result.
+ */
+export type CoachPlanOutcome =
+  /** Price reached the target first. */
+  | 'target'
+  /** Price reached the stop first. */
+  | 'stopped'
+  /** Price never came to the entry, so the call was never in play. */
+  | 'no-fill'
+  /** Still waiting: neither level has been reached. */
+  | 'open';
+
 export interface CoachPlan {
   id: string;
   userId: string;
@@ -545,6 +562,10 @@ export interface CoachPlan {
   /** The trader's written feedback, fed back into the coach's later plans. */
   feedback?: string;
   gradedAt?: string;
+  /** What the call did in the market, as the trader recorded it. */
+  outcome?: CoachPlanOutcome;
+  /** When the outcome was marked, so a settled call reads as settled. */
+  outcomeAt?: string;
 }
 
 export interface UserProfile {

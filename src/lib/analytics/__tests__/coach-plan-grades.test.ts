@@ -4,8 +4,11 @@ import {
   COACH_PLAN_GRADES,
   COACH_PLAN_GRADE_AXIS,
   buildCoachPlanGradeTrend,
+  coachPlanR,
+  coachPlanRisk,
   sortCoachPlansNewestFirst,
   summariseCoachPlanGrades,
+  summariseCoachPlanOutcomes,
 } from '../coach-plan-grades';
 
 function plan(overrides: Partial<CoachPlan> = {}): CoachPlan {
@@ -86,6 +89,74 @@ describe('summariseCoachPlanGrades', () => {
     expect(summary.averagePoints).toBeNull();
     expect(summary.averagePercent).toBeNull();
     expect(summary.distribution.every((row) => row.count === 0 && row.share === 0)).toBe(true);
+  });
+});
+
+describe('scoring what the calls did', () => {
+  // A 10-point risk with a 20-point target pays 2R; the same plan stopped costs 1R.
+  const winner = plan({ id: 'w', entry: 7740, stop: 7730, target: 7760, outcome: 'target' });
+  const bigWinner = plan({ id: 'w2', entry: 7740, stop: 7730, target: 7770, outcome: 'target' });
+  const loser = plan({ id: 'l', entry: 7740, stop: 7730, target: 7760, outcome: 'stopped' });
+
+  it('pays the reward-to-risk the plan named, and costs exactly 1R on a stop', () => {
+    expect(coachPlanR(winner)).toBe(2);
+    expect(coachPlanR(bigWinner)).toBe(3);
+    expect(coachPlanR(loser)).toBe(-1);
+  });
+
+  it('scores nothing for a call that never filled, was still open, or is unmarked', () => {
+    expect(coachPlanR(plan({ outcome: 'no-fill' }))).toBe(0);
+    expect(coachPlanR(plan({ outcome: 'open' }))).toBeNull();
+    expect(coachPlanR(plan())).toBeNull();
+  });
+
+  it('reads no risk from a plan whose entry and stop coincide', () => {
+    expect(coachPlanRisk(plan({ entry: 7740, stop: 7740 }))).toBeNull();
+    expect(coachPlanR(plan({ entry: 7740, stop: 7740, outcome: 'target' }))).toBeNull();
+  });
+
+  it('counts wins, losses and the rest, and scores win rate and R over settled calls', () => {
+    const summary = summariseCoachPlanOutcomes([
+      winner,
+      bigWinner,
+      loser,
+      plan({ id: 'nf', outcome: 'no-fill' }),
+      plan({ id: 'open', outcome: 'open' }),
+      plan({ id: 'unmarked' }),
+    ]);
+
+    expect(summary.settled).toBe(3);
+    expect(summary.target).toBe(2);
+    expect(summary.stopped).toBe(1);
+    expect(summary.noFill).toBe(1);
+    expect(summary.open).toBe(1);
+    expect(summary.unmarked).toBe(1);
+    expect(summary.winRate).toBe(67);
+    // 2 + 3 - 1 = 4R over three settled calls.
+    expect(summary.netR).toBe(4);
+    expect(summary.averageR).toBeCloseTo(4 / 3, 5);
+    expect(summary.averageWinR).toBeCloseTo(2.5, 5);
+    expect(summary.averageLossR).toBe(-1);
+  });
+
+  it('leaves the rate unknown rather than zero when nothing is settled', () => {
+    const summary = summariseCoachPlanOutcomes([plan({ outcome: 'no-fill' }), plan()]);
+    expect(summary.settled).toBe(0);
+    expect(summary.winRate).toBeNull();
+    expect(summary.netR).toBe(0);
+    expect(summary.averageR).toBeNull();
+  });
+
+  it('keeps a settled call with unreadable risk out of the R figures', () => {
+    const summary = summariseCoachPlanOutcomes([
+      winner,
+      plan({ id: 'bad', entry: 7740, stop: 7740, target: 7760, outcome: 'target' }),
+    ]);
+    expect(summary.settled).toBe(2);
+    expect(summary.unscored).toBe(1);
+    // The unscorable call is counted as settled but contributes no R.
+    expect(summary.netR).toBe(2);
+    expect(summary.averageR).toBe(2);
   });
 });
 

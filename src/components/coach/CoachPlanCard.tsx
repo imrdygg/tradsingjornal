@@ -1,9 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Check, Compass, FileText, Sparkles, Trash2 } from 'lucide-react';
-import type { CoachPlan, CoachPlanGrade, Instrument } from '../../types';
+import { Check, Compass, FileText, Flag, Sparkles, Trash2 } from 'lucide-react';
+import type { CoachPlan, CoachPlanGrade, CoachPlanOutcome, Instrument } from '../../types';
 import { CoachErrorCode } from '../../lib/ai/coach-client';
 import type { SelfPlanResponse } from '../../lib/ai/coach-types';
 import { askSelfPlan, type PlanCoachContext } from '../../lib/ai/plan-coach';
+import {
+  COACH_PLAN_OUTCOMES,
+  COACH_PLAN_OUTCOME_LABEL,
+} from '../../lib/analytics/coach-plan-grades';
 import {
   CoachCard,
   CoachErrorPanel,
@@ -67,6 +71,14 @@ const CONFIDENCE_TONE: Record<CoachPlan['confidence'], string> = {
   low: 'text-zinc-400',
 };
 
+/** The colour a marked outcome reads in, so a loss is never mistaken for a win. */
+const OUTCOME_TONE: Record<CoachPlanOutcome, string> = {
+  target: 'border-emerald-800 bg-emerald-950/70 text-emerald-300',
+  stopped: 'border-rose-800 bg-rose-950/70 text-rose-300',
+  'no-fill': 'border-zinc-700 bg-zinc-900/70 text-zinc-400',
+  open: 'border-sky-800 bg-sky-950/60 text-sky-300',
+};
+
 /** A price as it was recorded, or a dash. */
 function price(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return '—';
@@ -98,6 +110,7 @@ export const CoachPlanCard: React.FC<CoachPlanCardProps> = ({
   const [state, setState] = useState<PlanState>({ loading: false, failure: null });
   const [draftGrade, setDraftGrade] = useState<CoachPlanGrade | null>(null);
   const [draftFeedback, setDraftFeedback] = useState('');
+  const [draftOutcome, setDraftOutcome] = useState<CoachPlanOutcome | null>(null);
   // Which saved plan is open for reading and grading. Null falls back to the newest, so a
   // freshly made plan is the one on screen without a separate effect to select it.
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -114,6 +127,7 @@ export const CoachPlanCard: React.FC<CoachPlanCardProps> = ({
   useEffect(() => {
     setDraftGrade(viewing?.grade ?? null);
     setDraftFeedback(viewing?.feedback ?? '');
+    setDraftOutcome(viewing?.outcome ?? null);
   }, [viewingId]);
   // `viewing` is read inside the effect keyed on its id; the grade and note are the only
   // things that matter here, and re-seeding on every render would fight the trader's typing.
@@ -158,6 +172,10 @@ export const CoachPlanCard: React.FC<CoachPlanCardProps> = ({
       grade: draftGrade ?? undefined,
       feedback: draftFeedback.trim() || undefined,
       gradedAt: new Date().toISOString(),
+      // The trader's mark of what the call actually did, which is what turns the plan record
+      // into a win rate and an R result on the Calls tab.
+      outcome: draftOutcome ?? undefined,
+      outcomeAt: draftOutcome ? viewing.outcomeAt ?? new Date().toISOString() : undefined,
     });
   }
 
@@ -314,6 +332,20 @@ export const CoachPlanCard: React.FC<CoachPlanCardProps> = ({
                       </span>
                     </button>
 
+                    {plan.outcome && (
+                      <span
+                        title={COACH_PLAN_OUTCOME_LABEL[plan.outcome]}
+                        className={`shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px] ${OUTCOME_TONE[plan.outcome]}`}
+                      >
+                        {plan.outcome === 'target'
+                          ? 'WIN'
+                          : plan.outcome === 'stopped'
+                          ? 'LOSS'
+                          : plan.outcome === 'no-fill'
+                          ? 'no fill'
+                          : 'open'}
+                      </span>
+                    )}
                     {plan.grade ? (
                       <span
                         className={`shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px] font-bold ${GRADE_TONE[plan.grade]}`}
@@ -380,6 +412,13 @@ export const CoachPlanCard: React.FC<CoachPlanCardProps> = ({
                   Graded {viewing.grade}
                 </span>
               )}
+              {viewing.outcome && (
+                <span
+                  className={`rounded border px-1.5 py-0.5 font-mono text-[10px] ${OUTCOME_TONE[viewing.outcome]}`}
+                >
+                  {COACH_PLAN_OUTCOME_LABEL[viewing.outcome]}
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <span className="font-mono text-[10px] text-zinc-500">
@@ -437,6 +476,44 @@ export const CoachPlanCard: React.FC<CoachPlanCardProps> = ({
             </div>
           </div>
 
+          {/*
+            What the call actually did. The journal has no price history for it, so the trader's
+            own mark is the only honest source for a win rate — and it is the honest half of the
+            record, because the grade says whether the plan was well made and this says whether
+            it worked.
+          */}
+          <div className="space-y-2 border-t border-sky-900/40 pt-3">
+            <span className="flex items-center gap-1.5 text-[10px] font-mono uppercase font-bold text-sky-300">
+              <Flag className="h-3 w-3" />
+              What did the call actually do?
+            </span>
+
+            <div className="flex flex-wrap items-center gap-1.5">
+              {COACH_PLAN_OUTCOMES.map((outcome) => (
+                <button
+                  key={outcome}
+                  type="button"
+                  id={`coach-plan-outcome-${outcome}`}
+                  aria-pressed={draftOutcome === outcome}
+                  onClick={() => setDraftOutcome(draftOutcome === outcome ? null : outcome)}
+                  className={`rounded-lg border px-2.5 py-1.5 font-mono text-[10px] transition-colors ${
+                    draftOutcome === outcome
+                      ? OUTCOME_TONE[outcome]
+                      : 'border-zinc-800 text-zinc-500 hover:text-zinc-300'
+                  }`}
+                >
+                  {COACH_PLAN_OUTCOME_LABEL[outcome]}
+                </button>
+              ))}
+            </div>
+
+            <p className="text-[10px] leading-relaxed text-zinc-500">
+              Mark the result so the Calls tab can score its calls: a target hit pays the
+              reward-to-risk the plan named, a stop costs 1R, and a call that never filled costs
+              nothing. Save it below with your grade.
+            </p>
+          </div>
+
           {/* The grading loop: the trader's judgement, fed back into the next plan. */}
           <div className="space-y-2 border-t border-sky-900/40 pt-3">
             <span className="flex items-center gap-1.5 text-[10px] font-mono uppercase font-bold text-sky-300">
@@ -474,7 +551,7 @@ export const CoachPlanCard: React.FC<CoachPlanCardProps> = ({
 
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-[10px] text-zinc-500">
-                {viewing.grade ? 'Change the grade and save again, or delete the plan.' : 'Saving a grade keeps the plan in the list.'}
+                {viewing.grade ? 'Change the grade or result and save again, or delete the plan.' : 'Saving keeps the plan in the list.'}
               </span>
               <button
                 type="button"
@@ -483,7 +560,7 @@ export const CoachPlanCard: React.FC<CoachPlanCardProps> = ({
                 className="flex items-center gap-1.5 rounded-xl bg-zinc-100 px-4 py-2 text-xs font-semibold text-zinc-950 transition-all hover:scale-[1.02] hover:bg-white active:scale-[0.98]"
               >
                 <Check className="h-3.5 w-3.5" />
-                Save grade &amp; feedback
+                Save grade, result &amp; feedback
               </button>
             </div>
           </div>

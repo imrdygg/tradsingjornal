@@ -30,7 +30,6 @@ import type {
   WeeklyResponse,
 } from '../../lib/ai/coach-types';
 import { CoachErrorCode, CoachResult, requestCoach } from '../../lib/ai/coach-client';
-import type { PlanCoachContext } from '../../lib/ai/plan-coach';
 import {
   CoachAction,
   CoachBullets,
@@ -50,7 +49,6 @@ import { BehaviorCard } from './BehaviorCard';
 import { RecentFormCard } from './RecentFormCard';
 import { ExtremeReadCard } from './ExtremeReadCard';
 import { ExtremeCallCard } from './ExtremeCallCard';
-import { CoachPlanCard } from './CoachPlanCard';
 import { ChartMatchCard } from '../trades/ChartMatchCard';
 import { SetupWeekCard } from './SetupWeekCard';
 import { instrumentSymbol } from '../../lib/trading/instruments';
@@ -100,10 +98,6 @@ interface CoachViewProps {
    * follows them between devices; the self-plan card reads its own history from here.
    */
   coachPlans?: CoachPlan[];
-  /** Records one coach plan, new or newly graded. */
-  onSaveCoachPlan?: (plan: CoachPlan) => void;
-  /** Removes one coach plan. */
-  onDeleteCoachPlan?: (planId: string) => void;
 }
 
 interface RequestState {
@@ -154,8 +148,6 @@ export const CoachView: React.FC<CoachViewProps> = ({
   onAddSetups,
   userId,
   coachPlans,
-  onSaveCoachPlan,
-  onDeleteCoachPlan,
 }) => {
   const digest = useMemo(
     () =>
@@ -257,38 +249,6 @@ export const CoachView: React.FC<CoachViewProps> = ({
     if (planned) return instrumentSymbol(instruments, planned);
     return instruments[0]?.symbol ?? 'MES';
   }, [sessionExtremes, todayTradingDay, instruments]);
-
-  /**
-   * The context the coach's own-plan call is built from, mirroring the shape the plan-side
-   * helpers expect. It carries the journal as it is right now; the self-plan request adds
-   * only the instrument, so nothing of the trader's own levels reaches the call.
-   */
-  const planContext = useMemo<PlanCoachContext>(
-    () => ({
-      day: todayTradingDay,
-      maxDrawdown,
-      instruments,
-      setups,
-      trades,
-      tradingDays,
-      reviews,
-      timezone,
-      levelTouches,
-      coachPlans,
-    }),
-    [
-      todayTradingDay,
-      maxDrawdown,
-      instruments,
-      setups,
-      trades,
-      tradingDays,
-      reviews,
-      timezone,
-      levelTouches,
-      coachPlans,
-    ]
-  );
 
   return (
     <div className="space-y-5">
@@ -479,26 +439,6 @@ export const CoachView: React.FC<CoachViewProps> = ({
         look like it without leaving the coach, and a matched row opens the trade from here
         too.
       */}
-      {/*
-        The coach's own plan, the one card where it commits without the trader's levels.
-
-        It sits beside the other call cards rather than inside the plan builder, because
-        the point is a record the trader grades and gives feedback on — nothing here is
-        written into the day they trade.
-      */}
-      {onSaveCoachPlan && onDeleteCoachPlan && (
-        <CoachPlanCard
-          context={planContext}
-          plans={coachPlans ?? []}
-          defaultSymbol={callSymbol}
-          instruments={instruments}
-          userId={userId ?? ''}
-          onSavePlan={onSaveCoachPlan}
-          onDeletePlan={onDeleteCoachPlan}
-          timezone={timezone}
-        />
-      )}
-
       <ChartMatchCard
         trades={trades}
         tradingDays={tradingDays}

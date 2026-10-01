@@ -1,4 +1,4 @@
-import type { CoachPlan, CoachPlanGrade } from '../../types';
+import type { CoachPlan, CoachPlanGrade, CoachPlanOutcome } from '../../types';
 
 /**
  * The trader's grades of the coach's own plans, read as a record.
@@ -91,6 +91,116 @@ export function summariseCoachPlanGrades(plans: CoachPlan[]): CoachPlanGradeSumm
     distribution,
     averagePoints,
     averagePercent: averagePoints === null ? null : Math.round((averagePoints / 4) * 100),
+  };
+}
+
+/** The outcomes a call can be marked with, in the order the buttons are shown. */
+export const COACH_PLAN_OUTCOMES: readonly CoachPlanOutcome[] = [
+  'target',
+  'stopped',
+  'no-fill',
+  'open',
+];
+
+/** The trader-facing word for each outcome. */
+export const COACH_PLAN_OUTCOME_LABEL: Record<CoachPlanOutcome, string> = {
+  target: 'Target hit',
+  stopped: 'Stopped out',
+  'no-fill': 'Never filled',
+  open: 'Still open',
+};
+
+/**
+ * The risk a call was taking, in price, or null when it cannot be read.
+ *
+ * Null rather than zero: a plan whose entry and stop coincide has no risk to divide by, and
+ * a zero would read as a valid, infinitely rewarding call.
+ */
+export function coachPlanRisk(plan: CoachPlan): number | null {
+  const risk = Math.abs(plan.entry - plan.stop);
+  return Number.isFinite(risk) && risk > 0 ? risk : null;
+}
+
+/**
+ * The R a call produced, or null when it is not settled or cannot be scored.
+ *
+ * A target hit pays the reward-to-risk the plan actually named, so a call that asked for 3R
+ * and got it scores 3; a stop costs exactly 1R whatever the plan hoped for. A call that never
+ * filled cost nothing and is only meaningful as a count, so it scores no R at all.
+ */
+export function coachPlanR(plan: CoachPlan): number | null {
+  if (plan.outcome === 'no-fill') return 0;
+  const risk = coachPlanRisk(plan);
+  if (risk === null) return null;
+  if (plan.outcome === 'target') return Math.abs(plan.target - plan.entry) / risk;
+  if (plan.outcome === 'stopped') return -1;
+  return null;
+}
+
+/**
+ * How the coach's calls actually turned out, as the trader marked them.
+ *
+ * Only settled calls (target or stopped) carry a win rate: a call that never filled, is still
+ * open, or has not been marked would otherwise dilute the number with results that never
+ * happened. R is summed the same way, so the figure always describes real, finished calls.
+ */
+export interface CoachPlanOutcomeSummary {
+  /** Calls marked target or stopped, and so able to be judged. */
+  settled: number;
+  target: number;
+  stopped: number;
+  noFill: number;
+  open: number;
+  /** Calls with no outcome marked yet. */
+  unmarked: number;
+  /** Settled calls whose risk could not be read, so they carry no R. */
+  unscored: number;
+  /** Target / settled, 0-100, or null when nothing is settled. */
+  winRate: number | null;
+  /** Summed R across every settled call that could be scored. */
+  netR: number;
+  /** Mean R per scored call, or null. */
+  averageR: number | null;
+  /** Mean R of the winners, or null. */
+  averageWinR: number | null;
+  /** Mean R of the losers, or null. */
+  averageLossR: number | null;
+}
+
+export function summariseCoachPlanOutcomes(plans: CoachPlan[]): CoachPlanOutcomeSummary {
+  const count = (outcome: CoachPlanOutcome) =>
+    plans.filter((plan) => plan.outcome === outcome).length;
+
+  const target = count('target');
+  const stopped = count('stopped');
+  const settled = target + stopped;
+
+  const scored = plans
+    .filter((plan) => plan.outcome === 'target' || plan.outcome === 'stopped')
+    .map((plan) => ({ outcome: plan.outcome as CoachPlanOutcome, r: coachPlanR(plan) }))
+    .filter((row): row is { outcome: CoachPlanOutcome; r: number } => row.r !== null);
+
+  const wins = scored.filter((row) => row.outcome === 'target');
+  const losses = scored.filter((row) => row.outcome === 'stopped');
+
+  const netR = scored.reduce((sum, row) => sum + row.r, 0);
+  const averageR = scored.length ? netR / scored.length : null;
+  const mean = (rows: typeof scored) =>
+    rows.length ? rows.reduce((sum, row) => sum + row.r, 0) / rows.length : null;
+
+  return {
+    settled,
+    target,
+    stopped,
+    noFill: count('no-fill'),
+    open: count('open'),
+    unmarked: plans.filter((plan) => !plan.outcome).length,
+    unscored: settled - scored.length,
+    winRate: settled ? Math.round((target / settled) * 100) : null,
+    netR,
+    averageR,
+    averageWinR: mean(wins),
+    averageLossR: mean(losses),
   };
 }
 

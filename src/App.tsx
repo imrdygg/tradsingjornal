@@ -51,6 +51,15 @@ const CoachView = lazy(() =>
   import('./components/coach/CoachView').then((m) => ({ default: m.CoachView }))
 );
 /**
+ * The coach's own calls load on demand like the other views.
+ *
+ * It carries the grade trend chart, so pulling recharts into the first paint to render a tab
+ * the trader has not opened would undo the reason the views are split up.
+ */
+const CallsView = lazy(() =>
+  import('./components/coach/CallsView').then((m) => ({ default: m.CallsView }))
+);
+/**
  * Markets loads on demand like the other tab views. Besides the bytes, the point is the
  * provider's chart script: it is injected only when this view mounts, so a trader who
  * never opens Markets never downloads it.
@@ -1817,8 +1826,33 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             onAddSetups={(drafts) => drafts.forEach(handleAddSetup)}
             userId={userId}
             coachPlans={coachPlans}
-            onSaveCoachPlan={handleSaveCoachPlan}
-            onDeleteCoachPlan={handleDeleteCoachPlan}
+          />
+        );
+
+      case 'calls':
+        return (
+          <CallsView
+            context={{
+              day: todayTradingDay,
+              maxDrawdown: profile.maxDrawdown ?? null,
+              instruments,
+              setups,
+              trades,
+              tradingDays,
+              reviews,
+              timezone: profile.timezone,
+              levelTouches,
+              coachPlans,
+            }}
+            plans={coachPlans}
+            defaultSymbol={instrumentSymbol(instruments, todayTradingDay.primaryInstrument)}
+            instruments={instruments}
+            userId={userId}
+            onSavePlan={handleSaveCoachPlan}
+            onDeletePlan={handleDeleteCoachPlan}
+            timezone={profile.timezone}
+            setupCount={setups.length}
+            reviewCount={reviews.length}
           />
         );
 

@@ -12,6 +12,10 @@ import { expect, test, type Page } from '@playwright/test';
  * honest rather than the optimistic path being pretty.
  */
 
+/**
+ * The coach's own calls used to have a card here. They moved to their own Calls tab, which
+ * `e2e/calls.spec.ts` covers; what is asserted here is that they are no longer on this tab.
+ */
 async function gotoTab(page: Page, tab: string, heading: RegExp) {
   const desktop = page.locator(`#nav-btn-${tab}`);
   const mobile = page.locator(`#mobile-nav-${tab}`);
@@ -58,39 +62,13 @@ test.describe('Coach tab', () => {
     await expect(page.getByText(/No end-of-day reviews completed/i)).toBeVisible();
   });
 
-  test('offers the coach its own plan to grade, with nothing graded before one is made', async ({
-    page,
-  }) => {
+  test('no longer hosts the coach’s own calls, which moved to their own tab', async ({ page }) => {
     await gotoTab(page, 'coach', /Coach/i);
 
-    // The card is on the tab, states what it will do, and can name an instrument to plan.
-    const card = page.locator('#coach-self-plan');
-    await expect(card).toBeVisible();
-    await expect(card).toContainText(/ignores your own levels/i);
-    await expect(page.locator('#coach-self-plan-symbol')).toBeVisible();
-    await expect(page.locator('#coach-self-plan-generate')).toBeVisible();
-
-    // Nothing is graded until a plan exists: the grade controls appear with the plan, not
-    // before it, so the trader is never asked to judge something they have not seen.
-    await expect(page.locator('#coach-plan-feedback')).toHaveCount(0);
-    await expect(page.locator('#coach-plan-grade-A')).toHaveCount(0);
-  });
-
-  test('reports honestly when its own plan cannot be made, rather than inventing one', async ({
-    page,
-  }) => {
-    await gotoTab(page, 'coach', /Coach/i);
-
-    await expect(page.locator('#coach-error-self-plan')).toHaveCount(0);
-    await page.locator('#coach-self-plan-generate').click();
-
-    // vite dev has no serverless function, so the call fails. It must say so plainly — and
-    // leave nothing to grade, because a plan nobody made is not a plan.
-    const error = page.locator('#coach-error-self-plan');
-    await expect(error).toBeVisible();
-    await expect(error).toContainText(/Coach not available here/i);
-    await expect(page.locator('#coach-plan-feedback')).toHaveCount(0);
-    await expect(page.locator('#coach-plan-grade-A')).toHaveCount(0);
+    // The self-plan card lived here, beside the writing about the trader's process. It now has
+    // its own tab — Calls — so this tab is only the reads about their trading.
+    await expect(page.locator('#coach-self-plan')).toHaveCount(0);
+    await expect(page.locator('#coach-self-plan-generate')).toHaveCount(0);
   });
 
   test('names the one outside number it uses before the trader relies on it', async ({ page }) => {

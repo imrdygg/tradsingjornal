@@ -1,23 +1,13 @@
 import React from 'react';
 import { GraduationCap, MessageSquareText, Target } from 'lucide-react';
-import {
-  CartesianGrid,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
 import type { CoachPlan, CoachPlanGrade } from '../../types';
 import {
   COACH_PLAN_GRADES,
-  COACH_PLAN_GRADE_POINTS,
   buildCoachPlanGradeTrend,
   sortCoachPlansNewestFirst,
   summariseCoachPlanGrades,
-  type CoachPlanGradePoint,
 } from '../../lib/analytics/coach-plan-grades';
+import { CoachPlanGradeTrendChart } from '../coach/CoachPlanGradeTrendChart';
 
 /**
  * The trader's grades of the coach's own plans.
@@ -56,34 +46,6 @@ function price(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return '—';
   return value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
-
-/** A grade letter for a y-axis tick, so the line reads as A–F rather than 0–4. */
-const GRADE_BY_POINT = new Map<number, CoachPlanGrade>(
-  COACH_PLAN_GRADES.map((grade) => [COACH_PLAN_GRADE_POINTS[grade], grade])
-);
-
-/** The tooltip for the grade trend, naming the plan the point belongs to. */
-const GradeTrendTooltip: React.FC<{
-  active?: boolean;
-  payload?: Array<{ payload?: CoachPlanGradePoint }>;
-}> = ({ active, payload }) => {
-  const point = payload?.[0]?.payload;
-  if (!active || !point) return null;
-
-  return (
-    <div className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-[11px] font-mono space-y-1">
-      <div className="text-zinc-300">
-        {point.date} · {point.symbol}
-      </div>
-      <div className="flex items-center gap-2">
-        <span className={`inline-block h-2 w-2 rounded-sm ${BAR_TONE[point.grade]}`} />
-        <span className="text-zinc-400">Grade</span>
-        <span className="font-bold text-zinc-100">{point.grade}</span>
-      </div>
-      <div className="text-zinc-500">Running average {point.runningAverage.toFixed(2)} of 4</div>
-    </div>
-  );
-};
 
 export const CoachPlanGradesPanel: React.FC<CoachPlanGradesPanelProps> = ({ plans }) => {
   const summary = summariseCoachPlanGrades(plans);
@@ -180,42 +142,7 @@ export const CoachPlanGradesPanel: React.FC<CoachPlanGradesPanelProps> = ({ plan
               <span className="text-[10px] uppercase font-mono tracking-wider text-zinc-400 block">
                 Grade over time (oldest → newest)
               </span>
-              <div className="h-48 w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={trend} margin={{ top: 4, right: 8, bottom: 0, left: -18 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
-                    <XAxis dataKey="label" stroke="#71717a" fontSize={10} tickLine={false} />
-                    <YAxis
-                      domain={[0, 4]}
-                      ticks={[0, 1, 2, 3, 4]}
-                      tickFormatter={(value) => GRADE_BY_POINT.get(Number(value)) ?? ''}
-                      stroke="#71717a"
-                      fontSize={10}
-                      tickLine={false}
-                      width={20}
-                    />
-                    <Tooltip content={<GradeTrendTooltip />} />
-                    <Line
-                      type="monotone"
-                      dataKey="points"
-                      name="Grade"
-                      stroke="#38bdf8"
-                      strokeWidth={2}
-                      dot={{ r: 3, fill: '#38bdf8' }}
-                      activeDot={{ r: 5 }}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="runningAverage"
-                      name="Running average"
-                      stroke="#a1a1aa"
-                      strokeWidth={1.5}
-                      strokeDasharray="4 4"
-                      dot={false}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
+              <CoachPlanGradeTrendChart plans={plans} />
               <p className="text-[10px] text-zinc-500 leading-relaxed">
                 Each solid point is one plan the trader graded, A at the top and F at the bottom.
                 The dashed line is the average of every grade up to that point, so an early bad

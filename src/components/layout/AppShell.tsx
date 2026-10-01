@@ -3,7 +3,6 @@ import {
   Calendar,
   ChevronDown,
   Layers,
-  History as HistoryIcon,
   BarChart3,
   Lightbulb,
   Sparkles,
@@ -14,6 +13,7 @@ import {
   Sun,
   Moon,
   CandlestickChart,
+  Target,
 } from 'lucide-react';
 import { getCurrentTradingDate } from '../../lib/storage/date-utils';
 import { SyncStatusBadge, SyncStatus } from './SyncStatusBadge';
@@ -23,13 +23,16 @@ import { RiskMode, DayStatus } from '../../types';
 export type NavTab =
   | 'today'
   | 'trades'
-  | 'history'
+  // The coach's own calls, which took the tab slot the day archive used to hold.
+  | 'calls'
   | 'analytics'
   | 'insights'
   | 'coach'
   | 'markets'
   | 'playbook'
-  // Reachable through the avatar menu, not the tab bars — they were out of room.
+  // Reachable through the avatar menu, not the tab bars — they were out of room. History
+  // moved here when Calls took its slot: it is still the day archive, just not a tab.
+  | 'history'
   | 'settings';
 
 interface AppShellProps {
@@ -78,7 +81,7 @@ export const AppShell: React.FC<AppShellProps> = ({
   const navItems: Array<{ id: NavTab; label: string; icon: React.ComponentType<{ className?: string }> }> = [
     { id: 'today', label: 'Today', icon: Calendar },
     { id: 'trades', label: 'Trades', icon: Layers },
-    { id: 'history', label: 'History', icon: HistoryIcon },
+    { id: 'calls', label: 'Calls', icon: Target },
     { id: 'analytics', label: 'Analytics', icon: BarChart3 },
     { id: 'insights', label: 'Insights', icon: Lightbulb },
     { id: 'coach', label: 'Coach', icon: Sparkles },
@@ -255,6 +258,7 @@ export const AppShell: React.FC<AppShellProps> = ({
               onSignOut={onSignOut}
               signingOut={signingOut}
               onOpenSettings={() => onSelectTab('settings')}
+              onOpenHistory={() => onSelectTab('history')}
             />
           </div>
         </div>

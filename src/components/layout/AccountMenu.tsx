@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { LogOut, Loader2, Cloud, User, Settings as SettingsIcon } from 'lucide-react';
+import { LogOut, Loader2, Cloud, User, Settings as SettingsIcon, History } from 'lucide-react';
 
 interface AccountMenuProps {
   email?: string | null;
@@ -7,6 +7,8 @@ interface AccountMenuProps {
   signingOut?: boolean;
   /** Opens the Settings tab; the avatar menu is now the way to reach it. */
   onOpenSettings?: () => void;
+  /** Opens the day archive. It moved here when the Calls tab took its place in the bar. */
+  onOpenHistory?: () => void;
 }
 
 /**
@@ -21,6 +23,7 @@ export const AccountMenu: React.FC<AccountMenuProps> = ({
   onSignOut,
   signingOut = false,
   onOpenSettings,
+  onOpenHistory,
 }) => {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -88,6 +91,22 @@ export const AccountMenu: React.FC<AccountMenuProps> = ({
               {email ?? 'Saved in this browser'}
             </p>
           </div>
+
+          {onOpenHistory && (
+            <button
+              id="account-menu-history-btn"
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                onOpenHistory();
+              }}
+              className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-800"
+            >
+              <History className="h-4 w-4 text-zinc-400" />
+              History
+            </button>
+          )}
 
           {onOpenSettings && (
             <button

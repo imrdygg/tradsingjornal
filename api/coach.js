@@ -534,12 +534,13 @@ function isCoachMode(value) {
 function allowsMarketOpinion(mode) {
   return COACH_OPINION_MODES.includes(mode);
 }
-function coachGuardrails(withMarketData, withOpinion = false, withLevelEdge = false, withLearn = false, withExtremes = false, withMatch = false, withLessons = false, withSelfPlan = false) {
+function coachGuardrails(withMarketData, withOpinion = false, withLevelEdge = false, withLearn = false, withExtremes = false, withMatch = false, withLessons = false, withSelfPlan = false, withPlanGrades = false) {
   let text = COACH_GUARDRAILS;
   if (withLearn) text += LEARN_GUARDRAILS_SUFFIX;
   if (withMatch) text += MATCH_GUARDRAILS_SUFFIX;
   if (withLessons) text += LESSONS_GUARDRAILS_SUFFIX;
   if (withSelfPlan) text += SELFPLAN_GUARDRAILS_SUFFIX;
+  if (withPlanGrades) text += PLAN_GRADES_GUARDRAILS_SUFFIX;
   if (withLevelEdge) text += LEVEL_EDGE_GUARDRAILS_SUFFIX;
   if (withExtremes) text += EXTREMES_GUARDRAILS_SUFFIX;
   if (withMarketData) text += MARKET_GUARDRAILS_SUFFIX;
@@ -796,6 +797,23 @@ P5. THIS IS AN OPINION, NOT A SIGNAL. Label the rationale as your own read and s
 P6. LEARN FROM THE GRADES. When THE TRADER'S GRADES OF YOUR PAST PLANS appears, treat it as
     the trader's own judgement of your planning and let it shape this plan. Quote the specific
     note you are answering where one applies, and never argue with a grade.`;
+var PLAN_GRADES_GUARDRAILS_SUFFIX = `
+
+THE TRADER'S GRADES OF YOUR OWN PLANS \u2014 SPECIAL RULES FOR THIS REQUEST ONLY.
+The trader has been asking you to make plans of your own, grading them and writing what
+they thought. Those grades and notes may appear under THE TRADER'S GRADES OF YOUR PAST
+PLANS. They are the only judgement of your planning that exists.
+
+G1. THEY JUDGE YOUR WRITING, NOT THE MARKET. A grade says how the trader rated a plan you
+    made, and a note says what they wanted different. They are never evidence about the
+    market, a price or a direction, and an old plan's levels are never a call for today.
+    Never restate a past plan's entry, stop or target as anything other than what it was.
+G2. LET THEM SHAPE THIS ANSWER. Where a note keeps pointing at the same thing, correct it
+    here, and quote the note you are answering where that helps.
+G3. NEVER ARGUE WITH A GRADE OR EXPLAIN IT AWAY. Take it as the trader's own judgement and
+    move on.
+G4. BRING THE GRADES UP ONLY WHERE THEY ARE RELEVANT. When the answer is not about planning
+    or your own past calls, do not mention them at all.`;
 function touchOutcomeWord(outcome) {
   switch (outcome) {
     case "never-returned":
@@ -1186,7 +1204,7 @@ function formatDigestForPrompt(digest, mode) {
   if (mode === "lessons") {
     lines.push(...formatLessonReadForPrompt(digest.lessonRead));
   }
-  if (mode === "selfplan") {
+  if ((digest.coachPlanRead?.total ?? 0) > 0) {
     lines.push(...formatCoachPlanReadForPrompt(digest.coachPlanRead));
   }
   lines.push("=== WHAT THE JOURNAL RECORDS ===");
@@ -1903,7 +1921,12 @@ ${COACH_RESPONSE_SHAPES[mode]}`;
       mode === "lessons",
       // And the self-plan rules, which narrow the market ban to the numbers it was handed and
       // require a committed call rather than a stand-aside.
-      mode === "selfplan"
+      mode === "selfplan",
+      // Appended whenever the trader's grades are in the prompt, in every mode, the same way
+      // the level-touch and extreme rules are: a grade is the trader's judgement of the
+      // coach's writing, and it must never be read as evidence about the market. Optional for
+      // the same reason as the formatter — a digest without the record simply has none.
+      (digest.coachPlanRead?.total ?? 0) > 0
     ),
     userPrompt
   };

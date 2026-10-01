@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Target, TrendingUp } from 'lucide-react';
-import { DailyReview, Instrument, LevelTouch, Setup, Trade, TradingDay } from '../../types';
+import { CoachPlan, DailyReview, Instrument, LevelTouch, Setup, Trade, TradingDay } from '../../types';
 import { buildJournalDigest } from '../../lib/ai/journal-digest';
 import type { EdgeResponse } from '../../lib/ai/coach-types';
 import { CoachErrorCode, CoachResult, requestCoach } from '../../lib/ai/coach-client';
@@ -45,6 +45,13 @@ export interface EdgeFinderCardProps {
   timezone: string;
   maxDrawdown?: number | null;
   levelTouches: LevelTouch[];
+  /**
+   * The coach's own plans with the trader's grades and feedback, when there are any.
+   *
+   * Carried into the digest so the read learns from what the trader keeps telling the coach
+   * about how it plans; the guardrails keep a grade from being read as market data.
+   */
+  coachPlans?: CoachPlan[];
 }
 
 interface EdgeState {
@@ -72,6 +79,7 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
   timezone,
   maxDrawdown,
   levelTouches,
+  coachPlans,
 }) => {
   const digest = useMemo(
     () =>
@@ -85,6 +93,7 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
         timezone,
         maxDrawdown,
         levelTouches,
+        coachPlans,
       }),
     [
       trades,
@@ -96,6 +105,7 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
       timezone,
       maxDrawdown,
       levelTouches,
+      coachPlans,
     ]
   );
 

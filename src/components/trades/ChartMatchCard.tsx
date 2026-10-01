@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useState } from 'react';
 import { AlertCircle, ImagePlus, Loader2, Search, Trash2, Upload } from 'lucide-react';
 import type {
   ChartSearch,
+  CoachPlan,
   DailyReview,
   Instrument,
   LevelTouch,
@@ -82,6 +83,13 @@ export interface ChartMatchCardProps {
   timezone: string;
   maxDrawdown?: number | null;
   levelTouches?: LevelTouch[];
+  /**
+   * The coach's own plans with the trader's grades and feedback, when there are any.
+   *
+   * Carried into the digest so the read learns from what the trader keeps telling the coach
+   * about how it plans; the guardrails keep a grade from being read as market data.
+   */
+  coachPlans?: CoachPlan[];
   /** Opens the full detail view for a matched trade. Omitted hides the rows' click state. */
   onViewTrade?: (trade: Trade) => void;
   /**
@@ -284,6 +292,7 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
   timezone,
   maxDrawdown,
   levelTouches,
+  coachPlans,
   onViewTrade,
   chartSearches,
   onSaveChartSearch,
@@ -308,6 +317,7 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
         // This is the one mode that is a search rather than a pattern read, so it is handed
         // the whole history instead of the learner's twenty-row window.
         tradeSampleLimit: FULL_HISTORY_TRADE_SAMPLES,
+        coachPlans,
       }),
     [
       trades,
@@ -319,6 +329,7 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
       timezone,
       maxDrawdown,
       levelTouches,
+      coachPlans,
     ]
   );
 

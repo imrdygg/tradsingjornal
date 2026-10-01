@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Sparkles, Wand2 } from 'lucide-react';
-import { DailyReview, Instrument, LevelTouch, Setup, Trade, TradingDay } from '../../types';
+import { CoachPlan, DailyReview, Instrument, LevelTouch, Setup, Trade, TradingDay } from '../../types';
 import { buildJournalDigest } from '../../lib/ai/journal-digest';
 import type { LearnResponse, LearnedSetup } from '../../lib/ai/coach-types';
 import { newSetupDrafts } from '../../lib/ai/setup-drafts';
@@ -53,6 +53,13 @@ export interface CoachSetupsCardProps {
   timezone: string;
   maxDrawdown?: number | null;
   levelTouches?: LevelTouch[];
+  /**
+   * The coach's own plans with the trader's grades and feedback, when there are any.
+   *
+   * Carried into the digest so the read learns from what the trader keeps telling the coach
+   * about how it plans; the guardrails keep a grade from being read as market data.
+   */
+  coachPlans?: CoachPlan[];
   /** Writes the drafts into the playbook. Called once per read, with only the new ones. */
   onAddSetups: (setups: Setup[]) => void;
 }
@@ -124,6 +131,7 @@ export const CoachSetupsCard: React.FC<CoachSetupsCardProps> = ({
   timezone,
   maxDrawdown,
   levelTouches,
+  coachPlans,
   onAddSetups,
 }) => {
   const digest = useMemo(
@@ -138,6 +146,7 @@ export const CoachSetupsCard: React.FC<CoachSetupsCardProps> = ({
         timezone,
         maxDrawdown,
         levelTouches,
+        coachPlans,
       }),
     [
       trades,
@@ -149,6 +158,7 @@ export const CoachSetupsCard: React.FC<CoachSetupsCardProps> = ({
       timezone,
       maxDrawdown,
       levelTouches,
+      coachPlans,
     ]
   );
 

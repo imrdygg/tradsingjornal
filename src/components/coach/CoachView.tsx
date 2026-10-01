@@ -170,6 +170,9 @@ export const CoachView: React.FC<CoachViewProps> = ({
         timezone,
         levelTouches,
         sessionExtremes,
+        // The trader's grades of the coach's own plans travel with these reads too, so the
+        // feedback shapes the brief and the reviews, not only the next self-plan.
+        coachPlans,
       }),
     [
       trades,
@@ -182,6 +185,7 @@ export const CoachView: React.FC<CoachViewProps> = ({
       maxDrawdown,
       levelTouches,
       sessionExtremes,
+      coachPlans,
     ]
   );
 
@@ -511,6 +515,7 @@ export const CoachView: React.FC<CoachViewProps> = ({
         onDeleteChartSearch={onDeleteChartSearch}
         onAddSetups={onAddSetups}
         userId={userId}
+        coachPlans={coachPlans}
       />
 
       {/* What the coach is allowed to know. Shown up front so the advice can be judged. */}
@@ -673,6 +678,7 @@ export const CoachView: React.FC<CoachViewProps> = ({
         timezone={timezone}
         maxDrawdown={maxDrawdown}
         levelTouches={levelTouches}
+        coachPlans={coachPlans}
         title="Ask about my trading"
         description="Put your own question to the coach. It answers from your records — your figures, or nothing."
       />

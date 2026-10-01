@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { GraduationCap, Sparkles } from 'lucide-react';
 import {
+  CoachPlan,
   DailyReview,
   Instrument,
   Lesson,
@@ -62,6 +63,13 @@ export interface CoachLessonsCardProps {
   levelTouches?: LevelTouch[];
   sessionExtremes?: SessionExtreme[];
   lessons: Lesson[];
+  /**
+   * The coach's own plans with the trader's grades and feedback, when there are any.
+   *
+   * Carried into the digest so the read learns from what the trader keeps telling the coach
+   * about how it plans; the guardrails keep a grade from being read as market data.
+   */
+  coachPlans?: CoachPlan[];
   /** Records that the coach has read these lessons, so the library can show what is new. */
   onMarkRead?: (lessonIds: string[], at: string) => void;
 }
@@ -114,6 +122,7 @@ export const CoachLessonsCard: React.FC<CoachLessonsCardProps> = ({
   levelTouches,
   sessionExtremes,
   lessons,
+  coachPlans,
   onMarkRead,
 }) => {
   const digest = useMemo(
@@ -130,6 +139,7 @@ export const CoachLessonsCard: React.FC<CoachLessonsCardProps> = ({
         levelTouches,
         sessionExtremes,
         lessons,
+        coachPlans,
       }),
     [
       trades,
@@ -143,6 +153,7 @@ export const CoachLessonsCard: React.FC<CoachLessonsCardProps> = ({
       levelTouches,
       sessionExtremes,
       lessons,
+      coachPlans,
     ]
   );
 

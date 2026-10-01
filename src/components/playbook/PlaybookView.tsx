@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import {
   ChartSearch,
+  CoachPlan,
   DailyReview,
   Instrument,
   Lesson,
@@ -88,6 +89,8 @@ interface PlaybookViewProps {
     timezone: string;
     maxDrawdown?: number | null;
     levelTouches: LevelTouch[];
+    /** The trader's grades of the coach's own plans, carried into the read's digest. */
+    coachPlans?: CoachPlan[];
   };
   /**
    * The journal the coach reads to propose setups of its own from the trade history and its
@@ -102,6 +105,8 @@ interface PlaybookViewProps {
     timezone: string;
     maxDrawdown?: number | null;
     levelTouches?: LevelTouch[];
+    /** The trader's grades of the coach's own plans, carried into the read's digest. */
+    coachPlans?: CoachPlan[];
   };
   /**
    * Where a level touch is written down. This is the input side of the edge finder: without
@@ -138,6 +143,8 @@ interface PlaybookViewProps {
     /** Writes coach-named setups from the picture search into the playbook. */
     onAddSetups?: (setups: Setup[]) => void;
     userId?: string;
+    /** The trader's grades of the coach's own plans, carried into the read's digest. */
+    coachPlans?: CoachPlan[];
   };
   /**
    * The lessons the trader wrote for themselves: the library they build up, and the handlers
@@ -161,6 +168,8 @@ interface PlaybookViewProps {
     maxDrawdown?: number | null;
     levelTouches?: LevelTouch[];
     sessionExtremes?: SessionExtreme[];
+    /** The trader's grades of the coach's own plans, carried into the read's digest. */
+    coachPlans?: CoachPlan[];
     onMarkRead?: (lessonIds: string[], at: string) => void;
   };
 }

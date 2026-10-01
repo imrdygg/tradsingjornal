@@ -30,6 +30,7 @@ import {
 } from '../../lib/ai/plan-coach';
 import type { InstrumentQuote } from '../../lib/ai/market-data';
 import type {
+  CoachPlan,
   DailyReview,
   Instrument,
   Setup,
@@ -71,6 +72,13 @@ interface MarketsViewProps {
   /** A locked plan needs a recorded reason to change, so nothing is offered for it. */
   planLocked?: boolean;
   theme: 'dark' | 'light';
+  /**
+   * The coach's own plans with the trader's grades and feedback, when there are any.
+   *
+   * Carried into the digest so the chart read learns from what the trader keeps telling the
+   * coach about how it plans; the guardrails keep a grade from being read as market data.
+   */
+  coachPlans?: CoachPlan[];
 }
 
 const GROUP_LABELS: Record<ChartSymbol['group'], string> = {
@@ -123,6 +131,7 @@ export const MarketsView: React.FC<MarketsViewProps> = ({
   onApplyPlan,
   planLocked = false,
   theme,
+  coachPlans,
 }) => {
   const [symbolId, setSymbolId] = useState<string>(() => findChartSymbol(primaryInstrument).id);
   const symbol = findChartSymbol(symbolId);
@@ -169,8 +178,19 @@ export const MarketsView: React.FC<MarketsViewProps> = ({
         todayTradeDate,
         maxDrawdown,
         timezone,
+        coachPlans,
       }),
-    [trades, tradingDays, reviews, setups, instruments, todayTradeDate, timezone, maxDrawdown]
+    [
+      trades,
+      tradingDays,
+      reviews,
+      setups,
+      instruments,
+      todayTradeDate,
+      timezone,
+      maxDrawdown,
+      coachPlans,
+    ]
   );
 
   async function runChartRead() {

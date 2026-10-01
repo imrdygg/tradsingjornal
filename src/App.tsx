@@ -1735,6 +1735,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               timezone: profile.timezone,
               maxDrawdown: profile.maxDrawdown ?? null,
               levelTouches,
+              coachPlans,
               onViewTrade: (t) => setViewingTradeId(t.id),
               chartSearches,
               onSaveChartSearch: handleSaveChartSearch,
@@ -1836,6 +1837,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             onApplyPlan={handleApplyChartPlan}
             planLocked={!!todayTradingDay.lockedAt}
             theme={theme}
+            coachPlans={coachPlans}
           />
         );
 
@@ -1862,6 +1864,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               timezone: profile.timezone,
               maxDrawdown: profile.maxDrawdown ?? null,
               levelTouches,
+              coachPlans,
             }}
             coachSetups={{
               trades,
@@ -1872,6 +1875,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               timezone: profile.timezone,
               maxDrawdown: profile.maxDrawdown ?? null,
               levelTouches,
+              coachPlans,
             }}
             levelTouchLog={{
               touches: levelTouches,
@@ -1893,6 +1897,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               timezone: profile.timezone,
               maxDrawdown: profile.maxDrawdown ?? null,
               levelTouches,
+              coachPlans,
               onViewTrade: (t) => setViewingTradeId(t.id),
               chartSearches,
               onSaveChartSearch: handleSaveChartSearch,
@@ -1915,6 +1920,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               maxDrawdown: profile.maxDrawdown ?? null,
               levelTouches,
               sessionExtremes,
+              coachPlans,
               onMarkRead: handleMarkLessonsRead,
             }}
           />

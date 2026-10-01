@@ -1428,16 +1428,17 @@ describe('selfplan mode', () => {
     );
   });
 
-  it("renders the trader's grades of past plans only for this mode", () => {
+  it("renders the trader's grades of past plans in every read", () => {
     const digest = digestFor({ coachPlans: [plan] });
-    const self = formatDigestForPrompt(digest, 'selfplan');
-    expect(self).toContain("THE TRADER'S GRADES OF YOUR PAST PLANS");
-    expect(self).toContain('Entry was too close to the level.');
-    // And the grades never leak into any other answer.
-    expect(formatDigestForPrompt(digest, 'brief')).not.toContain(
-      "THE TRADER'S GRADES OF YOUR PAST PLANS"
-    );
-    expect(formatDigestForPrompt(digest)).not.toContain(
+    // The feedback is the only signal the coach has about how the trader wants a plan
+    // written, so it travels with every answer rather than only the next self-plan.
+    for (const mode of [...COACH_MODES, undefined]) {
+      const text = formatDigestForPrompt(digest, mode);
+      expect(text).toContain("THE TRADER'S GRADES OF YOUR PAST PLANS");
+      expect(text).toContain('Entry was too close to the level.');
+    }
+    // And it is absent when the trader has graded nothing, so it never pads the prompt.
+    expect(formatDigestForPrompt(digestFor(), 'brief')).not.toContain(
       "THE TRADER'S GRADES OF YOUR PAST PLANS"
     );
   });
@@ -1506,6 +1507,49 @@ describe('selfplan mode', () => {
         rationale: 'd',
       })
     ).toThrow(/entry, stop and target/);
+  });
+});
+
+/**
+ * The trader's grades of the coach's own plans now travel with every answer. This is the
+ * guardrail half: the rules must arrive with the record so a grade is never misread as a
+ * market signal, and must stay out of a prompt that does not carry the record.
+ */
+describe("the trader's grades of the coach's own plans", () => {
+  const gradedPlan: CoachPlan = {
+    id: 'cp-grades',
+    userId: 'u1',
+    createdAt: '2026-09-19T13:00:00.000Z',
+    symbol: 'MES',
+    marketPrice: 7740,
+    direction: 'long',
+    entry: 7742,
+    stop: 7732,
+    target: 7760,
+    confidence: 'medium',
+    entryReason: 'a',
+    exitReason: 'b',
+    invalidation: 'c',
+    rationale: 'd',
+    grade: 'D',
+    feedback: 'You keep putting the stop too tight for the range.',
+  };
+
+  it('adds the grade rules whenever the record is in the prompt, and not otherwise', () => {
+    const withGrades = buildCoachPrompt('brief', digestFor({ coachPlans: [gradedPlan] }));
+    expect(withGrades.systemInstruction).toContain("THE TRADER'S GRADES OF YOUR OWN PLANS");
+    expect(withGrades.userPrompt).toContain('You keep putting the stop too tight for the range.');
+
+    // No plan has been graded, so the rules would only be noise and the section is absent.
+    const without = buildCoachPrompt('brief', digestFor());
+    expect(without.systemInstruction).not.toContain("THE TRADER'S GRADES OF YOUR OWN PLANS");
+    expect(without.userPrompt).not.toContain("THE TRADER'S GRADES OF YOUR PAST PLANS");
+  });
+
+  it('forbids reading a grade as market evidence, in a read that is not about planning', () => {
+    const { systemInstruction } = buildCoachPrompt('weekly', digestFor({ coachPlans: [gradedPlan] }));
+    expect(systemInstruction).toContain('THEY JUDGE YOUR WRITING, NOT THE MARKET');
+    expect(systemInstruction).toContain("an old plan's levels are never a call for today");
   });
 });
 

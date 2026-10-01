@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import {
   ChartSearch,
+  CoachPlan,
   DailyReview,
   LevelTouch,
   Trade,
@@ -82,6 +83,8 @@ interface TradesViewProps {
     /** Writes coach-named setups from the picture search into the playbook. */
     onAddSetups?: (setups: Setup[]) => void;
     userId?: string;
+    /** The trader's grades of the coach's own plans, carried into the read's digest. */
+    coachPlans?: CoachPlan[];
   };
 }
 

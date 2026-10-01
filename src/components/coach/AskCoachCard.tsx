@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { MessageSquare } from 'lucide-react';
-import { DailyReview, Instrument, LevelTouch, Setup, Trade, TradingDay } from '../../types';
+import { CoachPlan, DailyReview, Instrument, LevelTouch, Setup, Trade, TradingDay } from '../../types';
 import { buildJournalDigest } from '../../lib/ai/journal-digest';
 import type { AskResponse } from '../../lib/ai/coach-types';
 import { CoachErrorCode, CoachResult, requestCoach } from '../../lib/ai/coach-client';
@@ -41,6 +41,13 @@ interface AskCoachCardProps {
   maxDrawdown?: number | null;
   /** The level-touch log, so a question like "what is my overnight hold rate?" is answerable. */
   levelTouches?: LevelTouch[];
+  /**
+   * The coach's own plans with the trader's grades and feedback, when there are any.
+   *
+   * Carried into the digest so the answer can learn from what the trader keeps telling the
+   * coach about how it plans; the guardrails keep a grade from being read as market data.
+   */
+  coachPlans?: CoachPlan[];
   /** Heading and blurb above the box, so the card can be labelled by its caller. */
   title?: string;
   description?: string;
@@ -72,6 +79,7 @@ export const AskCoachCard: React.FC<AskCoachCardProps> = ({
   timezone,
   maxDrawdown,
   levelTouches = NO_TOUCHES,
+  coachPlans,
   title,
   description,
 }) => {
@@ -93,6 +101,7 @@ export const AskCoachCard: React.FC<AskCoachCardProps> = ({
         timezone,
         maxDrawdown,
         levelTouches,
+        coachPlans,
       }),
     [
       trades,
@@ -104,6 +113,7 @@ export const AskCoachCard: React.FC<AskCoachCardProps> = ({
       timezone,
       maxDrawdown,
       levelTouches,
+      coachPlans,
     ]
   );
 

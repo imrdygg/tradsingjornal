@@ -1775,6 +1775,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             maxDrawdown={profile.maxDrawdown ?? null}
             dailyLossLimit={todayTradingDay.plannedLossLimit || profile.defaultDailyLossLimit}
             riskTiers={riskTiers}
+            coachPlans={coachPlans}
             onUpdateMaxDrawdown={(value) =>
               handleUpdateProfile({ ...profile, maxDrawdown: value })
             }

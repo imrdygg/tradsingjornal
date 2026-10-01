@@ -29,7 +29,7 @@ import {
   CartesianGrid,
   Cell,
 } from 'recharts';
-import { Trade, TradingDay, DailyReview, Setup, Instrument } from '../../types';
+import { CoachPlan, Trade, TradingDay, DailyReview, Setup, Instrument } from '../../types';
 import { calculateProfitFactor } from '../../lib/analytics/profit-factor';
 import { calculateExpectancy } from '../../lib/analytics/expectancy';
 import { calculateMaxDrawdown } from '../../lib/analytics/drawdown';
@@ -48,6 +48,7 @@ import {
 import { instrumentSymbol } from '../../lib/trading/instruments';
 import { DEFAULT_RISK_TIER_AMOUNTS } from '../../lib/trading/risk-tiers';
 import { DrawdownRoomChart } from '../today/DrawdownRoomChart';
+import { CoachPlanGradesPanel } from './CoachPlanGradesPanel';
 import {
   assessRiskCapacity,
   buildEquityCurve,
@@ -279,6 +280,13 @@ interface AnalyticsViewProps {
    * profile has ever been edited.
    */
   riskTiers?: number[];
+  /**
+   * The coach's own plans with the trader's grades and feedback.
+   *
+   * Read by the grade panel, which is the scoreboard for the coach's planning. Absent
+   * simply renders the panel's own empty state rather than hiding the section.
+   */
+  coachPlans?: CoachPlan[];
 }
 
 export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
@@ -291,6 +299,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
   dailyLossLimit = null,
   onUpdateMaxDrawdown,
   riskTiers = DEFAULT_RISK_TIER_AMOUNTS,
+  coachPlans = [],
 }) => {
   // Filters
   const [dateRange, setDateRange] = useState<'7d' | '30d' | 'all'>('all');
@@ -1102,6 +1111,13 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
           </>
         )}
       </div>
+
+      {/*
+        The only judgement of the coach's own planning that exists: the trader's grades and
+        written feedback, kept beside the agreement scoreboard because both ask whether the
+        coach's read is worth anything, from two different directions.
+      */}
+      <CoachPlanGradesPanel plans={coachPlans} />
 
       {/*
         Risk capacity.

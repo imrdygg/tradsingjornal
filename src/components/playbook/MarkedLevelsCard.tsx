@@ -13,7 +13,11 @@ import {
   TradingSession,
 } from '../../types';
 import { CoachCard } from '../coach/coach-ui';
-import { instrumentSymbol } from '../../lib/trading/instruments';
+import {
+  defaultLevelZonePoints,
+  formatPoints,
+  instrumentSymbol,
+} from '../../lib/trading/instruments';
 import {
   LEVEL_TIMEFRAMES,
   TIMEFRAME_LABEL,
@@ -65,9 +69,6 @@ export interface MarkedLevelsCardProps {
 
 /** The sessions a level can be marked for, in the order they happen. */
 const SESSIONS: TradingSession[] = ['Overnight', 'Premarket', 'Regular Session'];
-
-/** How wide a level is by default, in points. Carried onto the touch it produces. */
-const DEFAULT_ZONE_POINTS = 4;
 
 /** The empty draft for a chart nothing has been typed into yet. */
 const EMPTY_DRAFT = { support: '', resistance: '' };
@@ -148,7 +149,14 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
   const [session, setSession] = useState<TradingSession>(
     SESSIONS.find((value) => todayTradingDay.allowedSessions?.includes(value)) ?? 'Regular Session'
   );
-  const [zone, setZone] = useState(String(DEFAULT_ZONE_POINTS));
+  /**
+   * The level width, kept per instrument rather than shared.
+   *
+   * The width has a sensible default that differs by contract — 4 points is sixteen ticks of
+   * MES but $400 of crude — so carrying one instrument's custom width onto another would be
+   * wrong in both directions. Each instrument holds its own, defaulted from its tick size.
+   */
+  const [zoneByInstrument, setZoneByInstrument] = useState<Record<string, string>>({});
   const [label, setLabel] = useState('');
   /**
    * The two paste boxes, kept per instrument and timeframe rather than shared.
@@ -169,6 +177,12 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
   const [bulkText, setBulkText] = useState('');
   /** The side an untagged bulk line falls back to; its timeframe falls back to the open chart. */
   const [bulkDefaultSide, setBulkDefaultSide] = useState<LevelKind>('support');
+
+  const currentInstrument = instruments.find((inst) => inst.id === instrumentId);
+  const defaultZone = defaultLevelZonePoints(currentInstrument);
+  const zone = zoneByInstrument[instrumentId] ?? String(defaultZone);
+  const setZone = (value: string) =>
+    setZoneByInstrument((prev) => ({ ...prev, [instrumentId]: value }));
 
   // The draft on screen belongs to exactly this instrument and timeframe.
   const draftKey = `${instrumentId}|${timeframe}`;
@@ -351,9 +365,9 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
       return;
     }
 
-    const width = zone.trim() === '' ? DEFAULT_ZONE_POINTS : parseFloat(zone);
+    const width = zone.trim() === '' ? defaultZone : parseFloat(zone);
     if (!Number.isFinite(width) || width < 0) {
-      setError('The zone width has to be zero or more points.');
+      setError('The level width has to be zero or more points.');
       return;
     }
 
@@ -407,9 +421,9 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
       return;
     }
 
-    const width = zone.trim() === '' ? DEFAULT_ZONE_POINTS : parseFloat(zone);
+    const width = zone.trim() === '' ? defaultZone : parseFloat(zone);
     if (!Number.isFinite(width) || width < 0) {
-      setError('The zone width has to be zero or more points.');
+      setError('The level width has to be zero or more points.');
       return;
     }
 
@@ -485,7 +499,14 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
           {level.timeframe ?? timeframe}
         </span>
         <span className="font-mono text-sm font-semibold text-zinc-100">{level.price}</span>
-        <span className="font-mono text-[10px] text-zinc-500">±{level.zonePoints}pts</span>
+        <span
+          className="font-mono text-[10px] text-zinc-500"
+          title={`A break counts once price leaves ${formatPoints(
+            level.price - level.zonePoints / 2
+          )}–${formatPoints(level.price + level.zonePoints / 2)}`}
+        >
+          ±{level.zonePoints}pts
+        </span>
         {level.label && (
           <span className="truncate rounded border border-zinc-800 bg-zinc-950/60 px-1.5 py-0.5 text-[10px] text-zinc-400">
             {level.label}
@@ -693,7 +714,7 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
 
           <div>
             <label htmlFor="level-zone" className="mb-1 block text-xs font-medium text-zinc-300">
-              Zone ± pts
+              Width ± pts
             </label>
             <input
               id="level-zone"
@@ -702,10 +723,25 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
               step="0.25"
               value={zone}
               onChange={(event) => setZone(event.target.value)}
+              title={`How wide the level is. Default for ${symbol}: ${defaultZone} pts.`}
               className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none"
             />
           </div>
         </div>
+
+        {/*
+          What the width actually does, said where the setting is.
+
+          The number is load-bearing — it decides whether a touch gets graded as a break or as
+          still inside the level — so it cannot be left as an unexplained field a trader has to
+          guess at, and it cannot be removed without silently changing every hold rate.
+        */}
+        <p className="text-[10px] leading-relaxed text-zinc-500">
+          <span className="font-semibold text-zinc-400">Width</span> is how thick each line is. A
+          touch only counts as a break once price leaves this band, and a step back inside it
+          counts as the level failing — so a width of 0 makes almost every touch look like a clean
+          break. {symbol} starts at {defaultZone} pts.
+        </p>
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <div className="col-span-2">

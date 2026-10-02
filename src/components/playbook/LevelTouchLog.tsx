@@ -10,7 +10,11 @@ import {
 } from '../../types';
 import { CoachCard } from '../coach/coach-ui';
 import { formatTimestamp } from '../../lib/storage/date-utils';
-import { instrumentSymbol } from '../../lib/trading/instruments';
+import {
+  defaultLevelZonePoints,
+  formatPoints,
+  instrumentSymbol,
+} from '../../lib/trading/instruments';
 
 /**
  * The level-touch log.
@@ -42,14 +46,6 @@ export interface LevelTouchLogProps {
 
 /** The sessions a touch can fall in, in the order they happen. */
 const SESSIONS: TradingSession[] = ['Overnight', 'Premarket', 'Regular Session'];
-
-/**
- * How wide a level is by default, in points.
- *
- * A level is a zone, not a tick: price has to leave this band and stay out of it to be a
- * break, so a zone of zero would make almost every touch look like a clean break.
- */
-const DEFAULT_ZONE_POINTS = 4;
 
 /** Most touches to render at once. The rest are counted, never silently dropped. */
 const MAX_VISIBLE = 40;
@@ -183,7 +179,14 @@ const TouchCard: React.FC<{
             {touch.kind}
           </span>
           <span className="font-mono text-sm font-semibold text-zinc-100">{touch.price}</span>
-          <span className="font-mono text-[10px] text-zinc-500">±{touch.zonePoints}pts</span>
+          <span
+            className="font-mono text-[10px] text-zinc-500"
+            title={`A break counts once price leaves ${formatPoints(
+              touch.price - touch.zonePoints / 2
+            )}–${formatPoints(touch.price + touch.zonePoints / 2)}`}
+          >
+            ±{touch.zonePoints}pts
+          </span>
         </div>
         <span
           className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-mono uppercase font-bold ${
@@ -274,7 +277,6 @@ export const LevelTouchLog: React.FC<LevelTouchLogProps> = ({
 }) => {
   const [kind, setKind] = useState<LevelKind>('support');
   const [price, setPrice] = useState('');
-  const [zone, setZone] = useState(String(DEFAULT_ZONE_POINTS));
   const [label, setLabel] = useState('');
   const [notes, setNotes] = useState('');
   const [session, setSession] = useState<TradingSession>(
@@ -286,6 +288,19 @@ export const LevelTouchLog: React.FC<LevelTouchLogProps> = ({
     const primary = instruments.find((inst) => inst.symbol.toLowerCase() === wanted);
     return primary?.id ?? instruments[0]?.id ?? 'mes';
   });
+  /**
+   * The level width, kept per instrument and defaulted from its tick size.
+   *
+   * A level is a zone, not a tick: price has to leave this band and stay out of it to count as
+   * a break, so the width decides what the record calls a hold. One shared figure would be
+   * wrong — 4 points is sixteen ticks of MES but $400 of crude.
+   */
+  const [zoneByInstrument, setZoneByInstrument] = useState<Record<string, string>>({});
+  const currentInstrument = instruments.find((inst) => inst.id === instrumentId);
+  const defaultZone = defaultLevelZonePoints(currentInstrument);
+  const zone = zoneByInstrument[instrumentId] ?? String(defaultZone);
+  const setZone = (value: string) =>
+    setZoneByInstrument((prev) => ({ ...prev, [instrumentId]: value }));
   const [touchedAt, setTouchedAt] = useState(localDateTimeInput);
   const [error, setError] = useState('');
 
@@ -312,9 +327,9 @@ export const LevelTouchLog: React.FC<LevelTouchLogProps> = ({
       return;
     }
 
-    const width = zone.trim() === '' ? DEFAULT_ZONE_POINTS : parseFloat(zone);
+    const width = zone.trim() === '' ? defaultZone : parseFloat(zone);
     if (!Number.isFinite(width) || width < 0) {
-      setError('The zone width has to be zero or more points.');
+      setError('The level width has to be zero or more points.');
       return;
     }
 
@@ -414,7 +429,7 @@ export const LevelTouchLog: React.FC<LevelTouchLogProps> = ({
 
           <div>
             <label htmlFor="touch-zone" className="mb-1 block text-xs font-medium text-zinc-300">
-              Zone ± pts
+              Width ± pts
             </label>
             <input
               id="touch-zone"
@@ -423,10 +438,21 @@ export const LevelTouchLog: React.FC<LevelTouchLogProps> = ({
               step="0.25"
               value={zone}
               onChange={(event) => setZone(event.target.value)}
+              title={`How wide the level is. Default for ${instrumentSymbol(
+                instruments,
+                instrumentId
+              )}: ${defaultZone} pts.`}
               className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
             />
           </div>
         </div>
+
+        {/* The width decides what the record calls a break, so it is explained where it is set. */}
+        <p className="text-[10px] leading-relaxed text-zinc-500">
+          <span className="font-semibold text-zinc-400">Width</span> is how thick the level is. It
+          only counts as broken once price leaves this band, and a step back inside counts as the
+          level failing.
+        </p>
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <div className="col-span-2">

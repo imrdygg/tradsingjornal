@@ -184,6 +184,34 @@ export function trackedExtremeInstruments(instruments: Instrument[]): Instrument
   return tracked.length ? tracked : instruments;
 }
 
+/**
+ * How many ticks wide a marked level is by default.
+ *
+ * Sixteen ticks: wide enough to absorb an ordinary wick through the line without calling it a
+ * break, narrow enough that the band is still the level rather than the noise around it.
+ */
+export const DEFAULT_LEVEL_ZONE_TICKS = 16;
+
+/**
+ * The default width of a marked level, in points, for one instrument.
+ *
+ * A level is a zone, not a tick — the edge code only counts price as having broken a level once
+ * it leaves a band around it, and counts a step back inside the band as the level failing — so
+ * the width is a real setting and one figure cannot fit every contract. Four points is sixteen
+ * ticks of MES but $400 of crude: the default is derived from the contract's own tick so each
+ * instrument starts somewhere sensible instead of copying crude's mistake onto the index.
+ */
+export function defaultLevelZonePoints(instrument: Instrument | undefined): number {
+  const tick = instrument?.tickSize;
+  if (!tick || !Number.isFinite(tick) || tick <= 0) return 4;
+  return Math.round(tick * DEFAULT_LEVEL_ZONE_TICKS * 100) / 100;
+}
+
+/** Tiny formatter that trims trailing zeros: 7702.5 -> "7702.5", 7702.00 -> "7702". */
+export function formatPoints(value: number): string {
+  return String(Math.round(value * 1000) / 1000);
+}
+
 export function findInstrument(instruments: Instrument[], symbolOrId: string): Instrument {
   const match = instruments.find(
     (i) =>

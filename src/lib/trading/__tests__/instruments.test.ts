@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
   DEFAULT_INSTRUMENTS,
+  defaultLevelZonePoints,
   findInstrument,
   findInstrumentByContract,
+  formatPoints,
   instrumentSymbol,
 } from '../instruments';
 import { futuresQuoteSymbol } from '../../ai/market-data';
@@ -79,6 +81,30 @@ describe('the built-in catalog', () => {
         `${instrument.symbol} is in the catalog but has no live-quote source`
       ).not.toBeNull();
     }
+  });
+});
+
+describe('defaultLevelZonePoints', () => {
+  const zone = (symbol: string) =>
+    defaultLevelZonePoints(findInstrument(DEFAULT_INSTRUMENTS, symbol));
+
+  it('derives the level width from the contract tick, not one figure for all', () => {
+    // 4 points is sixteen ticks of MES, but $400 of crude — the same number cannot be both.
+    expect(zone('MES')).toBe(4);
+    expect(zone('MNQ')).toBe(4);
+    expect(zone('MCL')).toBe(0.16);
+  });
+
+  it('falls back to four points when the instrument or its tick is unusable', () => {
+    expect(defaultLevelZonePoints(undefined)).toBe(4);
+    expect(defaultLevelZonePoints({ ...DEFAULT_INSTRUMENTS[0], tickSize: 0 })).toBe(4);
+  });
+});
+
+describe('formatPoints', () => {
+  it('trims trailing zeros so a band reads as prices do', () => {
+    expect(formatPoints(7702.5)).toBe('7702.5');
+    expect(formatPoints(7702.0)).toBe('7702');
   });
 });
 

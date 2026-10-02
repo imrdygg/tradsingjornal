@@ -115,6 +115,7 @@ import { StorageWarningBanner } from './components/common/StorageWarningBanner';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 import { loadOrMigrateJournal, overwriteJournal } from './lib/cloud-sync';
 import { countLocalOnlyRecords, createJournalSaver } from './lib/journal-sync';
+import { migrateJournalMedia, uploadImageDataUrl } from './lib/media/media-utils';
 import { parseTradovateCSV } from './lib/trading/tradovate-import';
 import type { CsvImportSummary } from './lib/trading/tradovate-import';
 import { buildPositionGroups, findPositionGroup } from './lib/trading/position-groups';
@@ -1420,6 +1421,37 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     setLastSyncedAt(cloudEnabled ? new Date() : null);
   };
 
+  /**
+   * Moves the screenshots this browser is holding into the media bucket.
+   *
+   * Read, transform, adopt: the migration is handed the journal as it stands, uploads every
+   * inline picture it finds and returns the state with links in their place. Adopting that state
+   * replaces the heavy records and re-schedules the cloud save below, so the lighter copy is
+   * what syncs.
+   */
+  const handleMoveScreenshotsToCloud = async () => {
+    const before = storage.readState();
+    const { state, counts } = await migrateJournalMedia(
+      before,
+      uploadImageDataUrl,
+      new Date().toISOString()
+    );
+
+    if (counts.moved > 0) {
+      // The quota banner is sticky, and the write it was reporting is long gone. Cleared before
+      // the write below rather than after, so a failure from *this* write is recorded fresh and
+      // a fixed browser is not left staring at a warning about a change it no longer lost.
+      dismissStorageFailure();
+      // `applyJournalState` is the existing adoption path: it writes the whole journal through
+      // storage and re-runs the catalog merges, so the screen and storage cannot disagree about
+      // which pictures are links now. Deliberately the only write — the journal is at the
+      // browser's limit when this runs, so a second full pass is the last thing it needs.
+      applyJournalState({ ...state, profile: { ...state.profile, id: userId } });
+    }
+
+    return counts;
+  };
+
   const handleImportData = (jsonStr: string) => {
     const success = storage.importData(jsonStr);
     if (success) {
@@ -2101,6 +2133,9 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             onSignOut={onSignOut ? handleSignOut : undefined}
             signingOut={signingOut}
             syncStatus={syncStatus}
+            // Only offered when there is an account to upload to: signed out, the pictures
+            // have nowhere to go and the button would be a lie.
+            onMoveScreenshotsToCloud={cloudEnabled ? handleMoveScreenshotsToCloud : undefined}
           />
         );
 

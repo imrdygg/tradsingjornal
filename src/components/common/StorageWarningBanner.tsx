@@ -10,7 +10,7 @@ interface StorageWarningBannerProps {
 }
 
 /** Prints bytes the way a trader thinks about a file, not in raw digits. */
-function formatMegabytes(bytes: number): string {
+export function formatMegabytes(bytes: number): string {
   const mb = bytes / (1024 * 1024);
   if (mb < 0.1) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
   return `${mb.toFixed(1)} MB`;

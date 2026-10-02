@@ -1055,8 +1055,16 @@ export const storage = {
     return null;
   },
 
-  exportAllData(): string {
-    const state: StorageState = {
+  /**
+   * The whole journal as one object, built the same way the export is.
+   *
+   * Exists so a bulk rewrite — the media migration, which has to replace a picture on every
+   * record at once — can read the journal, hand it to a transform and adopt the result, rather
+   * than each caller reassembling the snapshot and missing a key. Writing it back is the
+   * existing `importData`, so there is one path that replaces a whole journal and not two.
+   */
+  readState(): StorageState {
+    return {
       profile: this.getProfile(),
       instruments: this.getInstruments(),
       instrumentCatalogVersion: this.getInstrumentCatalogVersion(),
@@ -1075,7 +1083,10 @@ export const storage = {
       feedback: this.getFeedback(),
       lessonAck: this.getLessonAck(),
     };
-    return JSON.stringify(state, null, 2);
+  },
+
+  exportAllData(): string {
+    return JSON.stringify(this.readState(), null, 2);
   },
 
   importData(jsonStr: string): boolean {

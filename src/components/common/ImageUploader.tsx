@@ -12,6 +12,7 @@ import {
 import { compressAndReadImage, getImageFromPasteEvent } from '../../lib/utils/image-utils';
 import {
   isVideoUrl,
+  uploadImageDataUrl,
   uploadMediaFile,
   validateVideoFile,
   MAX_VIDEO_SECONDS,
@@ -78,10 +79,19 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
     const newUrls: string[] = [];
 
     try {
-      // Images first — they are instant and compressed locally.
+      // Images first — they are compressed locally, then sent to the media bucket when there
+      // is an account to send them to. Inline is the fallback, not the goal: a journal full of
+      // base64 screenshots is what fills a browser's ~5 MB and stops every later save.
       for (const file of imageFiles) {
         setStatus('Optimising image…');
-        newUrls.push(await compressAndReadImage(file));
+        const dataUrl = await compressAndReadImage(file);
+        setStatus('Uploading screenshot…');
+        try {
+          newUrls.push(await uploadImageDataUrl(dataUrl));
+        } catch {
+          // Signed out or no cloud storage: keep the picture inline rather than lose it.
+          newUrls.push(dataUrl);
+        }
       }
 
       // Clips are validated, then uploaded to cloud storage.
@@ -320,9 +330,9 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
 
       {allowVideo && (
         <p className="text-[10px] text-zinc-500 leading-relaxed">
-          Videos upload to your cloud storage and play back anywhere you sign in. Keep clips
-          under {MAX_VIDEO_SECONDS} seconds — they are for quick chart walk-throughs, not full
-          reviews.
+          Screenshots and videos upload to your cloud storage and play back anywhere you sign
+          in — that keeps this browser light. Signed out, screenshots are kept in the browser
+          instead, which fills up fast. Keep clips under {MAX_VIDEO_SECONDS} seconds.
         </p>
       )}
     </div>

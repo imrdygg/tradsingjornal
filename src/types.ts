@@ -321,6 +321,8 @@ export interface ChartSearch {
    * without one is still a valid record with its scores intact.
    */
   thumbnail?: string;
+  /** When this search's thumbnail was moved to the media bucket. See `Trade.movedAt`. */
+  movedAt?: string;
   /** The trades the search matched, closest first. */
   matches: ChartSearchMatch[];
 }
@@ -480,7 +482,15 @@ export interface Trade {
   rMultiple: number;   // R
   status: TradeStatus;
   screenshotPath?: string;
-  images?: string[]; // Array of chart screenshot data URLs / image URLs
+  images?: string[]; // Array of chart screenshot URLs (uploaded, or inline data URLs when signed out)
+  /**
+   * When this trade's screenshots were moved out of the browser and into the media bucket.
+   *
+   * A marker rather than a flag: the migration skips any record that carries one, so a device
+   * that already moved its own pictures can never have them rewritten from a staler copy, and a
+   * partially completed move is not retried over work another device has since done.
+   */
+  movedAt?: string;
   executionReview?: TradeExecutionReview;
   tradeManagement?: TradeManagement;
   /** The coach's direction and level for this entry, when it made a call. */
@@ -525,6 +535,8 @@ export interface DailyReview {
    * media behind the focus and not only the sentence.
    */
   media?: string[];
+  /** When this review's media was moved to the media bucket. See `Trade.movedAt`. */
+  movedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -702,6 +714,8 @@ export interface PatternStudy {
   checklist: string[];
   notes: string;
   entries: PatternStudyEntry[];
+  /** When this study's example images were moved to the media bucket. See `Trade.movedAt`. */
+  movedAt?: string;
   updatedAt: string;
 }
 
@@ -728,6 +742,12 @@ export interface Lesson {
   kind: LessonKind;
   /** The setup this lesson was noticed on, when it relates to one the trader trades. */
   setupId?: string;
+  /**
+   * When this lesson's media was moved to the media bucket. See `Trade.movedAt`.
+   *
+   * Declared before `media` so the marker reads as the note about the list beneath it.
+   */
+  movedAt?: string;
   /**
    * Attached media: images as data URLs, video clips as cloud URLs.
    *

@@ -19,12 +19,13 @@ import {
   ChevronDown,
   ChevronUp,
   Layers,
+  HardDrive,
 } from 'lucide-react';
 import { UserProfile, Instrument, Setup } from '../../types';
 import { riskTierAmounts } from '../../lib/trading/risk-tiers';
 import { SyncStatusBadge, SyncStatus } from '../layout/SyncStatusBadge';
 import { ModalOverlay } from '../common/ModalOverlay';
-import { StorageHealthRow } from '../common/StorageWarningBanner';
+import { StorageHealthRow, formatMegabytes } from '../common/StorageWarningBanner';
 import { measureJournalBytes, storage } from '../../lib/storage';
 import type { CsvImportSummary } from '../../lib/trading/tradovate-import';
 
@@ -43,6 +44,8 @@ function move(setups: Setup[], index: number, delta: number): string[] {
   return ids;
 }
 
+import type { MediaMigrationCounts } from '../../lib/media/media-utils';
+
 /** Result banner shown after an import, so failures are never reported as success. */
 interface ImportNotice {
   tone: 'ok' | 'warn' | 'error';
@@ -58,6 +61,14 @@ interface SettingsViewProps {
   onImportData: (jsonData: string) => void;
   /** Returns a summary of what was read so problems can be shown inline. */
   onTradovateImport?: (csvContent: string) => CsvImportSummary;
+  /**
+   * Moves the screenshots this browser is holding into cloud storage.
+   *
+   * Absent when there is no signed-in account to upload them to, which is the only case where
+   * offering it would be a button that cannot do anything. Returns what actually moved so the
+   * card can report it rather than claiming success.
+   */
+  onMoveScreenshotsToCloud?: () => Promise<MediaMigrationCounts>;
   /** How many trades still carry a placeholder stop from an import. */
   assumedRiskCount?: number;
   /** Opens the bulk risk fix-up dialog. */
@@ -172,6 +183,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onSignOut,
   signingOut = false,
   syncStatus,
+  onMoveScreenshotsToCloud,
 }) => {
   /**
    * The name as it is being typed, so a half-finished name is never saved.
@@ -252,9 +264,34 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         : null
     );
   };
-  // Recomputed on each visit rather than held in state: reading the keys is
-  // cheap, and nothing else in this tab changes what they weigh.
-  const storageBytes = useMemo(() => measureJournalBytes(), []);
+  // Held in state rather than computed once, because moving screenshots to the cloud changes
+  // what the journal weighs and the number on screen has to follow the button that changed it.
+  const [storageBytes, setStorageBytes] = useState(() => measureJournalBytes());
+
+  /** The screenshot move, in flight or finished, so the card can report what happened. */
+  const [mediaMove, setMediaMove] = useState<{
+    running: boolean;
+    result: MediaMigrationCounts | null;
+    error: string | null;
+  }>({ running: false, result: null, error: null });
+
+  const runMediaMove = async () => {
+    if (!onMoveScreenshotsToCloud) return;
+    setMediaMove({ running: true, result: null, error: null });
+    try {
+      const result = await onMoveScreenshotsToCloud();
+      // Re-measured after the write, not assumed from the counters: the point of the card is
+      // to say how much room there is now, and only the storage itself knows that.
+      setStorageBytes(measureJournalBytes());
+      setMediaMove({ running: false, result, error: null });
+    } catch (err) {
+      setMediaMove({
+        running: false,
+        result: null,
+        error: err instanceof Error ? err.message : 'The screenshots could not be moved.',
+      });
+    }
+  };
 
   const [importNotice, setImportNotice] = useState<ImportNotice | null>(null);
   const [isResetOpen, setIsResetOpen] = useState(false);
@@ -852,6 +889,77 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         )}
       </div>
+
+      {/*
+        Free up the browser.
+
+        Screenshots used to be kept inline in the journal, which is what fills a browser's
+        ~5 MB and silently stops every later save. This moves them to the media bucket and
+        rewrites the journal to point at them, so the space comes back without losing a picture.
+        Only offered when signed in: there is nowhere to put them otherwise.
+      */}
+      {onMoveScreenshotsToCloud && (
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4 sm:p-5 space-y-3">
+          <h2 className="text-xs font-bold uppercase tracking-wider text-zinc-300 font-mono flex items-center gap-2">
+            <HardDrive className="w-4 h-4 text-zinc-400" />
+            Free up this browser
+          </h2>
+
+          <p className="text-[11px] text-zinc-400 leading-relaxed">
+            Screenshots saved in this browser take up most of the space it allows a site (about
+            5 MB). Moving them to your cloud storage replaces each one with a link, so nothing is
+            lost and the room comes back. It only touches pictures still held in this browser,
+            and it is safe to run again later.
+          </p>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              id="move-screenshots-to-cloud"
+              disabled={mediaMove.running}
+              onClick={runMediaMove}
+              className="flex items-center gap-2 rounded-xl border border-zinc-700 bg-zinc-950 px-3.5 py-2 text-xs font-semibold text-zinc-100 transition-colors hover:border-zinc-600 hover:bg-zinc-900 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {mediaMove.running ? (
+                <Loader2 className="h-4 w-4 animate-spin text-emerald-400" />
+              ) : (
+                <HardDrive className="h-4 w-4 text-emerald-400" />
+              )}
+              {mediaMove.running ? 'Moving screenshots…' : 'Move screenshots to cloud'}
+            </button>
+            <StorageHealthRow usageBytes={storageBytes} />
+          </div>
+
+          {mediaMove.result && (
+            <p className="text-[11px] leading-relaxed text-emerald-300/90">
+              {mediaMove.result.moved === 0 ? (
+                'Nothing was left to move — every screenshot here is already in your cloud storage.'
+              ) : (
+                <>
+                  Moved <span className="font-mono">{mediaMove.result.moved}</span> screenshot
+                  {mediaMove.result.moved === 1 ? '' : 's'} across{' '}
+                  <span className="font-mono">{mediaMove.result.records}</span> record
+                  {mediaMove.result.records === 1 ? '' : 's'} — about{' '}
+                  <span className="font-mono">
+                    {formatMegabytes(mediaMove.result.freedChars)}
+                  </span>{' '}
+                  freed.
+                  {mediaMove.result.failed > 0 && (
+                    <span className="text-amber-300/90">
+                      {' '}
+                      {mediaMove.result.failed} could not be uploaded and stayed in the browser.
+                    </span>
+                  )}
+                </>
+              )}
+            </p>
+          )}
+
+          {mediaMove.error && (
+            <p className="text-[11px] leading-relaxed text-rose-300">{mediaMove.error}</p>
+          )}
+        </div>
+      )}
 
       {/* 5. Start Fresh — journal reset */}
       {onResetJournal && (

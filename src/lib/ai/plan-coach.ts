@@ -3,8 +3,10 @@ import type {
   DailyReview,
   ImportantLevel,
   Instrument,
+  LevelOutlook,
   LevelTouch,
   MarketBias,
+  MarkedLevel,
   Setup,
   Trade,
   TradingDay,
@@ -51,6 +53,22 @@ export interface PlanCoachContext {
   /** The level-touch log, when the caller has it, so the coach can find the edge. */
   levelTouches?: LevelTouch[];
   /**
+   * The levels the trader wrote down up front, by instrument and timeframe.
+   *
+   * Travels with every plan-side request so a draft can name the line the trader is
+   * actually watching today, and so the coach can see which marked lines have gone
+   * untested — a plan that only quotes touched levels is reading half the record.
+   */
+  markedLevels?: MarkedLevel[];
+  /**
+   * The trader's per-instrument outlooks for the day.
+   *
+   * A plan for MES and one for MCL can disagree, so the coach needs the trader's own
+   * directional opinion per instrument as context rather than assuming one bias for the
+   * whole session.
+   */
+  levelOutlooks?: LevelOutlook[];
+  /**
    * The coach's own past plans, with the trader's grades and feedback.
    *
    * Travels with the self-plan request only: it is the loop that lets the coach learn how
@@ -70,6 +88,8 @@ export function buildPlanCoachDigest(context: PlanCoachContext): JournalDigest {
     todayTradeDate: context.day.tradeDate,
     timezone: context.timezone,
     levelTouches: context.levelTouches,
+    markedLevels: context.markedLevels,
+    levelOutlooks: context.levelOutlooks,
     coachPlans: context.coachPlans,
   });
 }

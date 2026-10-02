@@ -12,6 +12,7 @@ import {
   CoachPlan,
   DailyReview,
   Instrument,
+  Lesson,
   LevelOutlook,
   LevelTouch,
   MarkedLevel,
@@ -98,6 +99,11 @@ interface CoachViewProps {
   /** The account a saved search belongs to. */
   userId?: string;
   /**
+   * Writes a lesson from an answer the trader asked for. Omitted hides the save action on the
+   * ask box, which is what a caller with nowhere to keep a lesson wants.
+   */
+  onSaveLesson?: (lesson: Lesson) => void;
+  /**
    * The coach's own plans, newest first, with the trader's grades and feedback.
    *
    * Held on the journal like the trader's other records so a plan survives a reload and
@@ -155,6 +161,7 @@ export const CoachView: React.FC<CoachViewProps> = ({
   onDeleteChartSearch,
   onAddSetups,
   userId,
+  onSaveLesson,
   coachPlans,
 }) => {
   const digest = useMemo(
@@ -632,6 +639,10 @@ export const CoachView: React.FC<CoachViewProps> = ({
         timezone={timezone}
         maxDrawdown={maxDrawdown}
         levelTouches={levelTouches}
+        markedLevels={markedLevels}
+        levelOutlooks={levelOutlooks}
+        userId={userId}
+        onSaveLesson={onSaveLesson}
         coachPlans={coachPlans}
         title="Ask about my trading"
         description="Put your own question to the coach. It answers from your records — your figures, or nothing."

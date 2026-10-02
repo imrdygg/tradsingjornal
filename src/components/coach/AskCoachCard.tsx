@@ -1,6 +1,17 @@
 import React, { useMemo, useState } from 'react';
-import { MessageSquare } from 'lucide-react';
-import { CoachPlan, DailyReview, Instrument, LevelTouch, Setup, Trade, TradingDay } from '../../types';
+import { BookmarkPlus, MessageSquare } from 'lucide-react';
+import {
+  CoachPlan,
+  DailyReview,
+  Instrument,
+  Lesson,
+  LevelOutlook,
+  LevelTouch,
+  MarkedLevel,
+  Setup,
+  Trade,
+  TradingDay,
+} from '../../types';
 import { buildJournalDigest } from '../../lib/ai/journal-digest';
 import type { AskResponse } from '../../lib/ai/coach-types';
 import { CoachErrorCode, CoachResult, requestCoach } from '../../lib/ai/coach-client';
@@ -41,6 +52,17 @@ interface AskCoachCardProps {
   maxDrawdown?: number | null;
   /** The level-touch log, so a question like "what is my overnight hold rate?" is answerable. */
   levelTouches?: LevelTouch[];
+  /** The marked levels, so a question about a timeframe or a never-tested line is answerable. */
+  markedLevels?: MarkedLevel[];
+  /** The daily outlooks, so the answer can weigh what the trader expected against the record. */
+  levelOutlooks?: LevelOutlook[];
+  /** The account a saved lesson belongs to. */
+  userId?: string;
+  /**
+   * Writes the answer into the trader's own lessons, so a question asked once becomes material
+   * the coach can read back later. Omitted hides the save action.
+   */
+  onSaveLesson?: (lesson: Lesson) => void;
   /**
    * The coach's own plans with the trader's grades and feedback, when there are any.
    *
@@ -79,6 +101,10 @@ export const AskCoachCard: React.FC<AskCoachCardProps> = ({
   timezone,
   maxDrawdown,
   levelTouches = NO_TOUCHES,
+  markedLevels,
+  levelOutlooks,
+  userId,
+  onSaveLesson,
   coachPlans,
   title,
   description,
@@ -101,6 +127,8 @@ export const AskCoachCard: React.FC<AskCoachCardProps> = ({
         timezone,
         maxDrawdown,
         levelTouches,
+        markedLevels,
+        levelOutlooks,
         coachPlans,
       }),
     [
@@ -113,6 +141,8 @@ export const AskCoachCard: React.FC<AskCoachCardProps> = ({
       timezone,
       maxDrawdown,
       levelTouches,
+      markedLevels,
+      levelOutlooks,
       coachPlans,
     ]
   );
@@ -122,9 +152,13 @@ export const AskCoachCard: React.FC<AskCoachCardProps> = ({
   // next move is to sharpen the question, not to start again from a blank box.
   const [question, setQuestion] = useState('');
   const trimmed = question.trim();
+  /** The title of the answer already written into the lessons, if any. */
+  const [savedLesson, setSavedLesson] = useState<string | null>(null);
 
   async function ask() {
     setState((prev) => ({ ...prev, loading: true, failure: null }));
+    // A fresh answer is a fresh finding: the previous save confirmation belongs to the old one.
+    setSavedLesson(null);
     const result = await requestCoach('ask', digest, undefined, { question: trimmed });
 
     if (result.ok) {
@@ -145,6 +179,44 @@ export const AskCoachCard: React.FC<AskCoachCardProps> = ({
   }
 
   const answer = state.result?.ok ? (state.result.data as AskResponse) : null;
+
+  /**
+   * Turns the answer into a lesson the trader owns.
+   *
+   * The question is kept at the top of the note because a finding read back weeks later means
+   * nothing without the question it answered, and the evidence the answer cited is carried
+   * with it rather than left behind — a lesson the coach later reads should say what it stood
+   * on, not just what it concluded. Filed as 'other' and tagged, so it is easy to find and
+   * rename in the library.
+   */
+  const saveAsLesson = (response: AskResponse) => {
+    if (!onSaveLesson) return;
+    const now = new Date().toISOString();
+    const notes = [
+      trimmed ? `Asked: ${trimmed}` : '',
+      response.answer,
+      response.evidence.length
+        ? `\nEvidence from your own record:\n${response.evidence.map((item) => `• ${item}`).join('\n')}`
+        : '',
+      response.notInJournal ? `\nNot in the journal: ${response.notInJournal}` : '',
+      response.nextStep ? `\nNext step: ${response.nextStep}` : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    const lesson: Lesson = {
+      id: `lesson-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      userId: userId ?? 'local',
+      title: (response.headline || trimmed || 'Coach research').slice(0, 120),
+      notes,
+      kind: 'other',
+      tags: ['coach-research'],
+      createdAt: now,
+      updatedAt: now,
+    };
+    onSaveLesson(lesson);
+    setSavedLesson(lesson.title);
+  };
 
   return (
     <CoachCard className="space-y-3.5">
@@ -234,6 +306,35 @@ export const AskCoachCard: React.FC<AskCoachCardProps> = ({
             </div>
           )}
           {answer.nextStep && <CoachAction label="Next step" text={answer.nextStep} />}
+
+          {/*
+            The answer becomes material the coach can read back later. This is what makes the
+            box a research tool rather than a one-off: a finding asked once and saved is in the
+            library for the lessons read and for the trader to build a setup from.
+          */}
+          {onSaveLesson && (
+            <div className="space-y-1.5 border-t border-zinc-800/70 pt-3">
+              <button
+                type="button"
+                id="coach-ask-save-lesson"
+                onClick={() => saveAsLesson(answer)}
+                className="flex items-center gap-1.5 rounded-lg border border-zinc-700 px-2.5 py-1.5 text-[11px] font-semibold text-zinc-200 transition-colors hover:bg-zinc-800 hover:text-zinc-50"
+              >
+                <BookmarkPlus className="h-3.5 w-3.5 text-amber-400" />
+                Save this as a lesson
+              </button>
+              {savedLesson ? (
+                <p className="text-[11px] text-emerald-300/90">
+                  Saved to your lessons as “{savedLesson}”. Edit or tag it in the Playbook.
+                </p>
+              ) : (
+                <p className="text-[10px] leading-relaxed text-zinc-500">
+                  Writes the question, the answer and the figures it stood on into your lessons,
+                  so the coach reads it back later and you can build a setup from it.
+                </p>
+              )}
+            </div>
+          )}
         </CoachResultPanel>
       )}
     </CoachCard>

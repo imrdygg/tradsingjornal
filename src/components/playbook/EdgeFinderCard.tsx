@@ -11,7 +11,12 @@ import {
   TradingDay,
 } from '../../types';
 import { summarizeMarkedLevels } from '../../lib/analytics/level-edge';
-import { summarizeTimeframeEdges, timeframeBucketLabel } from '../../lib/analytics/level-timeframes';
+import {
+  summarizeTimeframeEdges,
+  timeframeBucketLabel,
+  timeframeHighlights,
+  type TimeframeEdgeBucket,
+} from '../../lib/analytics/level-timeframes';
 import { buildJournalDigest } from '../../lib/ai/journal-digest';
 import type { EdgeResponse } from '../../lib/ai/coach-types';
 import { CoachErrorCode, CoachResult, requestCoach } from '../../lib/ai/coach-client';
@@ -118,6 +123,11 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
     () => summarizeTimeframeEdges(markedLevels ?? [], levelTouches),
     [markedLevels, levelTouches]
   );
+  // The three headline findings, computed here rather than asked of the coach: they are
+  // arithmetic over the trader's own counts, so they are shown before any button is pressed.
+  const highlights = useMemo(() => timeframeHighlights(timeframeBuckets), [timeframeBuckets]);
+  const labelOf = (bucket: TimeframeEdgeBucket) =>
+    timeframeBucketLabel(bucket, instrumentSymbol(labelInstruments, bucket.instrumentId));
   const digest = useMemo(
     () =>
       buildJournalDigest({
@@ -264,9 +274,11 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
                 </span>
                 <span className="shrink-0 font-mono text-[10px] text-zinc-500">
                   {bucket.marked} marked · {bucket.tested} touched
-                  {bucket.stats.decided > 0
+                  {bucket.stats.decided === 0
+                    ? ' · no decided touch yet'
+                    : bucket.stats.enoughData
                     ? ` · held ${formatRate(bucket.stats.holdRate)} of ${bucket.stats.decided}`
-                    : ' · no decided touch yet'}
+                    : ` · ${bucket.stats.decided} decided — too thin for a rate`}
                 </span>
               </div>
             ))}
@@ -274,6 +286,48 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
           {timeframeBuckets.length > 12 && (
             <p className="text-[10px] text-zinc-600">
               Showing the 12 busiest of {timeframeBuckets.length} instrument/timeframe/side records.
+            </p>
+          )}
+        </div>
+      )}
+
+      {/*
+        The record's own headline findings.
+
+        Shown before any AI runs, and drawn only from buckets that clear a count floor, so
+        each line is something the trader can check rather than a hunch dressed as a signal.
+      */}
+      {(highlights.mostReached || highlights.mostIgnored || highlights.bestHold) && (
+        <div
+          id="playbook-edge-highlights"
+          className="space-y-1.5 rounded-xl border border-emerald-900/50 bg-emerald-950/20 p-3"
+        >
+          <span className="text-[10px] font-mono uppercase font-bold text-emerald-300/90">
+            What the record says
+          </span>
+          {highlights.mostReached && (
+            <p className="text-[11px] leading-relaxed text-zinc-300">
+              <span className="font-semibold text-emerald-300">Most reached:</span>{' '}
+              {labelOf(highlights.mostReached)} — price has reached{' '}
+              {highlights.mostReached.tested} of its {highlights.mostReached.marked} marked
+              lines.
+            </p>
+          )}
+          {highlights.mostIgnored && (
+            <p className="text-[11px] leading-relaxed text-zinc-300">
+              <span className="font-semibold text-amber-300">Marked but rarely tested:</span>{' '}
+              {labelOf(highlights.mostIgnored)} — {highlights.mostIgnored.untested} of its{' '}
+              {highlights.mostIgnored.marked} lines have never been logged as touched.
+            </p>
+          )}
+          {highlights.bestHold && (
+            <p className="text-[11px] leading-relaxed text-zinc-300">
+              <span className="font-semibold text-emerald-300">
+                Strongest hold with a real sample:
+              </span>{' '}
+              {labelOf(highlights.bestHold)} — held{' '}
+              {formatRate(highlights.bestHold.stats.holdRate)} of{' '}
+              {highlights.bestHold.stats.decided} decided.
             </p>
           )}
         </div>

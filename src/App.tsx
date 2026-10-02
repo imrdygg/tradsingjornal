@@ -738,8 +738,24 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       tradingDays,
       reviews,
       timezone: profile.timezone,
+      // The level log and the day's written levels travel with every plan-side request, so a
+      // self-plan or a scale-in read can quote the line the trader is actually watching.
+      levelTouches,
+      markedLevels,
+      levelOutlooks,
     }),
-    [todayTradingDay, instruments, setups, trades, tradingDays, reviews, profile.timezone]
+    [
+      todayTradingDay,
+      instruments,
+      setups,
+      trades,
+      tradingDays,
+      reviews,
+      profile.timezone,
+      levelTouches,
+      markedLevels,
+      levelOutlooks,
+    ]
   );
 
   /**
@@ -1915,6 +1931,9 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             onDeleteChartSearch={handleDeleteChartSearch}
             onAddSetups={(drafts) => drafts.forEach(handleAddSetup)}
             userId={userId}
+            // A finding the coach wrote from a question the trader asked is theirs to keep, so
+            // it lands in the same lessons library everything else reads from.
+            onSaveLesson={handleSaveLesson}
             coachPlans={coachPlans}
           />
         );
@@ -1932,6 +1951,10 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               reviews,
               timezone: profile.timezone,
               levelTouches,
+              // The self-plan read gets the trader's marked levels and per-instrument outlooks,
+              // so its independent call can still weigh the lines the trader is watching.
+              markedLevels,
+              levelOutlooks,
               coachPlans,
             }}
             plans={coachPlans}
@@ -2004,6 +2027,10 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               timezone: profile.timezone,
               maxDrawdown: profile.maxDrawdown ?? null,
               levelTouches,
+              // The levels and the day's outlooks travel with the setup learner too, so a
+              // proposal can name a line the trader marked but has not yet traded against.
+              markedLevels,
+              levelOutlooks,
               coachPlans,
             }}
             levelTouchLog={{
@@ -2040,6 +2067,10 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               timezone: profile.timezone,
               maxDrawdown: profile.maxDrawdown ?? null,
               levelTouches,
+              // The lessons read sees the marked lines and the outlooks as well, so a theme
+              // can cite what the trader wrote down, not only the touches that occurred.
+              markedLevels,
+              levelOutlooks,
               sessionExtremes,
               coachPlans,
               onMarkRead: handleMarkLessonsRead,

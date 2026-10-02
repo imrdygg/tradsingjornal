@@ -110,6 +110,10 @@ interface PlaybookViewProps {
     timezone: string;
     maxDrawdown?: number | null;
     levelTouches?: LevelTouch[];
+    /** The levels marked before any touch, so the read can weigh the untested ones too. */
+    markedLevels?: MarkedLevel[];
+    /** The trader's per-instrument outlooks, so a proposal can respect the day's own bias. */
+    levelOutlooks?: LevelOutlook[];
     /** The trader's grades of the coach's own plans, carried into the read's digest. */
     coachPlans?: CoachPlan[];
   };
@@ -166,6 +170,10 @@ interface PlaybookViewProps {
     timezone: string;
     maxDrawdown?: number | null;
     levelTouches?: LevelTouch[];
+    /** The levels marked before any touch, so a theme can cite the untested ones too. */
+    markedLevels?: MarkedLevel[];
+    /** The trader's per-instrument outlooks, read as the trader's own words, not market fact. */
+    levelOutlooks?: LevelOutlook[];
     sessionExtremes?: SessionExtreme[];
     /** The trader's grades of the coach's own plans, carried into the read's digest. */
     coachPlans?: CoachPlan[];

@@ -5,6 +5,7 @@ import {
   previousLevelDate,
   summarizeTimeframeEdges,
   timeframeBucketLabel,
+  timeframeHighlights,
 } from '../level-timeframes';
 
 function marked(over: Partial<MarkedLevel> = {}): MarkedLevel {
@@ -101,6 +102,65 @@ describe('summarizeTimeframeEdges', () => {
     expect(buckets[0].timeframe).toBeNull();
     expect(buckets[0].testRate).toBe(0);
     expect(timeframeBucketLabel(buckets[0], 'MES')).toBe('MES no timeframe resistance');
+  });
+});
+
+describe('timeframeHighlights', () => {
+  it('names the most-reached line only once enough of its lines were tested', () => {
+    const levels = [
+      marked({ id: 'a', timeframe: '5m' }),
+      marked({ id: 'b', timeframe: '5m' }),
+      marked({ id: 'c', timeframe: '5m' }),
+      marked({ id: 'd', timeframe: '30m' }),
+    ];
+    const touches = [
+      touch({ id: 't1', levelId: 'a' }),
+      touch({ id: 't2', levelId: 'b' }),
+      touch({ id: 't3', levelId: 'c' }),
+      touch({ id: 't4', levelId: 'd' }),
+    ];
+    const highlights = timeframeHighlights(summarizeTimeframeEdges(levels, touches));
+    expect(highlights.mostReached?.key).toBe('mes|5m|resistance');
+    expect(highlights.mostReached?.tested).toBe(3);
+  });
+
+  it('reports no most-reached line when every bucket is below the reach floor', () => {
+    const levels = [marked({ id: 'a' }), marked({ id: 'b' })];
+    const touches = [touch({ id: 't1', levelId: 'a' }), touch({ id: 't2', levelId: 'b' })];
+    const highlights = timeframeHighlights(summarizeTimeframeEdges(levels, touches));
+    expect(highlights.mostReached).toBeNull();
+  });
+
+  it('flags a line the trader marks but keeps untested', () => {
+    // Six marked, one tested: a real blind spot.
+    const levels = Array.from({ length: 6 }, (_, i) =>
+      marked({ id: `l${i}`, timeframe: '15m' })
+    );
+    const touches = [touch({ id: 't1', levelId: 'l0' })];
+    const highlights = timeframeHighlights(summarizeTimeframeEdges(levels, touches));
+    expect(highlights.mostIgnored?.key).toBe('mes|15m|resistance');
+    expect(highlights.mostIgnored?.untested).toBe(5);
+  });
+
+  it('withholds a best-hold line until the sample is readable', () => {
+    // Four decided touches is below the five-touch floor.
+    const levels = Array.from({ length: 4 }, (_, i) => marked({ id: `l${i}`, timeframe: '1h' }));
+    const touches = levels.map((level, i) =>
+      touch({ id: `t${i}`, levelId: level.id, outcome: 'never-returned' })
+    );
+    const thin = timeframeHighlights(summarizeTimeframeEdges(levels, touches));
+    expect(thin.bestHold).toBeNull();
+
+    // A fifth decided touch crosses the floor and the 100% hold becomes readable.
+    const fifth = marked({ id: 'l4', timeframe: '1h' });
+    const readable = timeframeHighlights(
+      summarizeTimeframeEdges(
+        [...levels, fifth],
+        [...touches, touch({ id: 't4', levelId: 'l4', outcome: 'never-returned' })]
+      )
+    );
+    expect(readable.bestHold?.key).toBe('mes|1h|resistance');
+    expect(readable.bestHold?.stats.holdRate).toBe(100);
   });
 });
 

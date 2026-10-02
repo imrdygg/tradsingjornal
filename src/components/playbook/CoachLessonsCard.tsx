@@ -5,7 +5,9 @@ import {
   DailyReview,
   Instrument,
   Lesson,
+  LevelOutlook,
   LevelTouch,
+  MarkedLevel,
   SessionExtreme,
   Setup,
   Trade,
@@ -61,6 +63,10 @@ export interface CoachLessonsCardProps {
   timezone: string;
   maxDrawdown?: number | null;
   levelTouches?: LevelTouch[];
+  /** The levels marked before any touch, so a theme can cite the untested ones too. */
+  markedLevels?: MarkedLevel[];
+  /** The trader's per-instrument outlooks, read as their own words rather than market fact. */
+  levelOutlooks?: LevelOutlook[];
   sessionExtremes?: SessionExtreme[];
   lessons: Lesson[];
   /**
@@ -145,6 +151,8 @@ export const CoachLessonsCard: React.FC<CoachLessonsCardProps> = ({
   timezone,
   maxDrawdown,
   levelTouches,
+  markedLevels,
+  levelOutlooks,
   sessionExtremes,
   lessons,
   coachPlans,
@@ -163,6 +171,8 @@ export const CoachLessonsCard: React.FC<CoachLessonsCardProps> = ({
         timezone,
         maxDrawdown,
         levelTouches,
+        markedLevels,
+        levelOutlooks,
         sessionExtremes,
         lessons,
         coachPlans,
@@ -177,6 +187,8 @@ export const CoachLessonsCard: React.FC<CoachLessonsCardProps> = ({
       timezone,
       maxDrawdown,
       levelTouches,
+      markedLevels,
+      levelOutlooks,
       sessionExtremes,
       lessons,
       coachPlans,

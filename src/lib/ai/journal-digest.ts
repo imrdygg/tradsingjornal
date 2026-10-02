@@ -189,6 +189,8 @@ export interface LevelTimeframeRow {
   decided: number;
   /** Share of those decided touches where price never came back, or null while none is decided. */
   holdRate: number | null;
+  /** True once `decided` reaches the readability floor, so `holdRate` may be quoted as a rate. */
+  enoughData: boolean;
   watching: number;
 }
 
@@ -211,6 +213,8 @@ export interface LevelTimeframesRead {
   untested: number;
   /** Tested / marked as a percentage, or null while nothing is marked. */
   testRate: number | null;
+  /** Decided touches a row needs before its hold rate may be read as a rate. */
+  minDecided: number;
   /** The busiest instrument/timeframe/side rows, tested lines first. */
   rows: LevelTimeframeRow[];
   /** Rows beyond the bounded sample above, so the coach knows it is not seeing everything. */
@@ -1005,6 +1009,9 @@ function buildLevelTimeframes(
     testRate: bucket.testRate,
     decided: bucket.stats.decided,
     holdRate: bucket.stats.holdRate,
+    // Carried explicitly so the prompt can withhold a rate from a row whose sample is too
+    // thin, instead of every renderer having to re-derive the floor.
+    enoughData: bucket.stats.enoughData,
     watching: bucket.stats.watching,
   }));
 
@@ -1013,6 +1020,7 @@ function buildLevelTimeframes(
     tested: coverage.tested,
     untested: coverage.untested,
     testRate: coverage.testRate,
+    minDecided: MIN_DECIDED,
     rows: rows.slice(0, MAX_LEVEL_TIMEFRAME_ROWS),
     rowsOmitted: Math.max(0, rows.length - MAX_LEVEL_TIMEFRAME_ROWS),
   };

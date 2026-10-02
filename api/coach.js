@@ -911,7 +911,7 @@ function formatLevelTimeframesForPrompt(read) {
     "=== MARKED LEVELS BY TIMEFRAME (the trader's own lines, written before any was touched) ==="
   );
   lines.push(
-    "The trader marks support and resistance from their indicator on 1m, 3m, 5m, 15m, 30m and 1h charts, for MES, MNQ, MCL and VIX, every day. A line is TESTED when a touch was logged against it and NEVER TESTED when nothing has been; the two are different facts and are never merged into one number."
+    "The trader marks support and resistance from their indicator on 1m, 3m, 5m, 15m, 30m and 1h charts, for MES, MNQ, MCL and VIX, every day. A line is TESTED when a touch was logged against it and NEVER TESTED when nothing has been; the two are different facts and are never merged into one number. A row whose hold rate is marked NOT yet a rate has too few decided touches: report its counts and say plainly that no rate can be read from it."
   );
   lines.push(
     `${read.marked} line(s) marked: ${read.tested} tested, ${read.untested} never tested` + (read.testRate === null ? "." : ` (${read.testRate}% of marked lines were tested).`)
@@ -921,7 +921,7 @@ function formatLevelTimeframesForPrompt(read) {
     lines.push("By instrument, timeframe and side, busiest tested lines first:");
     for (const row of read.rows) {
       const frame = row.timeframe ?? "no timeframe recorded";
-      const rate = row.decided > 0 ? `held ${row.holdRate === null ? "not readable yet" : `${row.holdRate}%`} of ${row.decided} decided` : "no decided touch yet";
+      const rate = row.decided === 0 ? "no decided touch yet" : row.enoughData ? `held ${row.holdRate ?? 0}% of ${row.decided} decided` : `${row.decided} decided so far \u2014 NOT yet a rate (${read.minDecided} are needed)`;
       lines.push(
         `- ${row.symbol} ${frame} ${row.kind}: ${row.marked} marked, ${row.tested} tested, ${row.untested} never tested; ${rate}` + (row.watching ? `, ${row.watching} still watching` : "")
       );

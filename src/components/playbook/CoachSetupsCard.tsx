@@ -1,6 +1,16 @@
 import React, { useMemo, useState } from 'react';
 import { Sparkles, Wand2 } from 'lucide-react';
-import { CoachPlan, DailyReview, Instrument, LevelTouch, Setup, Trade, TradingDay } from '../../types';
+import {
+  CoachPlan,
+  DailyReview,
+  Instrument,
+  LevelOutlook,
+  LevelTouch,
+  MarkedLevel,
+  Setup,
+  Trade,
+  TradingDay,
+} from '../../types';
 import { buildJournalDigest } from '../../lib/ai/journal-digest';
 import type { LearnResponse, LearnedSetup } from '../../lib/ai/coach-types';
 import { newSetupDrafts } from '../../lib/ai/setup-drafts';
@@ -53,6 +63,10 @@ export interface CoachSetupsCardProps {
   timezone: string;
   maxDrawdown?: number | null;
   levelTouches?: LevelTouch[];
+  /** The levels marked before any touch, so a proposal can name a line not yet tested. */
+  markedLevels?: MarkedLevel[];
+  /** The trader's per-instrument outlooks for the day, carried into the read as context. */
+  levelOutlooks?: LevelOutlook[];
   /**
    * The coach's own plans with the trader's grades and feedback, when there are any.
    *
@@ -131,6 +145,8 @@ export const CoachSetupsCard: React.FC<CoachSetupsCardProps> = ({
   timezone,
   maxDrawdown,
   levelTouches,
+  markedLevels,
+  levelOutlooks,
   coachPlans,
   onAddSetups,
 }) => {
@@ -146,6 +162,8 @@ export const CoachSetupsCard: React.FC<CoachSetupsCardProps> = ({
         timezone,
         maxDrawdown,
         levelTouches,
+        markedLevels,
+        levelOutlooks,
         coachPlans,
       }),
     [
@@ -158,6 +176,8 @@ export const CoachSetupsCard: React.FC<CoachSetupsCardProps> = ({
       timezone,
       maxDrawdown,
       levelTouches,
+      markedLevels,
+      levelOutlooks,
       coachPlans,
     ]
   );

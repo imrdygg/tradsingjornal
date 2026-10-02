@@ -1,5 +1,5 @@
 import { LevelKind, LevelTimeframe, LevelTouch, MarkedLevel } from '../../types';
-import { summarizeTouches, type LevelEdgeStats } from './level-edge';
+import { MIN_DECIDED, summarizeTouches, type LevelEdgeStats } from './level-edge';
 
 /**
  * The timeframe record: which chart a level came off, and whether that line was ever tested.
@@ -123,6 +123,70 @@ export function summarizeTimeframeEdges(
     if (a.marked !== b.marked) return b.marked - a.marked;
     return a.key.localeCompare(b.key);
   });
+}
+
+/** The fewest tested lines before "price reaches this" is said as a finding, not a one-off. */
+const MIN_REACHED = 3;
+
+/** The fewest lines marked before a low test rate says anything about attention. */
+const MIN_MARKED_FOR_IGNORE = 5;
+
+/** The fewest untouched lines before a bucket counts as a real blind spot. */
+const MIN_UNTESTED_FOR_IGNORE = 3;
+
+/**
+ * The three things the timeframe record can say outright, pulled out of the bucket list.
+ *
+ * These are the answers that do not need a model: which line price reaches most, which line the
+ * trader marks and keeps ignoring, and the strongest hold rate that has a real sample behind
+ * it. Each is drawn only from buckets that meet a count floor, so the callouts cannot be built
+ * out of one reach or two decided touches — the failure mode this whole record exists to avoid.
+ */
+export interface TimeframeHighlights {
+  /** The instrument/timeframe/side price reaches most, or null until one is reached enough. */
+  mostReached: TimeframeEdgeBucket | null;
+  /** The most-marked, least-tested line — a blind spot, or null when nothing qualifies. */
+  mostIgnored: TimeframeEdgeBucket | null;
+  /** The best hold rate with a readable sample behind it, or null while nothing qualifies. */
+  bestHold: TimeframeEdgeBucket | null;
+}
+
+/**
+ * Picks the three headline findings out of an already-built bucket list.
+ *
+ * Takes buckets rather than raw records so a caller that has just built them — the edge finder
+ * does — pays for one pass instead of two. Ties fall to the busiest bucket, so a callout names
+ * the record with the most behind it rather than an arbitrary one of two equal rates.
+ */
+export function timeframeHighlights(
+  buckets: TimeframeEdgeBucket[],
+  minDecided = MIN_DECIDED
+): TimeframeHighlights {
+  const mostReached =
+    [...buckets]
+      .filter((bucket) => bucket.tested >= MIN_REACHED)
+      .sort((a, b) => b.tested - a.tested || b.marked - a.marked)[0] ?? null;
+
+  const mostIgnored =
+    [...buckets]
+      .filter(
+        (bucket) =>
+          bucket.marked >= MIN_MARKED_FOR_IGNORE &&
+          bucket.untested >= MIN_UNTESTED_FOR_IGNORE &&
+          bucket.testRate !== null &&
+          bucket.testRate < 100
+      )
+      .sort((a, b) => (a.testRate ?? 0) - (b.testRate ?? 0) || b.marked - a.marked)[0] ?? null;
+
+  const bestHold =
+    [...buckets]
+      .filter((bucket) => bucket.stats.enoughData && bucket.stats.decided >= minDecided)
+      .sort(
+        (a, b) =>
+          (b.stats.holdRate ?? -1) - (a.stats.holdRate ?? -1) || b.stats.decided - a.stats.decided
+      )[0] ?? null;
+
+  return { mostReached, mostIgnored, bestHold };
 }
 
 /** A readable one-line label for a bucket, e.g. "MES 5 min resistance". */

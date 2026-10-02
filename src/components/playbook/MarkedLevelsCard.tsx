@@ -353,14 +353,40 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
   });
   const markedFrameCount = LEVEL_TIMEFRAMES.length - missingFrames.length;
 
-  const addSide = (side: LevelKind) => {
+  /**
+   * Which boxes have prices in them, and how many each.
+   *
+   * Both sides are read together so one button saves whatever the trader filled in: a chart
+   * usually has support and resistance at the same time, and making them click twice to record
+   * one chart's read was the thing that made marking a day tedious.
+   */
+  const readySides = useMemo(
+    () =>
+      (
+        [
+          { side: 'support' as LevelKind, prices: parsePastedPrices(supportText) },
+          { side: 'resistance' as LevelKind, prices: parsePastedPrices(resistanceText) },
+        ]
+      ).filter((part) => part.prices.length > 0),
+    [supportText, resistanceText]
+  );
+  const readyCount = readySides.reduce((sum, part) => sum + part.prices.length, 0);
+
+  /**
+   * Saves everything pasted for the chart on screen in one write.
+   *
+   * Support and resistance go in together because they are one read of one chart: a single
+   * click records both sides, tagged with the open instrument and timeframe. Either box on its
+   * own still works — fill just support and only support is saved — and both boxes are cleared
+   * and confirmed together, so there is one button and one message per chart.
+   */
+  const addBoth = () => {
     setError('');
     setAdded(null);
 
-    const prices = parsePastedPrices(side === 'support' ? supportText : resistanceText);
-    if (prices.length === 0) {
+    if (readySides.length === 0) {
       setError(
-        `Paste at least one ${side} price into the ${side} box — one per line, or separated by commas.`
+        'Paste at least one support or resistance price — one per line, or separated by commas.'
       );
       return;
     }
@@ -373,30 +399,39 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
 
     const now = new Date().toISOString();
     const stamp = Date.now();
-    const batch: MarkedLevel[] = prices.map((price, index) => ({
-      id: `level-${stamp}-${side}-${index}`,
-      userId: todayTradingDay.userId,
-      tradingDayId: todayTradingDay.id,
-      tradeDate: todayTradingDay.tradeDate,
-      instrumentId,
-      kind: side,
-      timeframe,
-      price,
-      zonePoints: Math.round(width * 100) / 100,
-      label: label.trim() || undefined,
-      session,
-      source: 'indicator',
-      createdAt: now,
-      updatedAt: now,
-    }));
+    const batch: MarkedLevel[] = [];
+    for (const part of readySides) {
+      part.prices.forEach((price, index) => {
+        batch.push({
+          id: `level-${stamp}-${part.side}-${index}`,
+          userId: todayTradingDay.userId,
+          tradingDayId: todayTradingDay.id,
+          tradeDate: todayTradingDay.tradeDate,
+          instrumentId,
+          kind: part.side,
+          timeframe,
+          price,
+          zonePoints: Math.round(width * 100) / 100,
+          label: label.trim() || undefined,
+          session,
+          source: 'indicator',
+          createdAt: now,
+          updatedAt: now,
+        });
+      });
+    }
 
     onSaveLevels(batch);
-    // Clear the box first: setSideText also clears the confirmation, so the message has to be
-    // the last state write of the two or it would be wiped out before it ever rendered.
-    setSideText(side, '');
+    // Clear both boxes first: setSideText also clears the confirmation, so the message has to be
+    // the last state write or it would be wiped out before it ever rendered.
+    setSideText('support', '');
+    setSideText('resistance', '');
+    const summary = readySides
+      .map((part) => `${part.prices.length} ${part.side} level${part.prices.length === 1 ? '' : 's'}`)
+      .join(' and ');
     setAdded(
-      `Added ${batch.length} ${side} level${batch.length === 1 ? '' : 's'} to ` +
-        `${symbol} · ${TIMEFRAME_LABEL[timeframe]}. They are listed under Today below.`
+      `Saved ${summary} to ${symbol} · ${TIMEFRAME_LABEL[timeframe]}. ` +
+        'They are listed under Today below.'
     );
   };
 
@@ -822,31 +857,40 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
                 onChange={(event) => setSideText(side, event.target.value)}
                 className="w-full resize-y rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-2 font-mono text-xs text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
               />
-              <button
-                type="button"
-                id={`level-add-${side}`}
-                disabled={count === 0}
-                onClick={() => addSide(side)}
-                className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-zinc-100 px-3 py-1.5 text-[11px] font-bold text-zinc-950 transition-all hover:bg-white disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                <ListPlus className="h-3.5 w-3.5" />
-                {count === 0
-                  ? `Add ${side} levels`
-                  : `Save ${count} ${side} ${count === 1 ? 'level' : 'levels'} to ${TIMEFRAME_LABEL[timeframe]}`}
-              </button>
               {count > 0 ? (
                 <p className="text-[10px] text-emerald-400/90">
-                  {count} price{count === 1 ? '' : 's'} ready — press the button to record{' '}
-                  {count === 1 ? 'it' : 'them'}.
+                  {count} price{count === 1 ? '' : 's'} ready.
                 </p>
               ) : (
                 <p className="text-[10px] text-zinc-600">
-                  Paste prices above to turn this button on.
+                  Optional — leave blank when there is none today.
                 </p>
               )}
             </div>
           ))}
         </div>
+
+        {/*
+          One button for the whole chart.
+
+          Support and resistance for a timeframe are a single read, so they are saved together:
+          one click records both sides, and whichever box is filled is what gets saved. This is
+          the one thing that made marking a day tedious — two separate clicks per chart.
+        */}
+        <button
+          type="button"
+          id="level-add-both"
+          disabled={readyCount === 0}
+          onClick={addBoth}
+          className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-zinc-100 px-3 py-2 text-[11px] font-bold text-zinc-950 transition-all hover:bg-white disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <ListPlus className="h-3.5 w-3.5" />
+          {readyCount === 0
+            ? `Add support and resistance to ${TIMEFRAME_LABEL[timeframe]}`
+            : `Save ${readySides
+                .map((part) => `${part.prices.length} ${part.side}`)
+                .join(' + ')} to ${TIMEFRAME_LABEL[timeframe]}`}
+        </button>
 
         {/* ---- Bulk paste: all six charts in one box ---- */}
         <div className="space-y-2 rounded-xl border border-zinc-800 bg-zinc-950/50 p-2.5">

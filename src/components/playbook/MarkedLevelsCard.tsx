@@ -300,8 +300,43 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
     () => summarizeTimeframeEdges(todayLevels, touches).filter((bucket) => bucket.instrumentId === instrumentId),
     [todayLevels, touches, instrumentId]
   );
-  const overviewFor = (frame: LevelTimeframe) =>
-    todayOverview.filter((bucket) => (bucket.timeframe ?? DEFAULT_TIMEFRAME) === frame);
+
+  /**
+   * Today's mark coverage by timeframe, for the instrument on screen.
+   *
+   * The grid below exists to answer "what have I not filled in yet", so the counts are kept
+   * per side as well as per timeframe: a chart with support marked and resistance blank is not
+   * filled in either, and saying so is more useful than a single number that hides it.
+   */
+  const frameCoverage = useMemo(() => {
+    const map = new Map<
+      LevelTimeframe,
+      { marked: number; tested: number; support: number; resistance: number }
+    >();
+    for (const frame of LEVEL_TIMEFRAMES) {
+      map.set(frame, { marked: 0, tested: 0, support: 0, resistance: 0 });
+    }
+    for (const bucket of todayOverview) {
+      const entry = map.get(bucket.timeframe ?? DEFAULT_TIMEFRAME);
+      if (!entry) continue;
+      entry.marked += bucket.marked;
+      entry.tested += bucket.tested;
+      if (bucket.kind === 'support') entry.support += bucket.marked;
+      else entry.resistance += bucket.marked;
+    }
+    return map;
+  }, [todayOverview]);
+
+  /** Charts with nothing at all marked today — the ones a daily sweep still has to cover. */
+  const missingFrames = LEVEL_TIMEFRAMES.filter(
+    (frame) => (frameCoverage.get(frame)?.marked ?? 0) === 0
+  );
+  /** Charts with only one side marked: present, but not finished. */
+  const partialFrames = LEVEL_TIMEFRAMES.filter((frame) => {
+    const entry = frameCoverage.get(frame);
+    return !!entry && entry.marked > 0 && (entry.support === 0 || entry.resistance === 0);
+  });
+  const markedFrameCount = LEVEL_TIMEFRAMES.length - missingFrames.length;
 
   const addSide = (side: LevelKind) => {
     setError('');
@@ -770,7 +805,9 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
       </div>
 
       {/* ---- Today's other timeframes for this instrument ---- */}
-      <div className="space-y-1.5 border-t border-zinc-800 pt-3">          <span className="flex items-center gap-1.5 text-[10px] font-mono uppercase font-bold text-zinc-400">
+      <div className="space-y-2 border-t border-zinc-800 pt-3">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <span className="flex items-center gap-1.5 text-[10px] font-mono uppercase font-bold text-zinc-400">
             {symbol} · today by timeframe
             {outlook && (
               <span className={`inline-flex items-center gap-1 normal-case ${BIAS_STYLE[outlook.bias].text}`}>
@@ -779,35 +816,85 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
               </span>
             )}
           </span>
+          {/* How much of the daily sweep is done, at a glance — amber until all six are in. */}
+          <span
+            className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+              missingFrames.length === 0
+                ? 'border-emerald-800/80 bg-emerald-950/50 text-emerald-300'
+                : 'border-amber-900/70 bg-amber-950/40 text-amber-300'
+            }`}
+          >
+            {markedFrameCount} of {LEVEL_TIMEFRAMES.length} charts marked
+          </span>
+        </div>
+
         <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
           {LEVEL_TIMEFRAMES.map((frame) => {
-            const buckets = overviewFor(frame);
-            const marked = buckets.reduce((sum, bucket) => sum + bucket.marked, 0);
-            const tested = buckets.reduce((sum, bucket) => sum + bucket.tested, 0);
+            const entry =
+              frameCoverage.get(frame) ?? { marked: 0, tested: 0, support: 0, resistance: 0 };
             const active = timeframe === frame;
+            const empty = entry.marked === 0;
             return (
               <button
                 key={frame}
                 type="button"
                 onClick={() => chooseTimeframe(frame)}
                 aria-pressed={active}
+                title={
+                  empty
+                    ? `Nothing marked on the ${TIMEFRAME_LABEL[frame]} chart yet today`
+                    : `Open the ${TIMEFRAME_LABEL[frame]} chart`
+                }
                 className={`flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-left transition-colors ${
                   active
                     ? 'border-indigo-500/70 bg-indigo-500/15'
+                    : empty
+                    ? 'border-dashed border-amber-900/60 bg-amber-950/20 hover:bg-amber-950/30'
                     : 'border-zinc-800 bg-zinc-900/50 hover:bg-zinc-800/60'
                 }`}
               >
-                <span className="font-mono text-[11px] font-semibold text-zinc-200">
-                  {TIMEFRAME_LABEL[frame]}
+                <span className="flex items-center gap-1.5">
+                  <span
+                    className={`h-1.5 w-1.5 rounded-full ${empty ? 'bg-amber-400' : 'bg-emerald-400'}`}
+                  />
+                  <span className="font-mono text-[11px] font-semibold text-zinc-200">
+                    {TIMEFRAME_LABEL[frame]}
+                  </span>
                 </span>
-                <span className="font-mono text-[10px] text-zinc-500">
-                  {marked}w · {tested}t
+                <span
+                  className={`font-mono text-[10px] ${empty ? 'text-amber-400/90' : 'text-zinc-500'}`}
+                >
+                  {empty ? 'not marked' : `${entry.marked}w · ${entry.tested}t`}
                 </span>
               </button>
             );
           })}
         </div>
-        <p className="text-[10px] text-zinc-600">w = marked · t = touched, today.</p>
+
+        {/*
+          The "still to fill" line names the charts rather than counting them, so the grid
+          answers the question outright instead of leaving the trader to find the empty chip.
+        */}
+        {missingFrames.length > 0 && (
+          <p id="level-missing-timeframes" className="text-[10px] text-amber-300/90">
+            Still to fill: {missingFrames.map((frame) => TIMEFRAME_LABEL[frame]).join(', ')}.
+          </p>
+        )}
+        {partialFrames.length > 0 && (
+          <p id="level-partial-timeframes" className="text-[10px] text-zinc-500">
+            Only one side marked:{' '}
+            {partialFrames.map((frame) => TIMEFRAME_LABEL[frame]).join(', ')}.
+          </p>
+        )}
+        {missingFrames.length === 0 && partialFrames.length === 0 && (
+          <p id="level-all-timeframes" className="text-[10px] text-emerald-400/90">
+            All six charts marked today, on both sides.
+          </p>
+        )}
+
+        <p className="text-[10px] text-zinc-600">
+          w = marked · t = touched, today · tap a chart to open it.
+        </p>
       </div>
     </CoachCard>
   );

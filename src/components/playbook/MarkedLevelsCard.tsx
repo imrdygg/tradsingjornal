@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowDown, ArrowUp, Crosshair, ListPlus, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Check, Crosshair, ListPlus, Trash2 } from 'lucide-react';
 import {
   Instrument,
   LevelKind,
@@ -63,6 +63,9 @@ const SESSIONS: TradingSession[] = ['Overnight', 'Premarket', 'Regular Session']
 
 /** How wide a level is by default, in points. Carried onto the touch it produces. */
 const DEFAULT_ZONE_POINTS = 4;
+
+/** The empty draft for a chart nothing has been typed into yet. */
+const EMPTY_DRAFT = { support: '', resistance: '' };
 
 /**
  * The chart the card opens on, and where a level marked before timeframes existed is shown.
@@ -160,13 +163,52 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
   );
   const [zone, setZone] = useState(String(DEFAULT_ZONE_POINTS));
   const [label, setLabel] = useState('');
-  const [supportText, setSupportText] = useState('');
-  const [resistanceText, setResistanceText] = useState('');
+  /**
+   * The two paste boxes, kept per instrument and timeframe rather than shared.
+   *
+   * A line belongs to one chart, so the box it is typed into does too. A shared box made a
+   * list pasted for the 5m chart look like it was about to be added to the 1m chart as well —
+   * switching the timeframe now switches the box with it, and a half-typed list for one chart
+   * is still there when the trader comes back to it.
+   */
+  const [drafts, setDrafts] = useState<Record<string, { support: string; resistance: string }>>(
+    {}
+  );
   const [error, setError] = useState('');
   const [added, setAdded] = useState<string | null>(null);
 
-  const supportCount = useMemo(() => parsePastedPrices(supportText).length, [supportText]);
-  const resistanceCount = useMemo(() => parsePastedPrices(resistanceText).length, [resistanceText]);
+  // The draft on screen belongs to exactly this instrument and timeframe.
+  const draftKey = `${instrumentId}|${timeframe}`;
+  const draft = drafts[draftKey] ?? EMPTY_DRAFT;
+  const supportText = draft.support;
+  const resistanceText = draft.resistance;
+
+  const supportCount = useMemo(() => parsePastedPrices(draft.support).length, [draft.support]);
+  const resistanceCount = useMemo(() => parsePastedPrices(draft.resistance).length, [draft.resistance]);
+
+  const symbol = instrumentSymbol(instruments, instrumentId);
+
+  /** Writes one side's box for the chart on screen, leaving every other chart's box alone. */
+  const setSideText = (side: LevelKind, value: string) => {
+    setDrafts((prev) => ({
+      ...prev,
+      [draftKey]: { ...(prev[draftKey] ?? EMPTY_DRAFT), [side]: value },
+    }));
+    setAdded(null);
+  };
+
+  // Switching instrument or chart is switching which record is on screen, so the previous
+  // chart's confirmation must not sit under the new one looking like it belongs to it.
+  const chooseInstrument = (id: string) => {
+    setInstrumentId(id);
+    setError('');
+    setAdded(null);
+  };
+  const chooseTimeframe = (frame: LevelTimeframe) => {
+    setTimeframe(frame);
+    setError('');
+    setAdded(null);
+  };
 
   const touchByLevel = useMemo(() => {
     const map = new Map<string, LevelTouch>();
@@ -261,13 +303,15 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
   const overviewFor = (frame: LevelTimeframe) =>
     todayOverview.filter((bucket) => (bucket.timeframe ?? DEFAULT_TIMEFRAME) === frame);
 
-  const addSide = (side: LevelKind, text: string, clear: () => void) => {
+  const addSide = (side: LevelKind) => {
     setError('');
     setAdded(null);
 
-    const prices = parsePastedPrices(text);
+    const prices = parsePastedPrices(side === 'support' ? supportText : resistanceText);
     if (prices.length === 0) {
-      setError(`Paste at least one ${side} price — one per line, or separated by commas.`);
+      setError(
+        `Paste at least one ${side} price into the ${side} box — one per line, or separated by commas.`
+      );
       return;
     }
 
@@ -297,8 +341,13 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
     }));
 
     onSaveLevels(batch);
-    setAdded(`Added ${batch.length} ${side} level${batch.length === 1 ? '' : 's'} on ${TIMEFRAME_LABEL[timeframe]}.`);
-    clear();
+    // Clear the box first: setSideText also clears the confirmation, so the message has to be
+    // the last state write of the two or it would be wiped out before it ever rendered.
+    setSideText(side, '');
+    setAdded(
+      `Added ${batch.length} ${side} level${batch.length === 1 ? '' : 's'} to ` +
+        `${symbol} · ${TIMEFRAME_LABEL[timeframe]}. They are listed under Today below.`
+    );
   };
 
   const markTouched = (level: MarkedLevel) => {
@@ -419,8 +468,6 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
     );
   };
 
-  const symbol = instrumentSymbol(instruments, instrumentId);
-
   return (
     <CoachCard id="playbook-marked-levels" className="space-y-3.5">
       <div className="flex items-start gap-2.5">
@@ -519,7 +566,7 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
             <select
               id="level-instrument"
               value={instrumentId}
-              onChange={(event) => setInstrumentId(event.target.value)}
+              onChange={(event) => chooseInstrument(event.target.value)}
               className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none"
             >
               {instruments.map((instrument) => (
@@ -539,7 +586,7 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
                   type="button"
                   aria-pressed={timeframe === frame}
                   id={`level-tf-${frame}`}
-                  onClick={() => setTimeframe(frame)}
+                  onClick={() => chooseTimeframe(frame)}
                   className={`rounded-lg py-1.5 text-[11px] font-mono font-semibold transition-all ${
                     timeframe === frame
                       ? 'border border-indigo-500/70 bg-indigo-500/20 text-indigo-200 shadow-sm'
@@ -602,14 +649,28 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
           </div>
         </div>
 
-        {/* ---- Paste support and resistance lines ---- */}
+        {/*
+          Paste support and resistance lines for the chart on screen.
+
+          The heading names the instrument and timeframe the prices will be tagged with, and
+          the box below is that chart's own box — so it is never ambiguous where an added line
+          lands, or which chart a list belongs to.
+        */}
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+          <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
+            Paste prices for {symbol} · {TIMEFRAME_LABEL[timeframe]}
+          </span>
+          <span className="text-[10px] text-zinc-500">
+            Each chart keeps its own boxes — switching the timeframe switches these.
+          </span>
+        </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {(
             [
-              { side: 'support' as LevelKind, text: supportText, setText: setSupportText, count: supportCount },
-              { side: 'resistance' as LevelKind, text: resistanceText, setText: setResistanceText, count: resistanceCount },
+              { side: 'support' as LevelKind, text: supportText, count: supportCount },
+              { side: 'resistance' as LevelKind, text: resistanceText, count: resistanceCount },
             ]
-          ).map(({ side, text, setText, count }) => (
+          ).map(({ side, text, count }) => (
             <div
               key={side}
               className="space-y-1.5 rounded-xl border border-zinc-800 bg-zinc-950/50 p-2.5"
@@ -630,38 +691,55 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
                 rows={3}
                 placeholder={'7742.25\n7735.00\n7721.50'}
                 value={text}
-                onChange={(event) => {
-                  setText(event.target.value);
-                  setAdded(null);
-                }}
+                onChange={(event) => setSideText(side, event.target.value)}
                 className="w-full resize-y rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-2 font-mono text-xs text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
               />
               <button
                 type="button"
                 id={`level-add-${side}`}
                 disabled={count === 0}
-                onClick={() => addSide(side, text, () => setText(''))}
+                onClick={() => addSide(side)}
                 className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-zinc-100 px-3 py-1.5 text-[11px] font-bold text-zinc-950 transition-all hover:bg-white disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <ListPlus className="h-3.5 w-3.5" />
-                Add {count > 0 ? count : ''} {side} {count === 1 ? 'level' : 'levels'}
+                {count === 0
+                  ? `Add ${side} levels`
+                  : `Save ${count} ${side} ${count === 1 ? 'level' : 'levels'} to ${TIMEFRAME_LABEL[timeframe]}`}
               </button>
+              {count > 0 ? (
+                <p className="text-[10px] text-emerald-400/90">
+                  {count} price{count === 1 ? '' : 's'} ready — press the button to record{' '}
+                  {count === 1 ? 'it' : 'them'}.
+                </p>
+              ) : (
+                <p className="text-[10px] text-zinc-600">
+                  Paste prices above to turn this button on.
+                </p>
+              )}
             </div>
           ))}
         </div>
 
         <p className="text-[10px] text-zinc-500">
           Paste the lines straight from your indicator — one per line, or comma-separated.
-          Anything that is not a number is ignored. Each add tags the prices with{' '}
+          Anything that is not a number is ignored. Each saved line is tagged{' '}
           <span className="font-mono text-zinc-400">
             {symbol} · {TIMEFRAME_LABEL[timeframe]}
-          </span>
-          .
+          </span>{' '}
+          and appears under Today below.
         </p>
 
-        {error && <p className="text-[11px] text-rose-300">{error}</p>}
+        {error && (
+          <p className="rounded-xl border border-rose-900/70 bg-rose-950/50 px-2.5 py-2 text-[11px] text-rose-200">
+            {error}
+          </p>
+        )}
         {!error && added && (
-          <p id="level-added" className="text-[11px] text-emerald-300">
+          <p
+            id="level-added"
+            className="flex items-start gap-1.5 rounded-xl border border-emerald-800/80 bg-emerald-950/50 px-2.5 py-2 text-[11px] font-medium text-emerald-200"
+          >
+            <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-400" />
             {added}
           </p>
         )}
@@ -711,7 +789,7 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
               <button
                 key={frame}
                 type="button"
-                onClick={() => setTimeframe(frame)}
+                onClick={() => chooseTimeframe(frame)}
                 aria-pressed={active}
                 className={`flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-left transition-colors ${
                   active

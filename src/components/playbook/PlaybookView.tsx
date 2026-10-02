@@ -144,6 +144,8 @@ interface PlaybookViewProps {
     todayTradingDay: TradingDay;
     /** The tracked level instruments, including any levels-only symbol like VIX. */
     instruments: Instrument[];
+    /** The trader's own timezone, so a repeated touch is stamped on their clock. */
+    timezone: string;
     onSaveLevels: (levels: MarkedLevel[]) => void;
     onDeleteLevel: (levelId: string) => void;
     onSaveTouch: (touch: LevelTouch) => void;
@@ -532,7 +534,14 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
       </div>
 
       {/* The coach's edge finder, fed by the level-touch journal. */}
-      {edgeFinder && <EdgeFinderCard setups={setups} {...edgeFinder} />}
+      {edgeFinder && (
+        <EdgeFinderCard
+          setups={setups}
+          userId={userId}
+          onSaveLesson={onSaveLesson}
+          {...edgeFinder}
+        />
+      )}
 
       {/*
         The levels themselves, written down before any of them is touched.

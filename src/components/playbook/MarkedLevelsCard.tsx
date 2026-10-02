@@ -13,6 +13,7 @@ import {
   TradingSession,
 } from '../../types';
 import { CoachCard } from '../coach/coach-ui';
+import { formatTimestamp } from '../../lib/storage/date-utils';
 import {
   defaultLevelZonePoints,
   formatPoints,
@@ -58,6 +59,8 @@ export interface MarkedLevelsCardProps {
   instruments: Instrument[];
   /** What the trader expects each instrument to do today, written beside its levels. */
   outlooks: LevelOutlook[];
+  /** The trader's own timezone, so a repeated touch is stamped on their clock. */
+  timezone: string;
   /** Adds a batch of levels, skipping any already marked for the same day, instrument and price. */
   onSaveLevels: (levels: MarkedLevel[]) => void;
   onDeleteLevel: (levelId: string) => void;
@@ -94,6 +97,20 @@ const OUTCOME_LABEL: Record<TouchOutcome, string> = {
   'never-returned': 'Never came back',
   returned: 'Came back',
   invalid: 'Void',
+};
+
+/** A `datetime-local` value for right now, in the browser's own zone. */
+function localDateTimeInput(): string {
+  const now = new Date();
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+}
+
+/** The short outcome word under a touch time, so a row of repeats reads at a glance. */
+const OUTCOME_SHORT: Record<TouchOutcome, string> = {
+  watching: 'watching',
+  'never-returned': 'held',
+  returned: 'came back',
+  invalid: 'void',
 };
 
 /**
@@ -135,6 +152,7 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
   todayTradingDay,
   instruments,
   outlooks,
+  timezone,
   onSaveLevels,
   onDeleteLevel,
   onSaveTouch,
@@ -171,6 +189,16 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
   );
   const [error, setError] = useState('');
   const [added, setAdded] = useState<string | null>(null);
+  /**
+   * The level whose "touched again" form is open, and its draft time and note.
+   *
+   * A repeat is often written down after the fact — price tested the line while the trader was
+   * watching something else — so the time is editable and defaults to now rather than being
+   * forced to the moment the button was pressed.
+   */
+  const [touchFormLevelId, setTouchFormLevelId] = useState<string | null>(null);
+  const [touchAt, setTouchAt] = useState(localDateTimeInput);
+  const [touchNote, setTouchNote] = useState('');
   /** Whether the paste-all-timeframes box is open. Collapsed by default to keep the card short. */
   const [bulkOpen, setBulkOpen] = useState(false);
   /** The bulk paste itself, kept while the trader builds it up across several indicator copies. */
@@ -225,10 +253,23 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
   );
   const bulkGroups = useMemo(() => groupTaggedLevels(bulkPreview.levels), [bulkPreview]);
 
-  const touchByLevel = useMemo(() => {
-    const map = new Map<string, LevelTouch>();
+  /**
+   * Every touch struck from each marked level, oldest first.
+   *
+   * A list rather than one: the same line is routinely reached more than once in a day, and the
+   * sequence — overnight, at the open, then midday — is the pattern the record is trying to
+   * find. Keeping only the latest here would throw that away at the point of display.
+   */
+  const touchesByLevel = useMemo(() => {
+    const map = new Map<string, LevelTouch[]>();
     for (const touch of touches) {
-      if (touch.levelId) map.set(touch.levelId, touch);
+      if (!touch.levelId) continue;
+      const list = map.get(touch.levelId);
+      if (list) list.push(touch);
+      else map.set(touch.levelId, [touch]);
+    }
+    for (const list of map.values()) {
+      list.sort((a, b) => (a.touchedAt ?? a.createdAt).localeCompare(b.touchedAt ?? b.createdAt));
     }
     return map;
   }, [touches]);
@@ -254,7 +295,7 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
       .filter((level) => level.kind === which)
       .sort((a, b) => (which === 'support' ? a.price - b.price : b.price - a.price));
 
-  const testedInView = view.filter((level) => touchByLevel.has(level.id)).length;
+  const testedInView = view.filter((level) => touchesByLevel.has(level.id)).length;
 
   // Today's outlook for the instrument on screen, and the last one written before today, so a
   // changed read is visible without leaving the card.
@@ -491,7 +532,8 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
     );
   };
 
-  const markTouched = (level: MarkedLevel) => {
+  /** Writes one touch from a marked level, at the moment given. Shared by both paths below. */
+  const logTouch = (level: MarkedLevel, touchedAt: string, notes?: string) => {
     const now = new Date().toISOString();
     onSaveTouch({
       id: `touch-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -504,79 +546,189 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
       zonePoints: level.zonePoints,
       label: level.label,
       timeframe: level.timeframe,
-      touchedAt: now,
+      touchedAt,
       session: level.session,
       // A fresh touch is undecided on purpose: price has reached the level, but whether it
       // stays away is the answer the touch log is for.
       outcome: 'watching',
       checks: 0,
       levelId: level.id,
+      notes: notes?.trim() || undefined,
       createdAt: now,
       updatedAt: now,
     });
   };
 
+  /**
+   * Opens the touch form on a line, seeded with right now.
+   *
+   * The first touch and every later one go through this same form, so the time is always the
+   * trader's to set: a line is often reached while they were watching something else, and the
+   * moment it printed is the whole point of the record. The default is now, so the quick case is
+   * still two clicks.
+   */
+  const openTouchForm = (levelId: string) => {
+    setTouchFormLevelId(levelId);
+    setTouchAt(localDateTimeInput());
+    setTouchNote('');
+  };
+
+  const closeTouchForm = () => setTouchFormLevelId(null);
+
+  /** Submits a touch — the first one or a repeat — on the trader's chosen clock time. */
+  const submitTouch = (event: React.FormEvent, level: MarkedLevel) => {
+    event.preventDefault();
+    const when = touchAt ? new Date(touchAt) : new Date();
+    if (Number.isNaN(when.getTime())) return;
+    logTouch(level, when.toISOString(), touchNote);
+    closeTouchForm();
+  };
+
   const renderLevel = (level: MarkedLevel) => {
-    const touch = touchByLevel.get(level.id);
+    const levelTouches = touchesByLevel.get(level.id) ?? [];
+    const latest = levelTouches[levelTouches.length - 1];
     const isSupport = level.kind === 'support';
+    const formOpen = touchFormLevelId === level.id;
     return (
       <div
         key={level.id}
         data-marked-level={level.id}
-        className="flex flex-wrap items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900/50 px-2.5 py-1.5"
+        className="space-y-1.5 rounded-xl border border-zinc-800 bg-zinc-900/50 px-2.5 py-1.5"
       >
-        <span className="inline-flex items-center gap-1 rounded-lg border border-zinc-700 bg-zinc-800/80 px-1.5 py-0.5 text-[10px] font-mono uppercase font-bold text-zinc-300">
-          {isSupport ? (
-            <ArrowDown className="h-3 w-3 text-sky-300" />
-          ) : (
-            <ArrowUp className="h-3 w-3 text-amber-300" />
-          )}
-          {level.timeframe ?? timeframe}
-        </span>
-        <span className="font-mono text-sm font-semibold text-zinc-100">{level.price}</span>
-        <span
-          className="font-mono text-[10px] text-zinc-500"
-          title={`A break counts once price leaves ${formatPoints(
-            level.price - level.zonePoints / 2
-          )}–${formatPoints(level.price + level.zonePoints / 2)}`}
-        >
-          ±{level.zonePoints}pts
-        </span>
-        {level.label && (
-          <span className="truncate rounded border border-zinc-800 bg-zinc-950/60 px-1.5 py-0.5 text-[10px] text-zinc-400">
-            {level.label}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="inline-flex items-center gap-1 rounded-lg border border-zinc-700 bg-zinc-800/80 px-1.5 py-0.5 text-[10px] font-mono uppercase font-bold text-zinc-300">
+            {isSupport ? (
+              <ArrowDown className="h-3 w-3 text-sky-300" />
+            ) : (
+              <ArrowUp className="h-3 w-3 text-amber-300" />
+            )}
+            {level.timeframe ?? timeframe}
           </span>
-        )}
-
-        <span className="ml-auto flex items-center gap-1.5">
-          {touch ? (
+          <span className="font-mono text-sm font-semibold text-zinc-100">{level.price}</span>
+          <span
+            className="font-mono text-[10px] text-zinc-500"
+            title={`A break counts once price leaves ${formatPoints(
+              level.price - level.zonePoints / 2
+            )}–${formatPoints(level.price + level.zonePoints / 2)}`}
+          >
+            ±{level.zonePoints}pts
+          </span>
+          {levelTouches.length > 1 && (
             <span
-              className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-mono uppercase font-bold ${
-                OUTCOME_BADGE[touch.outcome]
-              }`}
+              className="rounded border border-sky-900 bg-sky-950/60 px-1.5 py-0.5 font-mono text-[10px] font-bold text-sky-300"
+              title={`Price has reached this line ${levelTouches.length} times today`}
             >
-              {OUTCOME_LABEL[touch.outcome]}
+              ×{levelTouches.length} touches
             </span>
-          ) : (
+          )}
+          {level.label && (
+            <span className="truncate rounded border border-zinc-800 bg-zinc-950/60 px-1.5 py-0.5 text-[10px] text-zinc-400">
+              {level.label}
+            </span>
+          )}
+
+          <span className="ml-auto flex items-center gap-1.5">
+            {!latest ? (
+              <button
+                type="button"
+                id={`level-touch-first-${level.id}`}
+                aria-pressed={formOpen}
+                onClick={() => (formOpen ? closeTouchForm() : openTouchForm(level.id))}
+                title="Price reached this level — set the time it happened and what came of it"
+                className="flex items-center gap-1 rounded-lg border border-sky-700/60 bg-sky-950/40 px-2 py-0.5 text-[10px] font-semibold text-sky-300 transition-colors hover:bg-sky-900/50 hover:text-sky-200"
+              >
+                <Crosshair className="h-3 w-3" />
+                Touched
+              </button>
+            ) : (
+              <button
+                type="button"
+                id={`level-touch-again-${level.id}`}
+                aria-pressed={formOpen}
+                onClick={() => (formOpen ? closeTouchForm() : openTouchForm(level.id))}
+                title="Price reached this line again — set the time it happened and what came of it"
+                className="flex items-center gap-1 rounded-lg border border-emerald-700/60 bg-emerald-950/40 px-2 py-0.5 text-[10px] font-semibold text-emerald-300 transition-colors hover:bg-emerald-900/50 hover:text-emerald-200"
+              >
+                <Crosshair className="h-3 w-3" />
+                Touched again
+              </button>
+            )}
             <button
               type="button"
-              onClick={() => markTouched(level)}
-              title="Price reached this level — log the touch and decide it later"
-              className="flex items-center gap-1 rounded-lg border border-sky-700/60 bg-sky-950/40 px-2 py-0.5 text-[10px] font-semibold text-sky-300 transition-colors hover:bg-sky-900/50 hover:text-sky-200"
+              onClick={() => onDeleteLevel(level.id)}
+              title="Remove this level from the record"
+              className="rounded-lg p-1 text-zinc-600 transition-colors hover:bg-zinc-800 hover:text-rose-400"
             >
-              <Crosshair className="h-3 w-3" />
-              Touched
+              <Trash2 className="h-3 w-3" />
             </button>
-          )}
-          <button
-            type="button"
-            onClick={() => onDeleteLevel(level.id)}
-            title="Remove this level from the record"
-            className="rounded-lg p-1 text-zinc-600 transition-colors hover:bg-zinc-800 hover:text-rose-400"
+          </span>
+        </div>
+
+        {/*
+          Every time price reached this exact line today, in order.
+
+          This is the sequence the recurrence read is built from, shown where the trader records
+          it: overnight, then the open, then midday, each with what came of it. It is deliberately
+          the same list the coach sees, so a pattern quoted back can be checked against the times
+          on screen.
+        */}
+        {levelTouches.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {levelTouches.map((touch, index) => (
+              <span
+                key={touch.id}
+                data-level-touch={touch.id}
+                className={`inline-flex items-center gap-1 rounded-lg border px-1.5 py-0.5 text-[10px] font-mono ${OUTCOME_BADGE[touch.outcome]}`}
+                title={`Touch ${index + 1} of ${levelTouches.length}: ${OUTCOME_LABEL[touch.outcome]}`}
+              >
+                <span className="font-bold">{formatTimestamp(touch.touchedAt, timezone)}</span>
+                <span className="uppercase opacity-80">{OUTCOME_SHORT[touch.outcome]}</span>
+              </span>
+            ))}
+          </div>
+        )}
+
+        {formOpen && (
+          <form
+            onSubmit={(event) => submitTouch(event, level)}
+            className="flex flex-wrap items-center gap-2 rounded-lg border border-emerald-900/60 bg-emerald-950/20 px-2 py-1.5"
           >
-            <Trash2 className="h-3 w-3" />
-          </button>
-        </span>
+            <label
+              className="flex items-center gap-1.5 text-[10px] font-mono uppercase text-zinc-400"
+              htmlFor={`level-touch-at-${level.id}`}
+            >
+              Touched at
+              <input
+                id={`level-touch-at-${level.id}`}
+                type="datetime-local"
+                value={touchAt}
+                onChange={(event) => setTouchAt(event.target.value)}
+                className="rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1 text-[11px] font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none"
+              />
+            </label>
+            <input
+              id={`level-touch-note-${level.id}`}
+              type="text"
+              value={touchNote}
+              placeholder="What happened — ran up, reversed at the open…"
+              onChange={(event) => setTouchNote(event.target.value)}
+              className="min-w-[140px] flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1 text-[11px] text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
+            />
+            <button
+              type="submit"
+              className="rounded-lg border border-emerald-700/60 bg-emerald-500/20 px-2.5 py-1 text-[10px] font-bold text-emerald-100 transition-colors hover:bg-emerald-500/30"
+            >
+              Log touch
+            </button>
+            <button
+              type="button"
+              onClick={closeTouchForm}
+              className="rounded-lg px-2 py-1 text-[10px] font-medium text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+            >
+              Cancel
+            </button>
+          </form>
+        )}
       </div>
     );
   };
@@ -629,7 +781,7 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
           <p className="text-xs text-zinc-400 mt-0.5">
             Write the lines your indicator shows for each instrument and chart — 1m, 3m, 5m, 15m,
             30m and 1h. Keep them all, even the ones price never reaches; when price reaches one,
-            tap Touched and it becomes a touch you decide below.
+            tap Touched, set the time it happened, and it becomes a touch you decide below.
           </p>
         </div>
       </div>

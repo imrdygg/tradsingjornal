@@ -678,7 +678,19 @@ L7. THE TIMEFRAME IS THE TRADER'S OWN LABEL, NOT A CHART YOU WERE GIVEN. A "5m r
     sample.
 L8. THE OUTLOOKS ARE THE TRADER'S OWN OPINION, NOT YOURS AND NOT A MARKET FACT. Report what
     they expected, including when the instruments disagree. Never present an outlook as a
-    reason to take a trade, and never quote a past outlook as a call that "worked".`;
+    reason to take a trade, and never quote a past outlook as a call that "worked".
+L9. REPETITION IS A COUNT, AND A WEEKDAY IS NOT A SIGNAL. The record says how many times a line
+    was reached, where in its own day each touch fell and which weekdays it printed on. Report
+    those counts in the past tense. Never tell them to trade a line because it is a Monday or
+    because it is the third test, never turn an order or an hour into a reason the entry will
+    work, and never say a line "usually" fails on its third test. A weekday is their own clock,
+    not a fact about the market.
+L10. EVERY TOUCH IN A SEQUENCE IS ONE THEY LOGGED, INCLUDING THE LATER ONES. When a line was
+    the same line they wrote down, say so from the counts and nothing more. Never fold the
+    touches of a line into a single number, and never let one touch's outcome stand for the
+    others.
+L11. THE RECURRING-LINE LIST IS BOUNDED. When the section says further lines were left out, do
+    not claim to have seen them or guess what they were.`;
 var ENTRY_EDGE_GUARDRAILS_SUFFIX = `
 
 THE ENTRY EDGE \u2014 SPECIAL RULES FOR THIS REQUEST ONLY.
@@ -704,7 +716,11 @@ E6. SAY WHEN THE RECORD SITS AGAINST THE ENTRY. If the trader's own lines show t
     the price failing, or the level they are walking into holding, say so plainly. Agreeing
     with their chosen side is never the goal; an honest mixed or against-the-record answer is
     a complete answer.
-E7. NAME WHAT THE RECORD CANNOT SETTLE. Whether the line will hold this time, what the news
+E7. A LINE REACHED MORE THAN ONCE IS STILL ONE LINE, AND EVERY TEST COUNTS. When the read lists
+    the touches of a line oldest first, report them as the trader's own logged sequence \u2014 how
+    many times price reached it and what came of each. The latest test sets the state; the
+    earlier ones are not overwritten by it, and the count is never a reason the entry will work.
+E8. NAME WHAT THE RECORD CANNOT SETTLE. Whether the line will hold this time, what the news
     is, and what price does next are all outside the record \u2014 put them in notInJournal
     rather than inferring them.`;
 var EXTREMES_GUARDRAILS_SUFFIX = `
@@ -971,6 +987,54 @@ function formatLevelTimeframesForPrompt(read) {
     lines.push(
       `(${read.rowsOmitted} further instrument/timeframe row(s) were left out of this list \u2014 do not claim to have seen them.)`
     );
+  }
+  return lines;
+}
+function formatLevelRecurrenceForPrompt(read) {
+  const lines = [];
+  if (!read) return lines;
+  const empty = read.repeatedLevels.length === 0 && read.byOrdinal.length === 0 && read.byHour.length === 0 && read.byWeekday.length === 0;
+  if (empty) return lines;
+  const rateWord = (bucket) => bucket.decided === 0 ? "no decided touch yet" : bucket.enoughData ? `held ${bucket.holdRate ?? 0}% of ${bucket.decided} decided` : `${bucket.decided} decided so far \u2014 NOT yet a rate (${read.minDecided} are needed)`;
+  lines.push("");
+  lines.push("=== REPETITION IN THE TOUCH RECORD (the same line reached again) ===");
+  lines.push(
+    "A level is often reached more than once. These are counts over the trader's own logged times: where a touch fell in its own day (first, second, third or later), the hour it printed, the weekday, and the lines reached on more than one day. This is what already happened, never a forecast, and a weekday is NOT a signal \u2014 never tell the trader to trade a line because it is a Monday, and never turn an order or an hour into a reason to act. Report a rate only for a bucket that says it has enough decided touches."
+  );
+  if (read.repeatedLevels.length) {
+    lines.push("");
+    lines.push("Lines reached on more than one day, most days first:");
+    for (const row of read.repeatedLevels) {
+      lines.push(
+        `- ${row.symbol} ${row.kind} at ${row.price}: reached on ${row.days} day(s), ${row.touches} touch(es) total, across ${row.weekdays.join(", ") || "no weekday recorded"} \u2014 ${rateWord({ decided: row.decided, holdRate: row.holdRate, enoughData: row.enoughData })}`
+      );
+    }
+    if (read.repeatedOmitted > 0) {
+      lines.push(
+        `(${read.repeatedOmitted} further recurring line(s) were left out of this list \u2014 do not claim to have seen them.)`
+      );
+    }
+  }
+  if (read.byOrdinal.length) {
+    lines.push("");
+    lines.push("By where the touch fell in its own day:");
+    for (const bucket of read.byOrdinal) {
+      lines.push(`- ${bucket.label}: ${bucket.touches} touch(es); ${rateWord(bucket)}`);
+    }
+  }
+  if (read.byWeekday.length) {
+    lines.push("");
+    lines.push("By weekday (the trader's own clock, not a market fact):");
+    for (const bucket of read.byWeekday) {
+      lines.push(`- ${bucket.label}: ${bucket.touches} touch(es); ${rateWord(bucket)}`);
+    }
+  }
+  if (read.byHour.length) {
+    lines.push("");
+    lines.push("By hour of day the touch printed (the trader's own clock):");
+    for (const bucket of read.byHour) {
+      lines.push(`- ${bucket.label}: ${bucket.touches} touch(es); ${rateWord(bucket)}`);
+    }
   }
   return lines;
 }
@@ -1381,6 +1445,7 @@ function formatDigestForPrompt(digest, mode) {
   }
   for (const line of formatLevelEdgeForPrompt(digest.levelEdge)) lines.push(line);
   for (const line of formatLevelTimeframesForPrompt(digest.levelTimeframes)) lines.push(line);
+  for (const line of formatLevelRecurrenceForPrompt(digest.levelRecurrence)) lines.push(line);
   for (const line of formatLevelOutlooksForPrompt(digest.levelOutlooks)) lines.push(line);
   for (const line of formatExtremeReadForPrompt(digest.extremeRead)) lines.push(line);
   if (mode === "learn" || mode === "match") {
@@ -1775,7 +1840,9 @@ function formatEntryEdgeForPrompt(entry, quote, todayLevels) {
       const side = signed === 0 ? "AT the entry" : ahead ? "AHEAD of the entry" : "BEHIND the entry";
       const liveNote = live === null ? "" : `, and ${distanceWords(live, level.price)} the live price (${live})`;
       lines.push(
-        `- ${level.symbol} ${frame} ${level.kind} at ${level.price} (width \xB1${level.zonePoints})${label}: ${fromEntry} the entry of ${entry.entryPrice}, ${side}${liveNote}. State: ${todayLevelStatusWord(level.status)}` + (level.touchedAt ? ` (touched ${level.touchedAt}` : "") + (level.touchedAt && level.checks ? `, checked ${level.checks} time(s))` : level.touchedAt ? ")" : "") + (level.maxExcursionPoints !== null ? `, ran ${level.maxExcursionPoints} point(s)` : "") + "."
+        `- ${level.symbol} ${frame} ${level.kind} at ${level.price} (width \xB1${level.zonePoints})${label}: ${fromEntry} the entry of ${entry.entryPrice}, ${side}${liveNote}. State: ${todayLevelStatusWord(level.status)}` + (level.touchedAt ? ` (touched ${level.touchedAt}` : "") + (level.touchedAt && level.checks ? `, checked ${level.checks} time(s))` : level.touchedAt ? ")" : "") + (level.maxExcursionPoints !== null ? `, ran ${level.maxExcursionPoints} point(s)` : "") + "." + // A line reached more than once is the case this read is for: the sequence, oldest
+        // first, so the coach can tell a first test that held from a third one that failed.
+        (level.touchCount > 1 ? ` Price reached this line ${level.touchCount} time(s) today, oldest first: ` + level.touches.map((t) => `${t.at} ${todayLevelStatusWord(t.outcome)}`).join("; ") + ". The latest test sets the state above." : "")
       );
     }
   }

@@ -1,9 +1,11 @@
 import React, { useMemo, useState } from 'react';
-import { Compass, Target, TrendingUp } from 'lucide-react';
+import { BookmarkPlus, Compass, Target, TrendingUp } from 'lucide-react';
 import {
   CoachPlan,
   DailyReview,
   Instrument,
+  Lesson,
+  LessonKind,
   LevelOutlook,
   LevelTouch,
   MarkedLevel,
@@ -13,6 +15,7 @@ import {
   TradingDay,
 } from '../../types';
 import { summarizeMarkedLevels } from '../../lib/analytics/level-edge';
+import { summarizeLevelRecurrence } from '../../lib/analytics/level-recurrence';
 import {
   summarizeTimeframeEdges,
   timeframeBucketLabel,
@@ -36,6 +39,7 @@ import {
 import { COACH_WAIT_STEPS } from '../common/AiThinking';
 import { formatTimestamp } from '../../lib/storage/date-utils';
 import { instrumentSymbol } from '../../lib/trading/instruments';
+import { LESSON_KINDS, LESSON_KIND_LABEL } from '../../lib/playbook/lessons';
 
 /**
  * The break-and-run edge finder.
@@ -93,6 +97,13 @@ export interface EdgeFinderCardProps {
    * about how it plans; the guardrails keep a grade from being read as market data.
    */
   coachPlans?: CoachPlan[];
+  /** The account a lesson saved from an entry read belongs to. */
+  userId?: string;
+  /**
+   * Writes an entry read into the trader's own lessons, so a read they acted on becomes
+   * material the coach reads back later. Omitted hides the save action.
+   */
+  onSaveLesson?: (lesson: Lesson) => void;
 }
 
 interface EdgeState {
@@ -155,6 +166,8 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
   levelOutlooks,
   levelInstruments,
   coachPlans,
+  userId,
+  onSaveLesson,
 }) => {
   const labelInstruments = levelInstruments ?? instruments;
   const coverage = useMemo(
@@ -168,6 +181,19 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
   // The three headline findings, computed here rather than asked of the coach: they are
   // arithmetic over the trader's own counts, so they are shown before any button is pressed.
   const highlights = useMemo(() => timeframeHighlights(timeframeBuckets), [timeframeBuckets]);
+  //
+  // Repetition across the record: the same line reached more than once in a day, and the same
+  // line reached on more than one day. Computed here, before any AI, because it is arithmetic
+  // over the trader's own timestamps — the thing the touch log is for now that a line can be
+  // touched more than once.
+  const recurrence = useMemo(
+    () => summarizeLevelRecurrence(levelTouches, timezone, labelInstruments),
+    [levelTouches, timezone, labelInstruments]
+  );
+  const recurrenceHasData =
+    recurrence.repeatedLevels.length > 0 ||
+    recurrence.byOrdinal.length > 0 ||
+    recurrence.byHour.length > 0;
   const labelOf = (bucket: TimeframeEdgeBucket) =>
     timeframeBucketLabel(bucket, instrumentSymbol(labelInstruments, bucket.instrumentId));
   const digest = useMemo(
@@ -217,6 +243,32 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
   const [entryPrice, setEntryPrice] = useState('');
   const [entryError, setEntryError] = useState<string | null>(null);
   const [entryState, setEntryState] = useState<EdgeState>(IDLE);
+  //
+  // What the current read was actually asked about. Captured when the answer lands rather
+  // than read off the inputs at save time, because the trader may edit the symbol, side or
+  // price before deciding to keep the read.
+  const [entryReadFacts, setEntryReadFacts] = useState<{
+    symbol: string;
+    direction: 'long' | 'short';
+    entryPrice: number;
+  } | null>(null);
+  /** The title of the entry read already written into the lessons, if any. */
+  const [savedEntryLesson, setSavedEntryLesson] = useState<string | null>(null);
+  /**
+   * The entry read being turned into a lesson, before it is written.
+   *
+   * A read becomes the trader's own material, so they get to title it, file it under a kind,
+   * tag it and attach a setup before it lands in the library — the same things the lesson form
+   * itself asks for. Held here rather than saved straight away so a read cannot arrive in the
+   * library under an auto-generated name the trader then has to go and fix.
+   */
+  const [entryLessonDraft, setEntryLessonDraft] = useState<{
+    title: string;
+    notes: string;
+    kind: LessonKind;
+    tags: string;
+    setupId: string;
+  } | null>(null);
 
   /**
    * Today's own lines for the chosen symbol, each with the touch it links to.
@@ -255,6 +307,9 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
     });
 
     if (result.ok) {
+      setEntryReadFacts({ symbol: entrySymbol, direction: entryDirection, entryPrice: price });
+      setSavedEntryLesson(null);
+      setEntryLessonDraft(null);
       setEntryState({
         loading: false,
         result,
@@ -273,6 +328,76 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
   const entryAnswer = entryState.result?.ok
     ? (entryState.result.data as EntryEdgeResponse)
     : null;
+
+  /**
+   * The read as a lesson note, ready for the trader to edit.
+   *
+   * The entry it was about is kept at the top, because a read of an entry means nothing weeks
+   * later without the side and the price it was made at. The lines it named, the risks and the
+   * figures it stood on travel with it, so a lesson the coach later reads back says what the
+   * read rested on rather than only what it concluded.
+   */
+  const entryLessonNotes = (response: EntryEdgeResponse) => {
+    if (!entryReadFacts) return '';
+    const { symbol, direction, entryPrice } = entryReadFacts;
+    return [
+      `Entry read: ${symbol} ${direction} at ${entryPrice} (${response.stance.replace(/-/g, ' ')}, ${response.confidence} confidence).`,
+      response.entryRead,
+      response.levelRead,
+      response.watch.length
+        ? `\nLines to watch:\n${response.watch
+            .map((note) => `• ${note.level} — ${note.status}${note.note ? `: ${note.note}` : ''}`)
+            .join('\n')}`
+        : '',
+      response.risks.length
+        ? `\nWhat would make this a mistake:\n${response.risks.map((risk) => `• ${risk}`).join('\n')}`
+        : '',
+      response.notInJournal ? `\nNot in the journal: ${response.notInJournal}` : '',
+      response.nextStep ? `\nNext step: ${response.nextStep}` : '',
+      response.basedOn.length
+        ? `\nWhat it leaned on:\n${response.basedOn.map((item) => `• ${item}`).join('\n')}`
+        : '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+  };
+
+  /** Opens the draft so the trader can title, file and tag the read before it is written. */
+  const openEntryLessonDraft = (response: EntryEdgeResponse) => {
+    if (!onSaveLesson || !entryReadFacts) return;
+    const { symbol, direction, entryPrice } = entryReadFacts;
+    setEntryLessonDraft({
+      title: `${symbol} ${direction} at ${entryPrice} — ${response.headline}`.slice(0, 120),
+      notes: entryLessonNotes(response),
+      kind: 'other',
+      tags: `entry-edge, ${symbol}`,
+      setupId: '',
+    });
+  };
+
+  /** Writes the edited draft into the trader's own lessons. */
+  const commitEntryLesson = () => {
+    if (!entryLessonDraft || !onSaveLesson) return;
+    const now = new Date().toISOString();
+    const tags = entryLessonDraft.tags
+      .split(',')
+      .map((tag) => tag.trim())
+      .filter(Boolean);
+    const lesson: Lesson = {
+      id: `lesson-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      userId: userId ?? 'local',
+      title: entryLessonDraft.title.trim() || 'Entry read',
+      notes: entryLessonDraft.notes.trim(),
+      kind: entryLessonDraft.kind,
+      setupId: entryLessonDraft.setupId || undefined,
+      tags: tags.length ? tags : undefined,
+      createdAt: now,
+      updatedAt: now,
+    };
+    onSaveLesson(lesson);
+    setSavedEntryLesson(lesson.title);
+    setEntryLessonDraft(null);
+  };
 
   async function run() {
     setState((prev) => ({ ...prev, loading: true, failure: null }));
@@ -445,6 +570,131 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
               {highlights.bestHold.stats.decided} decided.
             </p>
           )}
+        </div>
+      )}
+
+      {/*
+        Repetition in the touch record.
+
+        The hold rate above treats every touch as one observation. This treats the same line's
+        touches as a sequence instead: whether it is the first test of a line that holds or the
+        third one near midday, and whether the line keeps printing on the same weekday. Both are
+        counts over the trader's own timestamps, shown before any AI so the read can be checked.
+      */}
+      {recurrenceHasData && (
+        <div
+          id="playbook-edge-recurrence"
+          className="space-y-2 rounded-xl border border-violet-900/50 bg-violet-950/20 p-3"
+        >
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <span className="text-[10px] font-mono uppercase font-bold text-violet-300/90">
+              When price comes back to the same line
+            </span>
+            <span className="text-[10px] text-zinc-500">from your own touch times</span>
+          </div>
+
+          {recurrence.repeatedLevels.length > 0 && (
+            <div className="space-y-1">
+              <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
+                Lines reached on more than one day
+              </span>
+              {recurrence.repeatedLevels.slice(0, 6).map((row) => (
+                <div
+                  key={row.key}
+                  data-recurring-level={row.key}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-800/80 bg-zinc-950/40 px-2.5 py-1.5"
+                >
+                  <span className="truncate text-xs text-zinc-200">
+                    <span className="font-mono">{row.symbol}</span> {row.kind} {row.price}
+                  </span>
+                  <span className="shrink-0 font-mono text-[10px] text-zinc-500">
+                    {row.days} day{row.days === 1 ? '' : 's'} · {row.touches} touch
+                    {row.touches === 1 ? '' : 'es'} · {row.weekdays.join(', ')}
+                    {row.stats.decided === 0
+                      ? ' · no decided touch yet'
+                      : row.stats.enoughData
+                      ? ` · held ${formatRate(row.stats.holdRate)} of ${row.stats.decided}`
+                      : ` · ${row.stats.decided} decided — too thin for a rate`}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {recurrence.byOrdinal.length > 0 && (
+            <div className="space-y-1">
+              <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
+                By touch order in the day
+              </span>
+              {recurrence.byOrdinal.map((bucket) => (
+                <div
+                  key={bucket.key}
+                  data-recurrence-ordinal={bucket.key}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-800/80 bg-zinc-950/40 px-2.5 py-1"
+                >
+                  <span className="truncate text-xs text-zinc-200">{bucket.label}</span>
+                  <span className="shrink-0 font-mono text-[10px] text-zinc-500">
+                    {bucket.stats.touches} touch{bucket.stats.touches === 1 ? '' : 'es'}
+                    {bucket.stats.decided === 0
+                      ? ' · no decided touch yet'
+                      : bucket.stats.enoughData
+                      ? ` · held ${formatRate(bucket.stats.holdRate)} of ${bucket.stats.decided}`
+                      : ` · ${bucket.stats.decided} decided — too thin for a rate`}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {(recurrence.byWeekday.length > 0 || recurrence.byHour.length > 0) && (
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {recurrence.byWeekday.length > 0 && (
+                <div className="space-y-1">
+                  <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
+                    By weekday
+                  </span>
+                  {recurrence.byWeekday.map((bucket) => (
+                    <div
+                      key={bucket.key}
+                      className="flex items-center justify-between gap-2 rounded-lg border border-zinc-800/80 bg-zinc-950/40 px-2.5 py-1"
+                    >
+                      <span className="text-xs text-zinc-200">{bucket.label}</span>
+                      <span className="font-mono text-[10px] text-zinc-500">
+                        {bucket.stats.enoughData
+                          ? `${formatRate(bucket.stats.holdRate)} of ${bucket.stats.decided}`
+                          : `${bucket.stats.decided} decided`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {recurrence.byHour.length > 0 && (
+                <div className="space-y-1">
+                  <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
+                    By hour
+                  </span>
+                  {recurrence.byHour.map((bucket) => (
+                    <div
+                      key={bucket.key}
+                      className="flex items-center justify-between gap-2 rounded-lg border border-zinc-800/80 bg-zinc-950/40 px-2.5 py-1"
+                    >
+                      <span className="font-mono text-xs text-zinc-200">{bucket.label}</span>
+                      <span className="font-mono text-[10px] text-zinc-500">
+                        {bucket.stats.enoughData
+                          ? `${formatRate(bucket.stats.holdRate)} of ${bucket.stats.decided}`
+                          : `${bucket.stats.decided} decided`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          <p className="text-[10px] leading-relaxed text-zinc-500">
+            A rate only appears once a condition has enough decided touches; below that the
+            counts are shown instead, because three touches are a tally and not an edge.
+          </p>
         </div>
       )}
 
@@ -733,6 +983,151 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
                     emptyLabel="It answered without citing a single figure, so treat it with suspicion."
                   />
                 </div>
+              </div>
+            )}
+
+            {/*
+              The read becomes material the coach can read back later. This is what keeps an
+              entry read from being a one-off: the finding is saved with the entry it was about,
+              so the lessons read can see it and the trader can build on it.
+            */}
+            {onSaveLesson && (
+              <div className="space-y-2 border-t border-zinc-800/70 pt-3">
+                {entryLessonDraft ? (
+                  <div className="space-y-2 rounded-xl border border-zinc-700 bg-zinc-900/60 p-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
+                        New lesson from this read
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setEntryLessonDraft(null)}
+                        className="rounded-lg px-2 py-0.5 text-[10px] font-medium text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-[10px] font-medium text-zinc-400" htmlFor="entry-edge-lesson-title">
+                        Title
+                      </label>
+                      <input
+                        id="entry-edge-lesson-title"
+                        type="text"
+                        value={entryLessonDraft.title}
+                        onChange={(event) =>
+                          setEntryLessonDraft({ ...entryLessonDraft, title: event.target.value })
+                        }
+                        className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-[10px] font-medium text-zinc-400" htmlFor="entry-edge-lesson-notes">
+                        What you noticed
+                      </label>
+                      <textarea
+                        id="entry-edge-lesson-notes"
+                        rows={6}
+                        value={entryLessonDraft.notes}
+                        onChange={(event) =>
+                          setEntryLessonDraft({ ...entryLessonDraft, notes: event.target.value })
+                        }
+                        className="w-full resize-y rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
+                      />
+                    </div>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                      <div>
+                        <label className="mb-1 block text-[10px] font-medium text-zinc-400" htmlFor="entry-edge-lesson-kind">
+                          Kind
+                        </label>
+                        <select
+                          id="entry-edge-lesson-kind"
+                          value={entryLessonDraft.kind}
+                          onChange={(event) =>
+                            setEntryLessonDraft({
+                              ...entryLessonDraft,
+                              kind: event.target.value as LessonKind,
+                            })
+                          }
+                          className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 text-xs text-zinc-100 focus:border-zinc-600 focus:outline-none"
+                        >
+                          {LESSON_KINDS.map((kind) => (
+                            <option key={kind} value={kind}>
+                              {LESSON_KIND_LABEL[kind]}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[10px] font-medium text-zinc-400" htmlFor="entry-edge-lesson-setup">
+                          Relates to a setup
+                        </label>
+                        <select
+                          id="entry-edge-lesson-setup"
+                          value={entryLessonDraft.setupId}
+                          onChange={(event) =>
+                            setEntryLessonDraft({ ...entryLessonDraft, setupId: event.target.value })
+                          }
+                          className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 text-xs text-zinc-100 focus:border-zinc-600 focus:outline-none"
+                        >
+                          <option value="">None</option>
+                          {setups.map((setup) => (
+                            <option key={setup.id} value={setup.id}>
+                              {setup.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-[10px] font-medium text-zinc-400" htmlFor="entry-edge-lesson-tags">
+                          Tags (comma separated)
+                        </label>
+                        <input
+                          id="entry-edge-lesson-tags"
+                          type="text"
+                          value={entryLessonDraft.tags}
+                          onChange={(event) =>
+                            setEntryLessonDraft({ ...entryLessonDraft, tags: event.target.value })
+                          }
+                          className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 text-xs text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-end">
+                      <button
+                        type="button"
+                        id="entry-edge-lesson-save"
+                        onClick={commitEntryLesson}
+                        className="rounded-lg border border-amber-800/80 bg-amber-500/10 px-3 py-1.5 text-[11px] font-semibold text-amber-200 transition-colors hover:bg-amber-500/20"
+                      >
+                        Save lesson
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      id="entry-edge-save-lesson"
+                      onClick={() => openEntryLessonDraft(entryAnswer)}
+                      className="flex items-center gap-1.5 rounded-lg border border-zinc-700 px-2.5 py-1.5 text-[11px] font-semibold text-zinc-200 transition-colors hover:bg-zinc-800 hover:text-zinc-50"
+                    >
+                      <BookmarkPlus className="h-3.5 w-3.5 text-amber-400" />
+                      Save this as a lesson
+                    </button>
+                    {savedEntryLesson ? (
+                      <p className="text-[11px] text-emerald-300/90">
+                        Saved to your lessons as “{savedEntryLesson}”. Edit or tag it in the
+                        Playbook.
+                      </p>
+                    ) : (
+                      <p className="text-[10px] leading-relaxed text-zinc-500">
+                        Opens a draft you can title, file and tag before it is written into your
+                        lessons, so the coach reads it back later and you can build on it.
+                      </p>
+                    )}
+                  </>
+                )}
               </div>
             )}
           </CoachResultPanel>

@@ -37,6 +37,11 @@ import {
 } from '../analytics/level-edge';
 import { summarizeTimeframeEdges, type TimeframeEdgeBucket } from '../analytics/level-timeframes';
 import {
+  summarizeLevelRecurrence,
+  type LevelRecurrenceReport,
+  type RecurrenceBucket,
+} from '../analytics/level-recurrence';
+import {
   buildDaysByTimeframe,
   buildOvernightHourPatterns,
   findRatingEdges,
@@ -204,6 +209,56 @@ export interface LevelTimeframeRow {
  * deliberately kept apart from any hold rate, because the two are answers to different
  * questions and merging them would turn "never reached" into "did not hold".
  */
+export interface LevelRecurrenceBucketRead {
+  /** The condition in the trader's terms, e.g. "Second touch of the day" or "Mon". */
+  label: string;
+  touches: number;
+  decided: number;
+  /** Share of decided touches where price never came back, or null while none is decided. */
+  holdRate: number | null;
+  /** True once `decided` reaches the readability floor, so `holdRate` may be quoted as a rate. */
+  enoughData: boolean;
+}
+
+/** One line reached on more than one day, as the coach reads it. */
+export interface LevelRecurrenceRowRead {
+  symbol: string;
+  kind: LevelKind;
+  price: number;
+  /** Distinct trading days this exact line was touched on. */
+  days: number;
+  touches: number;
+  /** Weekday names it was touched on, in week order. */
+  weekdays: string[];
+  decided: number;
+  holdRate: number | null;
+  enoughData: boolean;
+}
+
+/**
+ * Repetition in the touch record, split by where a touch fell in a day and on which weekday.
+ *
+ * The break-and-run edge read above treats every touch as one observation. This is the same
+ * record read as a sequence: the first test of a line against the third, price printing at the
+ * same hour, and the same line reached on more than one day. Every rate is withheld until its
+ * bucket reaches the readability floor, so the coach reports the counts instead of a percentage
+ * drawn from a handful of touches.
+ */
+export interface LevelRecurrenceRead {
+  /** Decided touches a bucket needs before its rate may be read. */
+  minDecided: number;
+  /** Lines touched on more than one day, busiest first. */
+  repeatedLevels: LevelRecurrenceRowRead[];
+  /** Repeated lines beyond the bounded sample above, so the coach knows it is not seeing all. */
+  repeatedOmitted: number;
+  /** Hold rate by the touch's order within its own day. */
+  byOrdinal: LevelRecurrenceBucketRead[];
+  /** Hold rate by the hour of day a touch printed, in the trader's timezone. */
+  byHour: LevelRecurrenceBucketRead[];
+  /** Hold rate by weekday, across every touch on the record. */
+  byWeekday: LevelRecurrenceBucketRead[];
+}
+
 export interface LevelTimeframesRead {
   /** Every level marked, across all days on the record. */
   marked: number;
@@ -253,6 +308,17 @@ export interface TodayLevelRead {
   maxExcursionPoints: number | null;
   /** How many times that touch has been checked against price. */
   checks: number | null;
+  /** How many times price reached this line today in total. */
+  touchCount: number;
+  /**
+   * Every touch of this line today, oldest first (bounded), each with its own logged state.
+   *
+   * A line is routinely reached more than once — overnight, at the open, then midday — and the
+   * entry read is exactly where that sequence matters. The latest touch still sets `status` and
+   * `touchedAt`; this list is what lets the coach tell "the first test held" from "the third one
+   * near midday came straight back".
+   */
+  touches: Array<{ at: string; outcome: TouchOutcome }>;
 }
 
 /**
@@ -626,6 +692,12 @@ export interface JournalDigest {
    * the 30-minute ones?".
    */
   levelTimeframes: LevelTimeframesRead;
+  /**
+   * Repetition across the touch record: the same line reached more than once, and the same line
+   * reached on more than one day. The one place the coach can answer "is it the third test of
+   * this line that fails?" or "does this line keep printing on Mondays?".
+   */
+  levelRecurrence: LevelRecurrenceRead;
   /**
    * Today's marked lines, one row each, with what the record says happened at each one.
    *
@@ -1086,6 +1158,53 @@ function buildLevelTimeframes(
   };
 }
 
+/** How many recurring lines the digest carries before the rest are only counted. */
+const MAX_REPEATED_LEVELS = 12;
+
+/**
+ * Turns the touch record into the repetition read the coach reasons about.
+ *
+ * Kept deliberately close to the raw buckets: the digest does not decide what the pattern is,
+ * it hands the counts to the model with the readability floor attached, exactly as the edge
+ * read does. Only lines reached on more than one day become rows; a line reached once is the
+ * ordinary case and not a recurrence.
+ */
+function buildLevelRecurrence(
+  touches: LevelTouch[],
+  instruments: Instrument[],
+  timezone: string
+): LevelRecurrenceRead {
+  const report: LevelRecurrenceReport = summarizeLevelRecurrence(touches, timezone, instruments);
+  const bucket = (read: RecurrenceBucket): LevelRecurrenceBucketRead => ({
+    label: read.label,
+    touches: read.stats.touches,
+    decided: read.stats.decided,
+    holdRate: read.stats.holdRate,
+    enoughData: read.stats.enoughData,
+  });
+
+  const rows: LevelRecurrenceRowRead[] = report.repeatedLevels.map((row) => ({
+    symbol: row.symbol,
+    kind: row.kind,
+    price: row.price,
+    days: row.days,
+    touches: row.touches,
+    weekdays: row.weekdays,
+    decided: row.stats.decided,
+    holdRate: row.stats.holdRate,
+    enoughData: row.stats.enoughData,
+  }));
+
+  return {
+    minDecided: report.minDecided,
+    repeatedLevels: rows.slice(0, MAX_REPEATED_LEVELS),
+    repeatedOmitted: Math.max(0, rows.length - MAX_REPEATED_LEVELS),
+    byOrdinal: report.byOrdinal.map(bucket),
+    byHour: report.byHour.map(bucket),
+    byWeekday: report.byWeekday.map(bucket),
+  };
+}
+
 /** How many of today's lines the digest carries before the rest are only counted. */
 const MAX_TODAY_LEVELS = 48;
 
@@ -1103,9 +1222,17 @@ function buildTodayLevels(
   instruments: Instrument[],
   todayTradeDate: string
 ): TodayLevelsRead {
-  const touchByLevel = new Map<string, LevelTouch>();
+  // Every touch per line, not just the last: a line reached three times has three answers, and
+  // collapsing them into one would hide the sequence the entry read is asking about.
+  const touchesByLevel = new Map<string, LevelTouch[]>();
   for (const touch of touches) {
-    if (touch.levelId) touchByLevel.set(touch.levelId, touch);
+    if (!touch.levelId) continue;
+    const list = touchesByLevel.get(touch.levelId);
+    if (list) list.push(touch);
+    else touchesByLevel.set(touch.levelId, [touch]);
+  }
+  for (const list of touchesByLevel.values()) {
+    list.sort((a, b) => (a.touchedAt ?? a.createdAt).localeCompare(b.touchedAt ?? b.createdAt));
   }
 
   const symbolOf = (level: MarkedLevel) => instrumentSymbol(instruments, level.instrumentId);
@@ -1124,7 +1251,9 @@ function buildTodayLevels(
     });
 
   const rows: TodayLevelRead[] = today.map((level) => {
-    const touch = touchByLevel.get(level.id);
+    const linked = touchesByLevel.get(level.id) ?? [];
+    // The latest touch carries the line's current state; the whole list travels beside it.
+    const touch = linked.length ? linked[linked.length - 1] : undefined;
     return {
       symbol: symbolOf(level),
       timeframe: level.timeframe ?? null,
@@ -1142,6 +1271,11 @@ function buildTodayLevels(
           ? round(touch.maxExcursionPoints)
           : null,
       checks: touch ? touch.checks : null,
+      touchCount: linked.length,
+      touches: linked.slice(-6).map((entry) => ({
+        at: entry.touchedAt ?? entry.createdAt,
+        outcome: entry.outcome,
+      })),
     };
   });
 
@@ -1673,6 +1807,11 @@ export function buildJournalDigest(input: {
     input.levelTouches ?? [],
     instruments
   );
+  const levelRecurrence = buildLevelRecurrence(
+    input.levelTouches ?? [],
+    instruments,
+    input.timezone
+  );
   const todayLevels = buildTodayLevels(
     input.markedLevels ?? [],
     input.levelTouches ?? [],
@@ -1844,6 +1983,7 @@ export function buildJournalDigest(input: {
     behavior,
     levelEdge,
     levelTimeframes,
+    levelRecurrence,
     todayLevels,
     levelOutlooks,
     extremeRead,

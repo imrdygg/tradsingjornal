@@ -2050,6 +2050,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               outlooks: levelOutlooks,
               todayTradingDay,
               instruments: levelInstruments,
+              timezone: profile.timezone,
               onSaveLevels: handleSaveMarkedLevels,
               onDeleteLevel: handleDeleteMarkedLevel,
               onSaveTouch: handleSaveLevelTouch,

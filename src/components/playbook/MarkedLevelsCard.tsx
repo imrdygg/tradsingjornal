@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowDown, ArrowUp, Check, Crosshair, ListPlus, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Check, Crosshair, Layers, ListPlus, Trash2 } from 'lucide-react';
 import {
   Instrument,
   LevelKind,
@@ -21,6 +21,11 @@ import {
   previousLevelDate,
   summarizeTimeframeEdges,
 } from '../../lib/analytics/level-timeframes';
+import {
+  groupTaggedLevels,
+  parsePastedPrices,
+  parseTaggedLevels,
+} from '../../lib/trading/level-paste';
 
 /**
  * Where the trader writes their levels down before any of them is tested.
@@ -115,26 +120,8 @@ const BIAS_STYLE: Record<MarketOutlookBias, { active: string; dot: string; text:
   },
 };
 
-/**
- * Reads a pasted block of prices into the distinct numbers in it.
- *
- * Newlines, commas, spaces, tabs and semicolons all separate, and anything that is not a
- * number is dropped rather than errored on — an indicator copy-paste often carries the line's
- * own wording beside its price, and the trader should not have to clean it by hand. Duplicates
- * collapse, so pasting the same list twice adds nothing the second time.
- */
-export function parsePastedPrices(text: string): number[] {
-  const tokens = text.split(/[\s,;]+/).map((token) => token.trim()).filter(Boolean);
-  const values: number[] = [];
-  for (const token of tokens) {
-    const cleaned = token.replace(/[^0-9.\-]/g, '');
-    const value = parseFloat(cleaned);
-    if (!Number.isFinite(value) || value <= 0) continue;
-    const rounded = Math.round(value * 100) / 100;
-    if (!values.includes(rounded)) values.push(rounded);
-  }
-  return values.sort((a, b) => a - b);
-}
+/** Re-exported so the card's public surface is unchanged; the parser lives in a lib so it can be tested on its own. */
+export { parsePastedPrices } from '../../lib/trading/level-paste';
 
 /** A compact list of prices for the "what changed" line, e.g. "7742.25, 7735". */
 function priceList(prices: number[]): string {
@@ -176,6 +163,12 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
   );
   const [error, setError] = useState('');
   const [added, setAdded] = useState<string | null>(null);
+  /** Whether the paste-all-timeframes box is open. Collapsed by default to keep the card short. */
+  const [bulkOpen, setBulkOpen] = useState(false);
+  /** The bulk paste itself, kept while the trader builds it up across several indicator copies. */
+  const [bulkText, setBulkText] = useState('');
+  /** The side an untagged bulk line falls back to; its timeframe falls back to the open chart. */
+  const [bulkDefaultSide, setBulkDefaultSide] = useState<LevelKind>('support');
 
   // The draft on screen belongs to exactly this instrument and timeframe.
   const draftKey = `${instrumentId}|${timeframe}`;
@@ -209,6 +202,14 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
     setError('');
     setAdded(null);
   };
+
+  // The bulk paste reads against the chart on screen, so an untagged line still lands somewhere
+  // sensible rather than being refused: the open timeframe, and a side picked right there.
+  const bulkPreview = useMemo(
+    () => parseTaggedLevels(bulkText, { timeframe, kind: bulkDefaultSide }),
+    [bulkText, timeframe, bulkDefaultSide]
+  );
+  const bulkGroups = useMemo(() => groupTaggedLevels(bulkPreview.levels), [bulkPreview]);
 
   const touchByLevel = useMemo(() => {
     const map = new Map<string, LevelTouch>();
@@ -382,6 +383,62 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
     setAdded(
       `Added ${batch.length} ${side} level${batch.length === 1 ? '' : 's'} to ` +
         `${symbol} · ${TIMEFRAME_LABEL[timeframe]}. They are listed under Today below.`
+    );
+  };
+
+  /**
+   * Saves every level the bulk paste named, across however many timeframes it covered.
+   *
+   * One write for the whole paste, so a half-applied sweep is not left on the record if the
+   * trader closes the tab mid-save. The chart and side of every line are the ones parsed from
+   * the line itself, or the ones on screen for an untagged line.
+   */
+  const addBulk = () => {
+    setError('');
+    setAdded(null);
+
+    const { levels: parsed, issues } = bulkPreview;
+    if (parsed.length === 0) {
+      setError(
+        issues.length > 0
+          ? `Nothing could be read — “${issues[0].line}” has ${issues[0].reason}.`
+          : 'Paste at least one line with a price, like “5m R 7760”.'
+      );
+      return;
+    }
+
+    const width = zone.trim() === '' ? DEFAULT_ZONE_POINTS : parseFloat(zone);
+    if (!Number.isFinite(width) || width < 0) {
+      setError('The zone width has to be zero or more points.');
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const stamp = Date.now();
+    const batch: MarkedLevel[] = parsed.map((level, index) => ({
+      id: `level-${stamp}-bulk-${index}`,
+      userId: todayTradingDay.userId,
+      tradingDayId: todayTradingDay.id,
+      tradeDate: todayTradingDay.tradeDate,
+      instrumentId,
+      kind: level.kind,
+      timeframe: level.timeframe,
+      price: level.price,
+      zonePoints: Math.round(width * 100) / 100,
+      label: label.trim() || undefined,
+      session,
+      source: 'indicator',
+      createdAt: now,
+      updatedAt: now,
+    }));
+
+    onSaveLevels(batch);
+    setBulkText('');
+    const frames = new Set(batch.map((level) => level.timeframe)).size;
+    setAdded(
+      `Added ${batch.length} level${batch.length === 1 ? '' : 's'} across ${frames} ` +
+        `timeframe${frames === 1 ? '' : 's'} for ${symbol}.` +
+        (issues.length > 0 ? ` ${issues.length} line(s) were skipped.` : '')
     );
   };
 
@@ -753,6 +810,114 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
               )}
             </div>
           ))}
+        </div>
+
+        {/* ---- Bulk paste: all six charts in one box ---- */}
+        <div className="space-y-2 rounded-xl border border-zinc-800 bg-zinc-950/50 p-2.5">
+          <button
+            type="button"
+            id="level-bulk-toggle"
+            aria-expanded={bulkOpen}
+            onClick={() => setBulkOpen((open) => !open)}
+            className="flex w-full items-center justify-between gap-2 text-[11px] font-semibold text-zinc-300 transition-colors hover:text-zinc-100"
+          >
+            <span className="flex items-center gap-1.5">
+              <Layers className="h-3.5 w-3.5 text-indigo-300" />
+              Paste all timeframes at once
+            </span>
+            <span className="text-[10px] font-mono text-zinc-500">
+              {bulkOpen ? 'hide' : 'tag each line'}
+            </span>
+          </button>
+
+          {bulkOpen && (
+            <div className="space-y-2">
+              <p className="text-[10px] leading-relaxed text-zinc-500">
+                One level per line, tags in any order: a timeframe (
+                <span className="font-mono text-zinc-400">1m 3m 5m 15m 30m 1h</span>) and a side (
+                <span className="font-mono text-zinc-400">S</span>/
+                <span className="font-mono text-zinc-400">support</span>,{' '}
+                <span className="font-mono text-zinc-400">R</span>/
+                <span className="font-mono text-zinc-400">resistance</span>) before the price. E.g.{' '}
+                <span className="font-mono text-zinc-400">5m R 7760</span>. An untagged line uses
+                the chart and side below.
+              </p>
+
+              <textarea
+                id="level-bulk-paste"
+                rows={5}
+                value={bulkText}
+                onChange={(event) => {
+                  setBulkText(event.target.value);
+                  setAdded(null);
+                }}
+                placeholder={'5m R 7760\n5m R 7765\n15m S 7700\n30m R 7680\n1h support 7650'}
+                className="w-full resize-y rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-2 font-mono text-xs text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
+              />
+
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[10px] text-zinc-500">Untagged lines are</span>
+                {(['support', 'resistance'] as LevelKind[]).map((side) => (
+                  <button
+                    key={side}
+                    type="button"
+                    id={`level-bulk-default-${side}`}
+                    aria-pressed={bulkDefaultSide === side}
+                    onClick={() => setBulkDefaultSide(side)}
+                    className={`rounded-lg border px-2 py-0.5 text-[10px] font-semibold capitalize transition-colors ${
+                      bulkDefaultSide === side
+                        ? 'border-indigo-500/70 bg-indigo-500/20 text-indigo-200'
+                        : 'border-zinc-800 bg-zinc-950/40 text-zinc-400 hover:text-zinc-200'
+                    }`}
+                  >
+                    {side}
+                  </button>
+                ))}
+                <span className="text-[10px] text-zinc-500">
+                  on {TIMEFRAME_LABEL[timeframe]}.
+                </span>
+              </div>
+
+              {/* What the paste will actually save, grouped, so a mistyped tag is caught first. */}
+              {bulkGroups.length > 0 && (
+                <div id="level-bulk-preview" className="space-y-0.5">
+                  {bulkGroups.map((group) => (
+                    <p
+                      key={`${group.timeframe}|${group.kind}`}
+                      className="text-[10px] text-zinc-400"
+                    >
+                      <span className="font-mono text-zinc-300">
+                        {TIMEFRAME_LABEL[group.timeframe]}
+                      </span>{' '}
+                      · <span className="capitalize">{group.kind}</span> · {group.count}
+                    </p>
+                  ))}
+                </div>
+              )}
+              {bulkPreview.issues.length > 0 && (
+                <div id="level-bulk-issues" className="space-y-0.5">
+                  {bulkPreview.issues.slice(0, 4).map((issue) => (
+                    <p key={issue.line} className="text-[10px] text-amber-300/90">
+                      Skipped “{issue.line}” — {issue.reason}.
+                    </p>
+                  ))}
+                </div>
+              )}
+
+              <button
+                type="button"
+                id="level-bulk-add"
+                disabled={bulkPreview.levels.length === 0}
+                onClick={addBulk}
+                className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-zinc-100 px-3 py-1.5 text-[11px] font-bold text-zinc-950 transition-all hover:bg-white disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <ListPlus className="h-3.5 w-3.5" />
+                {bulkPreview.levels.length === 0
+                  ? 'Save all levels'
+                  : `Save all ${bulkPreview.levels.length} level${bulkPreview.levels.length === 1 ? '' : 's'}`}
+              </button>
+            </div>
+          )}
         </div>
 
         <p className="text-[10px] text-zinc-500">

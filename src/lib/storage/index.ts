@@ -1211,18 +1211,22 @@ export const storage = {
    * Adds a batch of levels at once, which is how the indicator's lines arrive.
    *
    * Re-pasting the same lines must not pile up duplicates, so a level whose day, instrument,
-   * side and price are already on the record is skipped rather than added a second time. The
-   * list is returned rather than only written because the caller shows what was actually
-   * kept.
+   * side, timeframe and price are already on the record is skipped rather than added a second
+   * time. The timeframe is part of that key on purpose: the same price can be a real support line
+   * on the 5m chart and again on the 1h chart, and the two are different records — the trader
+   * marks each chart separately. The list is returned rather than only written because the
+   * caller shows what was actually kept.
    */
   saveMarkedLevels(levels: MarkedLevel[]): MarkedLevel[] {
     const existing = this.getMarkedLevels();
-    const seen = new Set(
-      existing.map((level) => `${level.tradingDayId}|${level.instrumentId}|${level.kind}|${level.price}`)
-    );
+    // Legacy levels marked before timeframes existed carry none; `''` buckets them together
+    // rather than letting a missing label collide with a real chart.
+    const keyOf = (level: MarkedLevel) =>
+      `${level.tradingDayId}|${level.instrumentId}|${level.timeframe ?? ''}|${level.kind}|${level.price}`;
+    const seen = new Set(existing.map(keyOf));
     const added: MarkedLevel[] = [];
     for (const level of levels) {
-      const key = `${level.tradingDayId}|${level.instrumentId}|${level.kind}|${level.price}`;
+      const key = keyOf(level);
       if (seen.has(key)) continue;
       seen.add(key);
       added.push(level);

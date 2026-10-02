@@ -4,7 +4,11 @@ import {
   Lesson,
   CoachPlan,
   LevelKind,
+  LevelOutlook,
+  LevelTimeframe,
   LevelTouch,
+  MarkedLevel,
+  MarketOutlookBias,
   QuestionAnswer,
   SessionExtreme,
   Setup,
@@ -27,9 +31,11 @@ import {
 import {
   findLevelEdges,
   MIN_DECIDED,
+  summarizeMarkedLevels,
   summarizeTouches,
   type LevelEdgeBucket,
 } from '../analytics/level-edge';
+import { summarizeTimeframeEdges, type TimeframeEdgeBucket } from '../analytics/level-timeframes';
 import {
   buildDaysByTimeframe,
   buildOvernightHourPatterns,
@@ -160,6 +166,74 @@ export interface LevelEdge {
   thinConditions: LevelEdgeBucket[];
   /** The most recent touches, so the coach can talk about specific levels. */
   recentTouches: DigestLevelTouch[];
+}
+
+/**
+ * One instrument, chart and side of the marked-level record, as the coach reads it.
+ *
+ * Unlike a {@link LevelEdgeBucket}, which is scoped to a session or a label, this row is scoped
+ * to a timeframe — which chart the trader's indicator drew the line on. It carries the mark and
+ * test counts alongside the touch stats, because the two questions are different: how many of
+ * the lines were reached at all, and what happened when they were.
+ */
+export interface LevelTimeframeRow {
+  symbol: string;
+  /** Null when the level was marked before timeframes existed, so nothing is invented. */
+  timeframe: LevelTimeframe | null;
+  kind: LevelKind;
+  marked: number;
+  tested: number;
+  untested: number;
+  testRate: number | null;
+  /** Decided touches among the tested lines. */
+  decided: number;
+  /** Share of those decided touches where price never came back, or null while none is decided. */
+  holdRate: number | null;
+  watching: number;
+}
+
+/**
+ * The marked-level record by timeframe, with the coverage that only exists because the lines
+ * were written down before they were touched.
+ *
+ * The trader marks support and resistance on six resolutions for four instruments every day.
+ * `tested` counts the marked lines a touch links back to; `untested` is the rest. A low test
+ * rate is a fact about the trader's attention — lines they marked and never reached — and it is
+ * deliberately kept apart from any hold rate, because the two are answers to different
+ * questions and merging them would turn "never reached" into "did not hold".
+ */
+export interface LevelTimeframesRead {
+  /** Every level marked, across all days on the record. */
+  marked: number;
+  /** Marked levels a touch links back to. */
+  tested: number;
+  /** Marked levels nothing has been logged against. */
+  untested: number;
+  /** Tested / marked as a percentage, or null while nothing is marked. */
+  testRate: number | null;
+  /** The busiest instrument/timeframe/side rows, tested lines first. */
+  rows: LevelTimeframeRow[];
+  /** Rows beyond the bounded sample above, so the coach knows it is not seeing everything. */
+  rowsOmitted: number;
+}
+
+/**
+ * What the trader expected each instrument to do, written beside the levels it goes with.
+ *
+ * Per instrument on purpose: MES can lean up while MCL leans down, and collapsing them into one
+ * note for the day would throw away the disagreement the trader is trying to track. The previous
+ * lean travels too, so a changed read is visible without the coach having to ask for history.
+ */
+export interface LevelOutlookRead {
+  /** Today's leans, one per instrument the trader wrote one for. */
+  today: Array<{ symbol: string; bias: MarketOutlookBias; notes: string | null }>;
+  /** The most recent earlier lean per instrument, oldest first, so a change is visible. */
+  previous: Array<{
+    symbol: string;
+    date: string;
+    bias: MarketOutlookBias;
+    notes: string | null;
+  }>;
 }
 
 /**
@@ -489,6 +563,17 @@ export interface JournalDigest {
    * the coach can answer "which of my break-and-run conditions actually hold?".
    */
   levelEdge: LevelEdge;
+  /**
+   * The same record by timeframe: which chart the line came off, and whether it was ever
+   * reached. The one place the coach can answer "do the 5-minute lines get tested more than
+   * the 30-minute ones?".
+   */
+  levelTimeframes: LevelTimeframesRead;
+  /**
+   * What the trader expected each instrument to do, written down before the session. Read as
+   * the trader's own opinion, never as a market fact.
+   */
+  levelOutlooks: LevelOutlookRead;
   /**
    * The last seven days, one setup at a time: what its trades did and what its levels did.
    *
@@ -893,6 +978,82 @@ function buildLevelEdge(
   };
 }
 
+/** How many timeframe rows the digest carries before the rest are only counted. */
+const MAX_LEVEL_TIMEFRAME_ROWS = 24;
+
+/**
+ * Turns the marked levels into the timeframe record the coach reasons about.
+ *
+ * The row cap is deliberate and reported: a full day of levels across four instruments, six
+ * timeframes and two sides is a lot of rows, and a prompt that silently dropped the tail would
+ * let the coach claim it had seen everything. `rowsOmitted` says how many were left out.
+ */
+function buildLevelTimeframes(
+  levels: MarkedLevel[],
+  touches: LevelTouch[],
+  instruments: Instrument[]
+): LevelTimeframesRead {
+  const coverage = summarizeMarkedLevels(levels, touches);
+  const buckets = summarizeTimeframeEdges(levels, touches);
+  const rows: LevelTimeframeRow[] = buckets.map((bucket) => ({
+    symbol: instrumentSymbol(instruments, bucket.instrumentId),
+    timeframe: bucket.timeframe,
+    kind: bucket.kind,
+    marked: bucket.marked,
+    tested: bucket.tested,
+    untested: bucket.untested,
+    testRate: bucket.testRate,
+    decided: bucket.stats.decided,
+    holdRate: bucket.stats.holdRate,
+    watching: bucket.stats.watching,
+  }));
+
+  return {
+    marked: coverage.marked,
+    tested: coverage.tested,
+    untested: coverage.untested,
+    testRate: coverage.testRate,
+    rows: rows.slice(0, MAX_LEVEL_TIMEFRAME_ROWS),
+    rowsOmitted: Math.max(0, rows.length - MAX_LEVEL_TIMEFRAME_ROWS),
+  };
+}
+
+/**
+ * Turns the daily outlooks into the read the coach reasons about.
+ *
+ * Today's leans are the ones being tested by the session, so they lead; the most recent earlier
+ * lean per instrument rides along beside them so a change of mind is visible. Both are the
+ * trader's own words, quoted back rather than interpreted.
+ */
+function buildLevelOutlooks(
+  outlooks: LevelOutlook[],
+  instruments: Instrument[],
+  todayTradeDate: string
+): LevelOutlookRead {
+  const today = outlooks.filter((outlook) => outlook.tradeDate === todayTradeDate);
+
+  const latestEarlier = new Map<string, LevelOutlook>();
+  for (const outlook of [...outlooks]
+    .filter((entry) => entry.tradeDate < todayTradeDate)
+    .sort((a, b) => a.tradeDate.localeCompare(b.tradeDate))) {
+    latestEarlier.set(outlook.instrumentId, outlook);
+  }
+
+  return {
+    today: today.map((outlook) => ({
+      symbol: instrumentSymbol(instruments, outlook.instrumentId),
+      bias: outlook.bias,
+      notes: trimWord(outlook.notes),
+    })),
+    previous: [...latestEarlier.values()].map((outlook) => ({
+      symbol: instrumentSymbol(instruments, outlook.instrumentId),
+      date: outlook.tradeDate,
+      bias: outlook.bias,
+      notes: trimWord(outlook.notes),
+    })),
+  };
+}
+
 export /**
  * Turns the raw session-extreme log into the hour tally the coach reasons about.
  *
@@ -1111,6 +1272,19 @@ export function buildJournalDigest(input: {
    * builds a digest; absent is read as "nothing logged", never as a rate of zero.
    */
   levelTouches?: LevelTouch[];
+  /**
+   * The prices the trader marked before any of them was touched, with their timeframes.
+   *
+   * Optional for the same reason as the touches above: absent is read as "nothing marked",
+   * never as a test rate of zero.
+   */
+  markedLevels?: MarkedLevel[];
+  /**
+   * The trader's own daily read of each instrument — bullish, bearish or neutral.
+   *
+   * Optional: absent is read as "no outlook written", never as neutral.
+   */
+  levelOutlooks?: LevelOutlook[];
   /**
    * The trader's session-extreme log: where each session's high and low printed on the
    * clock, overnight and regular, for the instruments they trade.
@@ -1359,6 +1533,16 @@ export function buildJournalDigest(input: {
   }
   // ---- The break-and-run record -------------------------------------------
   const levelEdge = buildLevelEdge(input.levelTouches ?? [], instruments, setups);
+  const levelTimeframes = buildLevelTimeframes(
+    input.markedLevels ?? [],
+    input.levelTouches ?? [],
+    instruments
+  );
+  const levelOutlooks = buildLevelOutlooks(
+    input.levelOutlooks ?? [],
+    instruments,
+    todayTradeDate
+  );
 
   // ---- Where the session extremes printed --------------------------------
   const extremeRead = buildExtremeRead(input.sessionExtremes ?? [], todayTradeDate);
@@ -1518,6 +1702,8 @@ export function buildJournalDigest(input: {
     recentForm,
     behavior,
     levelEdge,
+    levelTimeframes,
+    levelOutlooks,
     extremeRead,
     lessonRead,
     coachPlanRead,

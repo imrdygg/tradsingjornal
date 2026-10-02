@@ -12,7 +12,9 @@ import {
   CoachPlan,
   DailyReview,
   Instrument,
+  LevelOutlook,
   LevelTouch,
+  MarkedLevel,
   SessionExtreme,
   Setup,
   Trade,
@@ -71,6 +73,10 @@ interface CoachViewProps {
   maxDrawdown?: number | null;
   /** The level-touch log, so the coach can find the break-and-run edge. */
   levelTouches: LevelTouch[];
+  /** The levels the trader marked, so the coach knows which lines were never tested. */
+  markedLevels?: MarkedLevel[];
+  /** What the trader expected each instrument to do today, written beside its levels. */
+  levelOutlooks?: LevelOutlook[];
   /** The session-extreme log, so the coach can read where the highs and lows printed. */
   sessionExtremes: SessionExtreme[];
   /**
@@ -140,6 +146,8 @@ export const CoachView: React.FC<CoachViewProps> = ({
   timezone,
   maxDrawdown,
   levelTouches,
+  markedLevels,
+  levelOutlooks,
   sessionExtremes,
   onViewTrade,
   chartSearches,
@@ -161,6 +169,10 @@ export const CoachView: React.FC<CoachViewProps> = ({
         maxDrawdown,
         timezone,
         levelTouches,
+        // The marked lines and the day's outlooks travel with every read, so a read can say
+        // which timeframes the trader watches and what they expected, not only what held.
+        markedLevels,
+        levelOutlooks,
         sessionExtremes,
         // The trader's grades of the coach's own plans travel with these reads too, so the
         // feedback shapes the brief and the reviews, not only the next self-plan.
@@ -176,6 +188,8 @@ export const CoachView: React.FC<CoachViewProps> = ({
       timezone,
       maxDrawdown,
       levelTouches,
+      markedLevels,
+      levelOutlooks,
       sessionExtremes,
       coachPlans,
     ]

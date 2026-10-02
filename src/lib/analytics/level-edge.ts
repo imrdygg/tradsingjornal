@@ -1,4 +1,4 @@
-import { LevelKind, LevelTouch, TradingSession } from '../../types';
+import { LevelKind, LevelTouch, MarkedLevel, TradingSession } from '../../types';
 
 /**
  * The level-touch edge, as pure numbers.
@@ -301,4 +301,53 @@ export function findLevelEdges(
       if (rateA !== rateB) return rateB - rateA;
       return b.stats.decided - a.stats.decided;
     });
+}
+
+/**
+ * How much of the trader's marked-level record their touches account for.
+ *
+ * The hold rate above answers "when a level is tested, does price come back?". This answers
+ * the question underneath it: **how many of the levels the trader marked were ever tested at
+ * all?** A trader whose indicator offers six lines and who only ever trades two is leaving
+ * four out of the record entirely, and that only becomes visible when the lines are written
+ * down before anything touches them.
+ *
+ * `testedStats` is deliberately computed over the touches that came from a marked level, not
+ * over every touch — so the rate it reports is "of the levels I marked and actually reached,
+ * how many held", with the untouched ones carried as their own count rather than folded into a
+ * rate they do not belong in. A level is treated as tested when a touch links back to it; a
+ * touch with no level behind it belongs to the older, mark-as-you-go record and is left out
+ * of both counts here, though it still counts in {@link findLevelEdges}.
+ */
+export interface MarkedLevelCoverage {
+  /** Every level the trader marked. */
+  marked: number;
+  /** Marked levels that price reached and were logged as a touch. */
+  tested: number;
+  /** Marked levels nothing has been logged against yet. */
+  untested: number;
+  /** Tested / marked as a percentage, or null while nothing has been marked. */
+  testRate: number | null;
+  /** The record of the tested levels alone, so its hold rate excludes the untouched. */
+  testedStats: LevelEdgeStats;
+}
+
+export function summarizeMarkedLevels(
+  levels: MarkedLevel[],
+  touches: LevelTouch[],
+  minDecided = MIN_DECIDED
+): MarkedLevelCoverage {
+  const levelIds = new Set(levels.map((level) => level.id));
+  const linked = touches.filter((touch) => touch.levelId && levelIds.has(touch.levelId));
+  const testedIds = new Set(linked.map((touch) => touch.levelId));
+  const marked = levels.length;
+  const tested = testedIds.size;
+
+  return {
+    marked,
+    tested,
+    untested: marked - tested,
+    testRate: marked > 0 ? round((tested / marked) * 100, 1) : null,
+    testedStats: summarizeTouches(linked, minDecided),
+  };
 }

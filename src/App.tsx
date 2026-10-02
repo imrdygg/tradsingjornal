@@ -12,6 +12,7 @@ import { TodaySummary } from './components/today/TodaySummary';
 import { ImportantLevelsEditor } from './components/today/ImportantLevelsEditor';
 import { GlobalSearch } from './components/common/GlobalSearch';
 import { CollapsibleSection } from './components/common/CollapsibleSection';
+import { FeedbackModal } from './components/common/FeedbackModal';
 import { TradeCard } from './components/trades/TradeCard';
 import { TradeFormModal } from './components/trades/TradeFormModal';
 import { TradeCloseModal } from './components/trades/TradeCloseModal';
@@ -101,6 +102,9 @@ import {
   Lesson,
   CoachPlan,
   ImportantLevel,
+  FeedbackNote,
+  MarkedLevel,
+  LevelOutlook,
 } from './types';
 import type { SyncStatus } from './components/layout/SyncStatusBadge';
 import { storage, dismissStorageFailure, measureJournalBytes } from './lib/storage';
@@ -123,7 +127,7 @@ import {
   assessRiskCapacity,
   estimateStopDistance,
 } from './lib/analytics/risk-capacity';
-import { findInstrument } from './lib/trading/instruments';
+import { findInstrument, trackedLevelInstruments } from './lib/trading/instruments';
 import { Plus, Award, Sparkles, Layers, Activity, Target, Cloud, CloudOff, Loader2 } from 'lucide-react';
 
 function AuthScreen() {
@@ -216,6 +220,16 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   const [levelTouches, setLevelTouches] = useState<LevelTouch[]>(() =>
     storage.getLevelTouches()
   );
+  // The levels the trader marked before any of them was touched. Held with the journal so a
+  // marked line is saved and carried between devices by the same debounced write.
+  const [markedLevels, setMarkedLevels] = useState<MarkedLevel[]>(() =>
+    storage.getMarkedLevels()
+  );
+  // What the trader expects each instrument to do today, written beside the levels. Held with
+  // the journal so a written lean is saved and carried between devices by the same write.
+  const [levelOutlooks, setLevelOutlooks] = useState<LevelOutlook[]>(() =>
+    storage.getLevelOutlooks()
+  );
   // Where each session's extremes printed on the clock. The trader's own record, held with
   // the rest of the state so it is saved and synced by the same debounced write.
   const [sessionExtremes, setSessionExtremes] = useState<SessionExtreme[]>(() =>
@@ -233,6 +247,9 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   // the journal so a plan and its grade are saved and carried between devices by the same
   // debounced write.
   const [coachPlans, setCoachPlans] = useState<CoachPlan[]>(() => storage.getCoachPlans());
+  // The trader's own notes about what needs fixing in the app. Held with the journal so they
+  // are saved and carried between devices by the same debounced write as everything else.
+  const [feedback, setFeedback] = useState<FeedbackNote[]>(() => storage.getFeedback());
 
   const [activeTab, setActiveTab] = useState<NavTab>('today');
 
@@ -281,6 +298,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   const [isCloseModalOpen, setIsCloseModalOpen] = useState(false);
   const [closingTrade, setClosingTrade] = useState<Trade | null>(null);
   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
+  const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
   // Trade detail view is stored as an id so it re-renders from live state and
   // immediately reflects a saved execution review.
   const [viewingTradeId, setViewingTradeId] = useState<string | null>(null);
@@ -312,10 +330,13 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       reviews,
       patternStudies,
       levelTouches,
+      markedLevels,
+      levelOutlooks,
       sessionExtremes,
       chartSearches,
       lessons,
       coachPlans,
+      feedback,
       lessonAck,
     }),
     [
@@ -327,10 +348,13 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       reviews,
       patternStudies,
       levelTouches,
+      markedLevels,
+      levelOutlooks,
       sessionExtremes,
       chartSearches,
       lessons,
       coachPlans,
+      feedback,
       lessonAck,
     ]
   );
@@ -364,10 +388,13 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       setReviews(next.reviews);
       setPatternStudies(next.patternStudies ?? []);
       setLevelTouches(next.levelTouches ?? []);
+      setMarkedLevels(next.markedLevels ?? []);
+      setLevelOutlooks(next.levelOutlooks ?? []);
       setSessionExtremes(next.sessionExtremes ?? []);
       setChartSearches(next.chartSearches ?? []);
       setLessons(next.lessons ?? []);
       setCoachPlans(next.coachPlans ?? []);
+      setFeedback(next.feedback ?? []);
       setLessonAck(next.lessonAck ?? null);
     },
     [userId]
@@ -526,6 +553,14 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   const riskTiers = useMemo(() => riskTierAmounts(profile), [profile]);
 
   /**
+   * The instruments the level cards offer.
+   *
+   * The trade catalog plus any levels-only symbol (VIX), kept apart from `instruments` so a
+   * symbol the account cannot hold never reaches the trade form or a P&L calculation.
+   */
+  const levelInstruments = useMemo(() => trackedLevelInstruments(instruments), [instruments]);
+
+  /**
    * Coach calls still waiting on the trader — ungraded, or with no result marked.
    *
    * Held here rather than in the shell so the header only learns a number, and derived from
@@ -534,6 +569,12 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   const pendingCoachCalls = useMemo(
     () => summariseCoachPlanPending(coachPlans).pending,
     [coachPlans]
+  );
+
+  /** How many feedback notes are still open — the number the header badge shows. */
+  const openFeedbackCount = useMemo(
+    () => feedback.filter((note) => note.status === 'open').length,
+    [feedback]
   );
 
   // Today's Trades
@@ -1022,6 +1063,26 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   };
 
   /**
+   * Writes down the batch of levels the trader marked for today.
+   *
+   * Storage skips a level whose day, instrument, side and price are already on the record,
+   * so pasting the same indicator lines twice adds nothing the second time — the state is
+   * read back rather than appended here, so the card and the record cannot disagree.
+   */
+  const handleSaveMarkedLevels = (batch: MarkedLevel[]) => {
+    setMarkedLevels(storage.saveMarkedLevels(batch));
+  };
+
+  const handleDeleteMarkedLevel = (levelId: string) => {
+    setMarkedLevels(storage.deleteMarkedLevel(levelId));
+  };
+
+  /** Writes or edits today's outlook for one instrument. */
+  const handleSaveLevelOutlook = (outlook: LevelOutlook) => {
+    setLevelOutlooks(storage.saveLevelOutlook(outlook));
+  };
+
+  /**
    * Records one session extreme.
    *
    * Storage upserts by slot as well as by id, so re-logging the same symbol, date, kind and
@@ -1084,6 +1145,43 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
 
   const handleDeleteCoachPlan = (planId: string) => {
     setCoachPlans(storage.deleteCoachPlan(planId));
+  };
+
+  /**
+   * Writes down one note about the app itself, in the trader's own words.
+   *
+   * The tab they were looking at rides along as context, so a note like "this is in the
+   * wrong place" can be found again weeks later with the screen it was about.
+   */
+  const handleAddFeedback = (text: string, context?: string) => {
+    const now = new Date().toISOString();
+    setFeedback(
+      storage.saveFeedback({
+        id: `feedback-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        userId: profile.id,
+        text,
+        context,
+        status: 'open',
+        createdAt: now,
+        updatedAt: now,
+      })
+    );
+  };
+
+  /** Marks a note fixed, or reopens one that was. */
+  const handleToggleFeedbackStatus = (note: FeedbackNote) => {
+    const fixed = note.status !== 'fixed';
+    setFeedback(
+      storage.saveFeedback({
+        ...note,
+        status: fixed ? 'fixed' : 'open',
+        resolvedAt: fixed ? new Date().toISOString() : undefined,
+      })
+    );
+  };
+
+  const handleDeleteFeedback = (id: string) => {
+    setFeedback(storage.deleteFeedback(id));
   };
 
   const handleDeleteChartSearch = (searchId: string) => {
@@ -1744,28 +1842,6 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             // trades that observation was counted from.
             focus={tradeFocus}
             onClearFocus={() => setTradeFocus(null)}
-            // The picture search lives with the log: hand it a chart, get back the trades
-            // in this same history that look like it.
-            chartMatch={{
-              trades,
-              tradingDays,
-              reviews,
-              setups,
-              instruments,
-              todayTradeDate: todayTradingDay.tradeDate,
-              timezone: profile.timezone,
-              maxDrawdown: profile.maxDrawdown ?? null,
-              levelTouches,
-              coachPlans,
-              onViewTrade: (t) => setViewingTradeId(t.id),
-              chartSearches,
-              onSaveChartSearch: handleSaveChartSearch,
-              onDeleteChartSearch: handleDeleteChartSearch,
-              // The picture search can name a setup from the chart it was handed; the
-              // drafts land in the playbook exactly as the playbook's own read leaves them.
-              onAddSetups: (drafts) => drafts.forEach(handleAddSetup),
-              userId,
-            }}
           />
         );
 
@@ -1829,6 +1905,8 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             timezone={profile.timezone}
             maxDrawdown={profile.maxDrawdown ?? null}
             levelTouches={levelTouches}
+            markedLevels={markedLevels}
+            levelOutlooks={levelOutlooks}
             sessionExtremes={sessionExtremes}
             // A trade the picture search matches opens from here like it does from the log.
             onViewTrade={(t) => setViewingTradeId(t.id)}
@@ -1910,6 +1988,11 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               timezone: profile.timezone,
               maxDrawdown: profile.maxDrawdown ?? null,
               levelTouches,
+              // The marked levels travel with the read so the finder can report how many of
+              // the trader's own lines were ever tested, not only how the tested ones held,
+              // and the level instruments label VIX and the rest in that breakdown.
+              markedLevels,
+              levelInstruments,
               coachPlans,
             }}
             coachSetups={{
@@ -1931,28 +2014,20 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               onSave: handleSaveLevelTouch,
               onDelete: handleDeleteLevelTouch,
             }}
-            // The same picture search the log carries, so a setup found here can be chased
-            // back through the trades that produced it without leaving the playbook.
-            chartMatch={{
-              trades,
-              tradingDays,
-              reviews,
-              setups,
-              instruments,
-              todayTradeDate: todayTradingDay.tradeDate,
-              timezone: profile.timezone,
-              maxDrawdown: profile.maxDrawdown ?? null,
-              levelTouches,
-              coachPlans,
-              onViewTrade: (t) => setViewingTradeId(t.id),
-              chartSearches,
-              onSaveChartSearch: handleSaveChartSearch,
-              onDeleteChartSearch: handleDeleteChartSearch,
-              // The picture search can name a setup from the chart it was handed; the
-              // drafts land in the playbook exactly as the playbook's own read leaves them.
-              onAddSetups: (drafts) => drafts.forEach(handleAddSetup),
-              userId,
+            // The levels are marked before the touches exist: the card above the log writes
+            // the indicator's lines down, and tapping one logs the touch it produces.
+            markedLevels={{
+              levels: markedLevels,
+              touches: levelTouches,
+              outlooks: levelOutlooks,
+              todayTradingDay,
+              instruments: levelInstruments,
+              onSaveLevels: handleSaveMarkedLevels,
+              onDeleteLevel: handleDeleteMarkedLevel,
+              onSaveTouch: handleSaveLevelTouch,
+              onSaveOutlook: handleSaveLevelOutlook,
             }}
+            userId={userId}
             lessons={lessons}
             onSaveLesson={handleSaveLesson}
             onDeleteLesson={handleDeleteLesson}
@@ -2023,6 +2098,8 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       lastSyncedAt={lastSyncedAt}
       onRetrySync={retrySave}
       pendingCalls={pendingCoachCalls}
+      onOpenFeedback={() => setIsFeedbackOpen(true)}
+      feedbackCount={openFeedbackCount}
     >
       {storageFailure && (
         <StorageWarningBanner
@@ -2112,6 +2189,18 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
         trades={todayTrades}
         existingReview={todayReview}
         onSaveReview={handleSaveDailyReview}
+      />
+
+      {/* The trader's own notes about what needs fixing in the app. */}
+      <FeedbackModal
+        isOpen={isFeedbackOpen}
+        onClose={() => setIsFeedbackOpen(false)}
+        notes={feedback}
+        onAdd={handleAddFeedback}
+        onToggleStatus={handleToggleFeedbackStatus}
+        onDelete={handleDeleteFeedback}
+        context={activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}
+        timezone={profile.timezone}
       />
 
     </AppShell>

@@ -20,12 +20,13 @@ import {
   Sparkles,
 } from 'lucide-react';
 import {
-  ChartSearch,
   CoachPlan,
   DailyReview,
   Instrument,
   Lesson,
+  LevelOutlook,
   LevelTouch,
+  MarkedLevel,
   PatternStudy,
   SessionExtreme,
   Setup,
@@ -43,7 +44,7 @@ import { LessonsView } from './LessonsView';
 import { CoachLessonsCard } from './CoachLessonsCard';
 import { EdgeFinderCard } from './EdgeFinderCard';
 import { CoachSetupsCard } from './CoachSetupsCard';
-import { ChartMatchCard } from '../trades/ChartMatchCard';
+import { MarkedLevelsCard } from './MarkedLevelsCard';
 import { LevelTouchLog } from './LevelTouchLog';
 import { isFocusSetup, splitFocusSetups } from '../../lib/playbook/focus-setups';
 import { PATTERNS } from '../../lib/playbook/patterns';
@@ -89,6 +90,10 @@ interface PlaybookViewProps {
     timezone: string;
     maxDrawdown?: number | null;
     levelTouches: LevelTouch[];
+    /** The marked levels, so the finder can report how many of them were tested. */
+    markedLevels?: MarkedLevel[];
+    /** The tracked level instruments, including any levels-only symbol like VIX. */
+    levelInstruments?: Instrument[];
     /** The trader's grades of the coach's own plans, carried into the read's digest. */
     coachPlans?: CoachPlan[];
   };
@@ -122,30 +127,24 @@ interface PlaybookViewProps {
     onDelete: (touchId: string) => void;
   };
   /**
-   * The journal the picture search reads: hand it a chart, get back the trader's own trades
-   * that look like it. Omitted hides the card, the same way `coachSetups` does.
+   * The levels the trader marked before any of them was touched. Sits above the touch log, so
+   * the flow reads in the order it happens: write the lines down, tap the one price reached,
+   * then decide it. Omitted hides the card.
    */
-  chartMatch?: {
-    trades: Trade[];
-    tradingDays: TradingDay[];
-    reviews: DailyReview[];
-    setups: Setup[];
+  markedLevels?: {
+    levels: MarkedLevel[];
+    touches: LevelTouch[];
+    outlooks: LevelOutlook[];
+    todayTradingDay: TradingDay;
+    /** The tracked level instruments, including any levels-only symbol like VIX. */
     instruments: Instrument[];
-    todayTradeDate: string;
-    timezone: string;
-    maxDrawdown?: number | null;
-    levelTouches?: LevelTouch[];
-    onViewTrade: (trade: Trade) => void;
-    /** The saved searches the card's history reads. Omitted hides the history. */
-    chartSearches?: ChartSearch[];
-    onSaveChartSearch?: (search: ChartSearch) => void;
-    onDeleteChartSearch?: (id: string) => void;
-    /** Writes coach-named setups from the picture search into the playbook. */
-    onAddSetups?: (setups: Setup[]) => void;
-    userId?: string;
-    /** The trader's grades of the coach's own plans, carried into the read's digest. */
-    coachPlans?: CoachPlan[];
+    onSaveLevels: (levels: MarkedLevel[]) => void;
+    onDeleteLevel: (levelId: string) => void;
+    onSaveTouch: (touch: LevelTouch) => void;
+    onSaveOutlook: (outlook: LevelOutlook) => void;
   };
+  /** The account a lesson written from this tab belongs to. */
+  userId?: string;
   /**
    * The lessons the trader wrote for themselves: the library they build up, and the handlers
    * for adding, editing and deleting one. Always set by the app; omitting it leaves the
@@ -213,7 +212,8 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
   edgeFinder,
   coachSetups,
   levelTouchLog,
-  chartMatch,
+  markedLevels,
+  userId,
   lessons = [],
   onSaveLesson,
   onDeleteLesson,
@@ -471,7 +471,7 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
           <LessonsView
             lessons={lessons}
             setups={setups}
-            userId={chartMatch?.userId ?? ''}
+            userId={userId ?? ''}
             onSave={(lesson) => onSaveLesson?.(lesson)}
             onDelete={(lessonId) => onDeleteLesson?.(lessonId)}
             jumpRequest={lessonJump}
@@ -524,6 +524,14 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
       {/* The coach's edge finder, fed by the level-touch journal. */}
       {edgeFinder && <EdgeFinderCard setups={setups} {...edgeFinder} />}
 
+      {/*
+        The levels themselves, written down before any of them is touched.
+
+        Placed above the touch log so the two read in the order they happen: mark the lines,
+        tap the one price reached, then decide the touch below.
+      */}
+      {markedLevels && <MarkedLevelsCard {...markedLevels} />}
+
       {/* Where the touches the edge finder reads are logged, and how they ended. */}
       {levelTouchLog && <LevelTouchLog {...levelTouchLog} />}
 
@@ -535,9 +543,6 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
           {...coachSetups}
         />
       )}
-
-      {/* The picture search: hand it a chart, get back the trader's own trades like it. */}
-      {chartMatch && <ChartMatchCard {...chartMatch} />}
 
       {/* Quick add setup form */}
       <form onSubmit={handleAddSetup} className="space-y-2">

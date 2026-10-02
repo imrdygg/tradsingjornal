@@ -100,6 +100,62 @@ export const DEFAULT_INSTRUMENTS: Instrument[] = [
 export const TRACKED_EXTREME_SYMBOLS: readonly string[] = ['MES', 'MNQ', 'MCL'];
 
 /**
+ * The instruments whose support and resistance lines the trader marks, every day.
+ *
+ * Their three tradable contracts plus VIX, which they read but do not trade. Kept as its own
+ * list rather than added to the catalog above, because the catalog is what the trade form and
+ * the P&L read from — a levels-only symbol must never appear there and be mistaken for
+ * something the account can hold.
+ */
+export const TRACKED_LEVEL_SYMBOLS: readonly string[] = ['MES', 'MNQ', 'MCL', 'VIX'];
+
+/**
+ * Levels-only instruments that are not in the trade catalog.
+ *
+ * Given a zero point value on purpose: nothing here can be priced or traded, so if one ever
+ * reached a trade calculation it would contribute nothing rather than inventing a figure.
+ */
+export const LEVEL_ONLY_INSTRUMENTS: Instrument[] = [
+  {
+    id: 'vix',
+    symbol: 'VIX',
+    name: 'CBOE Volatility Index',
+    pointValue: 0,
+    tickSize: 0.01,
+    tickValue: 0,
+    active: true,
+  },
+];
+
+/**
+ * The instruments the level-marking card offers, in a fixed order: the trader's four.
+ *
+ * The journal's own entry wins whenever the catalog holds the symbol, so a corrected name or
+ * an added contract is respected; a symbol the catalog does not hold falls back to the
+ * built-in definition, and VIX to its levels-only one. Mirrors `trackedExtremeInstruments`
+ * for the same reason: this card exists to record these four specifically and must not depend
+ * on a catalog migration having delivered them.
+ */
+export function trackedLevelInstruments(instruments: Instrument[]): Instrument[] {
+  const bySymbol = new Map<string, Instrument>();
+  for (const instrument of instruments) {
+    bySymbol.set(instrument.symbol.trim().toUpperCase(), instrument);
+  }
+
+  const tracked: Instrument[] = [];
+  for (const symbol of TRACKED_LEVEL_SYMBOLS) {
+    const key = symbol.toUpperCase();
+    const chosen =
+      bySymbol.get(key) ??
+      DEFAULT_INSTRUMENTS.find((item) => item.symbol.toUpperCase() === key) ??
+      LEVEL_ONLY_INSTRUMENTS.find((item) => item.symbol.toUpperCase() === key);
+    if (chosen && !tracked.some((existing) => existing.id === chosen.id)) tracked.push(chosen);
+  }
+
+  return tracked.length ? tracked : instruments;
+}
+
+/**
  * The tracked instruments to offer in the extremes log, in the order they are logged.
  *
  * The journal's own entry is used whenever the catalog holds it, so a trader who corrected a

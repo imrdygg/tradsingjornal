@@ -16,20 +16,10 @@ import {
   Percent,
   ImageIcon,
 } from 'lucide-react';
-import {
-  ChartSearch,
-  CoachPlan,
-  DailyReview,
-  LevelTouch,
-  Trade,
-  TradingDay,
-  Setup,
-  Instrument,
-} from '../../types';
+import { Trade, TradingDay, Setup, Instrument } from '../../types';
 import { TradeCard } from './TradeCard';
 import { CoachEntryCallBadge } from './CoachEntryCallBadge';
 import { SetupBoard } from './SetupBoard';
-import { ChartMatchCard } from './ChartMatchCard';
 import { calculateSetupBreakdown } from '../../lib/analytics/aggregations';
 import { buildEquitySequence } from '../../lib/analytics/insights-series';
 import type { EquityPoint } from '../../lib/analytics/insights-series';
@@ -61,31 +51,6 @@ interface TradesViewProps {
   focus?: { label: string; tradeIds: string[] } | null;
   /** Drops the handed-over focus. */
   onClearFocus?: () => void;
-  /**
-   * The journal the picture search reads. Omitted hides the card, so the log still renders
-   * for a caller with nothing to search.
-   */
-  chartMatch?: {
-    trades: Trade[];
-    tradingDays: TradingDay[];
-    reviews: DailyReview[];
-    setups: Setup[];
-    instruments: Instrument[];
-    todayTradeDate: string;
-    timezone: string;
-    maxDrawdown?: number | null;
-    levelTouches?: LevelTouch[];
-    onViewTrade: (trade: Trade) => void;
-    /** The saved searches the card's history reads. Omitted hides the history. */
-    chartSearches?: ChartSearch[];
-    onSaveChartSearch?: (search: ChartSearch) => void;
-    onDeleteChartSearch?: (id: string) => void;
-    /** Writes coach-named setups from the picture search into the playbook. */
-    onAddSetups?: (setups: Setup[]) => void;
-    userId?: string;
-    /** The trader's grades of the coach's own plans, carried into the read's digest. */
-    coachPlans?: CoachPlan[];
-  };
 }
 
 export const TradesView: React.FC<TradesViewProps> = ({
@@ -100,7 +65,6 @@ export const TradesView: React.FC<TradesViewProps> = ({
   onDeleteTrade,
   focus = null,
   onClearFocus,
-  chartMatch,
 }) => {
   // Filters state
   const [filterSession, setFilterSession] = useState<string>('all');
@@ -522,9 +486,6 @@ export const TradesView: React.FC<TradesViewProps> = ({
           onSelectSetup={(name) => setFilterSetup(filterSetup === name ? 'all' : name)}
         />
       )}
-
-      {/* The picture search: hand it a chart, get back your own trades that look like it. */}
-      {chartMatch && <ChartMatchCard {...chartMatch} />}
 
       {/*
         A set of trades handed over from another tab. Said plainly, and droppable in one

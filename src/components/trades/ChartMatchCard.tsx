@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { AlertCircle, ImagePlus, Loader2, Search, Trash2, Upload } from 'lucide-react';
+import { AlertCircle, ImagePlus, Loader2, Maximize2, Search, Trash2, Upload } from 'lucide-react';
 import type {
   ChartSearch,
   CoachPlan,
@@ -127,6 +127,22 @@ const IDLE: MatchState = { loading: false, result: null, failure: null };
 function tradeDate(trade: Trade, dayById: Map<string, TradingDay>): string {
   const day = dayById.get(trade.tradingDayId);
   return day?.tradeDate ?? (trade.entryTime ? trade.entryTime.slice(0, 10) : 'date not recorded');
+}
+
+/**
+ * A ticker reduced to its letters and digits.
+ *
+ * The model is told to copy the symbol exactly, and it usually does — but case, spacing and
+ * a stray slash are cosmetic differences that must not stop the trader opening their own
+ * trade. Comparison is on the meaningful characters only.
+ */
+function symbolKey(symbol: string): string {
+  return (symbol || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+/** A date reduced to its eight digits, so 2026-09-18 and 2026/09/18 compare equal. */
+function dateKey(date: string): string {
+  return (date || '').replace(/[^0-9]/g, '').slice(0, 8);
 }
 
 /**
@@ -348,13 +364,28 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
     const map = new Map<string, Trade[]>();
     for (const trade of trades) {
       if (trade.status !== 'closed') continue;
-      const key = `${tradeDate(trade, dayById)}|${instrumentSymbol(instruments, trade.instrumentId)}`;
+      const key = `${dateKey(tradeDate(trade, dayById))}|${symbolKey(
+        instrumentSymbol(instruments, trade.instrumentId)
+      )}`;
       const list = map.get(key);
       if (list) list.push(trade);
       else map.set(key, [trade]);
     }
     return map;
   }, [trades, instruments, dayById]);
+
+  /** The same closed trades keyed by symbol alone, the fallback when a date does not line up. */
+  const closedBySymbol = useMemo(() => {
+    const map = new Map<string, Trade[]>();
+    for (const trade of trades) {
+      if (trade.status !== 'closed') continue;
+      const key = symbolKey(instrumentSymbol(instruments, trade.instrumentId));
+      const list = map.get(key);
+      if (list) list.push(trade);
+      else map.set(key, [trade]);
+    }
+    return map;
+  }, [trades, instruments]);
 
   const [queryImage, setQueryImage] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -455,11 +486,11 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
 
   const answer = state.result?.ok ? (state.result.data as MatchResponse) : null;
 
-  /** Turns a match the model quoted back into the actual stored trade, when one exists. */
-  const resolve = (match: MatchItem): Trade | null => {
-    const key = `${match.date}|${match.symbol}`;
-    const candidates = closedByKey.get(key);
-    if (!candidates || candidates.length === 0) return null;
+  /**
+   * The stored trade one of a set of candidates is, guessed from the direction and setup the
+   * match quoted. Ties keep the first candidate rather than reordering anything.
+   */
+  const pickMatch = (candidates: Trade[], match: MatchItem): Trade => {
     const direction = match.direction.trim().toLowerCase();
     const setup = (match.setupName ?? '').trim().toLowerCase();
     return (
@@ -471,6 +502,26 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
       candidates.find((trade) => trade.direction.toLowerCase() === direction) ??
       candidates[0]
     );
+  };
+
+  /**
+   * Turns a match the model quoted back into the actual stored trade, when one exists.
+   *
+   * The date and symbol are compared after reducing them to the characters that mean
+   * something, so a spaced ticker or a slash in the date does not cost the trader the
+   * ability to open a trade the coach clearly meant. When even that misses, the symbol alone
+   * is tried — but only where the direction leaves exactly one trade, because anything looser
+   * would be a guess dressed up as a resolved match.
+   */
+  const resolve = (match: MatchItem): Trade | null => {
+    const candidates = closedByKey.get(`${dateKey(match.date)}|${symbolKey(match.symbol)}`);
+    if (candidates && candidates.length > 0) return pickMatch(candidates, match);
+
+    const direction = match.direction.trim().toLowerCase();
+    const sameSymbol = (closedBySymbol.get(symbolKey(match.symbol)) ?? []).filter(
+      (trade) => trade.direction.toLowerCase() === direction
+    );
+    return sameSymbol.length === 1 ? sameSymbol[0] : null;
   };
 
   /**
@@ -587,28 +638,54 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
         title={openable ? 'Click to open this trade' : undefined}
       >
         {shot && (
-          <button
-            type="button"
-            data-match-image={trade ? trade.id : `unresolved-${index}`}
-            onClick={(event) => {
-              // The row opens the trade; the picture opens the picture.
-              event.stopPropagation();
-              openLightbox(
-                trade?.images ?? [shot],
-                shot,
-                `${match.date} · ${match.symbol}`,
-                match.setupName ?? undefined
-              );
-            }}
-            className="h-14 w-20 shrink-0 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950 transition-all hover:border-sky-500/60 focus:outline-none focus:ring-2 focus:ring-sky-500/40"
-            title="Click to view this screenshot larger"
-          >
-            <img
-              src={shot}
-              alt={`Screenshot of the ${match.date} ${match.symbol} trade`}
-              className="h-full w-full object-cover"
-            />
-          </button>
+          <div className="relative h-14 w-20 shrink-0">
+            <button
+              type="button"
+              data-match-image={trade ? trade.id : `unresolved-${index}`}
+              onClick={(event) => {
+                // The picture is the trade now, not the picture: a match the trader cannot
+                // open is only a claim, and this is the click they naturally reach for.
+                event.stopPropagation();
+                if (openable && trade) {
+                  onViewTrade?.(trade);
+                  return;
+                }
+                openLightbox(
+                  trade?.images ?? [shot],
+                  shot,
+                  `${match.date} · ${match.symbol}`,
+                  match.setupName ?? undefined
+                );
+              }}
+              className="block h-full w-full overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950 transition-all hover:border-sky-500/60 focus:outline-none focus:ring-2 focus:ring-sky-500/40"
+              title={openable ? 'Click to open this trade' : 'Click to view this screenshot larger'}
+            >
+              <img
+                src={shot}
+                alt={`Screenshot of the ${match.date} ${match.symbol} trade`}
+                className="h-full w-full object-cover"
+              />
+            </button>
+            <button
+              type="button"
+              onClick={(event) => {
+                // A corner control so the screenshot can still be read full size without
+                // taking the click that opens the trade.
+                event.stopPropagation();
+                openLightbox(
+                  trade?.images ?? [shot],
+                  shot,
+                  `${match.date} · ${match.symbol}`,
+                  match.setupName ?? undefined
+                );
+              }}
+              className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full border border-zinc-700 bg-zinc-900 text-zinc-300 shadow transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+              title="View this screenshot larger"
+              aria-label="View this screenshot larger"
+            >
+              <Maximize2 className="h-3 w-3" />
+            </button>
+          </div>
         )}
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -637,6 +714,9 @@ export const ChartMatchCard: React.FC<ChartMatchCardProps> = ({
             <p className="text-[10px] text-amber-300/80">
               This trade could not be matched to a row in your log, so it is shown as quoted.
             </p>
+          )}
+          {openable && (
+            <p className="text-[10px] font-semibold text-sky-400">Open this trade →</p>
           )}
         </div>
       </div>

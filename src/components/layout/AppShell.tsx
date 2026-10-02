@@ -14,6 +14,7 @@ import {
   Moon,
   CandlestickChart,
   Target,
+  MessageSquarePlus,
 } from 'lucide-react';
 import { getCurrentTradingDate } from '../../lib/storage/date-utils';
 import { SyncStatusBadge, SyncStatus } from './SyncStatusBadge';
@@ -60,6 +61,10 @@ interface AppShellProps {
    * other tab, which is the whole point of keeping them as drafts. Zero hides the badge.
    */
   pendingCalls?: number;
+  /** Opens the trader's own notes about what needs fixing in the app. */
+  onOpenFeedback?: () => void;
+  /** How many of those notes are still open — shown as a small badge. Zero hides it. */
+  feedbackCount?: number;
   children: React.ReactNode;
 }
 
@@ -81,6 +86,8 @@ export const AppShell: React.FC<AppShellProps> = ({
   lastSyncedAt,
   onRetrySync,
   pendingCalls = 0,
+  onOpenFeedback,
+  feedbackCount = 0,
   children,
 }) => {
   const todayDate = getCurrentTradingDate(timezone);
@@ -242,6 +249,28 @@ export const AppShell: React.FC<AppShellProps> = ({
 
           {/* Actions */}
           <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
+            {onOpenFeedback && (
+              <button
+                id="feedback-btn"
+                type="button"
+                onClick={onOpenFeedback}
+                title="Write feedback about the app"
+                aria-label="Write feedback about the app"
+                className="relative flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-300 shadow-sm transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+              >
+                <MessageSquarePlus className="h-4 w-4 stroke-[2.2]" />
+                {feedbackCount > 0 && (
+                  <span
+                    id="feedback-count-badge"
+                    title={`${feedbackCount} open note(s)`}
+                    className="absolute -right-1.5 -top-1.5 rounded-full bg-amber-500 px-1 font-mono text-[9px] font-bold leading-tight text-zinc-950"
+                  >
+                    {feedbackCount}
+                  </span>
+                )}
+              </button>
+            )}
+
             {onToggleTheme && (
               <button
                 id="theme-toggler-btn"

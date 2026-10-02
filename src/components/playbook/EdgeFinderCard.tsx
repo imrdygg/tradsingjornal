@@ -1,6 +1,17 @@
 import React, { useMemo, useState } from 'react';
 import { Target, TrendingUp } from 'lucide-react';
-import { CoachPlan, DailyReview, Instrument, LevelTouch, Setup, Trade, TradingDay } from '../../types';
+import {
+  CoachPlan,
+  DailyReview,
+  Instrument,
+  LevelTouch,
+  MarkedLevel,
+  Setup,
+  Trade,
+  TradingDay,
+} from '../../types';
+import { summarizeMarkedLevels } from '../../lib/analytics/level-edge';
+import { summarizeTimeframeEdges, timeframeBucketLabel } from '../../lib/analytics/level-timeframes';
 import { buildJournalDigest } from '../../lib/ai/journal-digest';
 import type { EdgeResponse } from '../../lib/ai/coach-types';
 import { CoachErrorCode, CoachResult, requestCoach } from '../../lib/ai/coach-client';
@@ -17,6 +28,7 @@ import {
 } from '../coach/coach-ui';
 import { COACH_WAIT_STEPS } from '../common/AiThinking';
 import { formatTimestamp } from '../../lib/storage/date-utils';
+import { instrumentSymbol } from '../../lib/trading/instruments';
 
 /**
  * The break-and-run edge finder.
@@ -45,6 +57,20 @@ export interface EdgeFinderCardProps {
   timezone: string;
   maxDrawdown?: number | null;
   levelTouches: LevelTouch[];
+  /**
+   * The levels the trader marked before any of them was touched.
+   *
+   * Fed into the coverage read below, which answers the question the hold rate cannot: how
+   * many of the lines the trader wrote down were ever tested at all. Omitted leaves the
+   * coverage block out, so a journal that only logs touches still reads as before.
+   */
+  markedLevels?: MarkedLevel[];
+  /**
+   * The instruments to label the timeframe breakdown with — the trader's tracked four,
+   * including any levels-only symbol like VIX that the trade catalog does not hold.
+   * Omitted falls back to the catalog, which is right whenever every marked level is tradable.
+   */
+  levelInstruments?: Instrument[];
   /**
    * The coach's own plans with the trader's grades and feedback, when there are any.
    *
@@ -79,8 +105,19 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
   timezone,
   maxDrawdown,
   levelTouches,
+  markedLevels,
+  levelInstruments,
   coachPlans,
 }) => {
+  const labelInstruments = levelInstruments ?? instruments;
+  const coverage = useMemo(
+    () => summarizeMarkedLevels(markedLevels ?? [], levelTouches),
+    [markedLevels, levelTouches]
+  );
+  const timeframeBuckets = useMemo(
+    () => summarizeTimeframeEdges(markedLevels ?? [], levelTouches),
+    [markedLevels, levelTouches]
+  );
   const digest = useMemo(
     () =>
       buildJournalDigest({
@@ -151,10 +188,101 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
         </div>
       </div>
 
+      {/*
+        How much of the marked-level record the touches actually cover.
+
+        Shown before the touch count, because it is the thing the hold rate cannot say: a
+        trader whose indicator offers six lines and who only ever tests two is leaving four
+        out of the record, and that only exists because the levels were written down first.
+      */}
+      {coverage.marked > 0 && (
+        <div
+          id="playbook-edge-coverage"
+          className="space-y-2 rounded-xl border border-zinc-800 bg-zinc-900/50 p-3"
+        >
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
+              Marked levels tested
+            </span>
+            <span className="text-[10px] text-zinc-500">
+              {coverage.tested} of {coverage.marked} tested
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <CoachFact label="Levels marked" value={`${coverage.marked}`} />
+            <CoachFact label="Tested" value={`${coverage.tested}`} />
+            <CoachFact label="Never tested" value={`${coverage.untested}`} />
+            <CoachFact
+              label="Test rate"
+              value={coverage.testRate === null ? '—' : `${coverage.testRate}%`}
+            />
+          </div>
+          <p className="text-[11px] leading-relaxed text-zinc-500">
+            The hold rate below is counted from every touch. Of the lines you marked,{' '}
+            {coverage.testedStats.decided} of the tested ones are decided
+            {coverage.testedStats.decided > 0
+              ? `, holding ${formatRate(coverage.testedStats.holdRate)} of the time`
+              : ''}
+            . {coverage.untested} line{coverage.untested === 1 ? '' : 's'} you marked were never
+            tested — worth noticing if your indicator keeps offering them.
+          </p>
+        </div>
+      )}
+
+      {/*
+        Which timeframe and side price actually reaches.
+
+        This is the comparison the trader marked the lines for: a 5-minute resistance that is
+        reached every day against a 30-minute one that is not. Counts first — a bucket with no
+        decided touch reports its watched lines, never a rate.
+      */}
+      {timeframeBuckets.length > 0 && (
+        <div
+          id="playbook-edge-timeframes"
+          className="space-y-2 rounded-xl border border-zinc-800 bg-zinc-900/50 p-3"
+        >
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
+              By timeframe and side
+            </span>
+            <span className="text-[10px] text-zinc-500">
+              which lines price reaches, and how they behaved
+            </span>
+          </div>
+          <div className="space-y-1">
+            {timeframeBuckets.slice(0, 12).map((bucket) => (
+              <div
+                key={bucket.key}
+                data-timeframe-bucket={bucket.key}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-800/80 bg-zinc-950/40 px-2.5 py-1.5"
+              >
+                <span className="truncate text-xs text-zinc-200">
+                  {timeframeBucketLabel(
+                    bucket,
+                    instrumentSymbol(labelInstruments, bucket.instrumentId)
+                  )}
+                </span>
+                <span className="shrink-0 font-mono text-[10px] text-zinc-500">
+                  {bucket.marked} marked · {bucket.tested} touched
+                  {bucket.stats.decided > 0
+                    ? ` · held ${formatRate(bucket.stats.holdRate)} of ${bucket.stats.decided}`
+                    : ' · no decided touch yet'}
+                </span>
+              </div>
+            ))}
+          </div>
+          {timeframeBuckets.length > 12 && (
+            <p className="text-[10px] text-zinc-600">
+              Showing the 12 busiest of {timeframeBuckets.length} instrument/timeframe/side records.
+            </p>
+          )}
+        </div>
+      )}
+
       {edge.touches === 0 ? (
         <p className="text-xs text-zinc-500 italic">
-          No level touches logged yet. Log a touch when price reaches one of your levels, and
-          this will show which conditions hold.
+          No level touches logged yet. Mark today's levels, then tap Touched when price reaches
+          one — this will show which conditions hold.
         </p>
       ) : (
         <>

@@ -132,10 +132,13 @@ export function countLocalOnlyRecords(local: StorageState, remote: StorageState)
   compare(local.trades, remote.trades);
   compare(local.reviews, remote.reviews);
   compare(local.levelTouches, remote.levelTouches);
+  compare(local.markedLevels, remote.markedLevels);
+  compare(local.levelOutlooks, remote.levelOutlooks);
   compare(local.sessionExtremes, remote.sessionExtremes);
   compare(local.chartSearches, remote.chartSearches);
   compare(local.lessons, remote.lessons);
   compare(local.coachPlans, remote.coachPlans);
+  compare(local.feedback, remote.feedback);
 
   return count;
 }

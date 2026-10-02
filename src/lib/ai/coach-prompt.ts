@@ -11,6 +11,8 @@ import type {
   JournalDigest,
   LessonRead,
   LevelEdge,
+  LevelOutlookRead,
+  LevelTimeframesRead,
 } from './journal-digest';
 import { hourLabel } from '../analytics/session-extremes';
 import type { SetupDirection, SetupVerdict, SetupWeek } from '../analytics/setup-week';
@@ -326,7 +328,18 @@ L4. THE LEVELS ARE THE TRADER'S OWN. The prices and labels in this section are l
     recorded, not a live market read. You still have no other market data, and rule 1 above
     holds in full.
 L5. Do not tell them to trade a session, a level kind or a labelled level more often. Point
-    at what their own record shows and hand the observation back to them.`;
+    at what their own record shows and hand the observation back to them.
+L6. A LINE MARKED AND NEVER TESTED IS NOT A FINDING AND NOT A FAILURE. It means price did not
+    reach a level the trader wrote down. Never say an untouched line "should have" been traded
+    or worked, never read a low test rate as a market signal, and never fold the tested and
+    never-tested counts into a single rate. They answer different questions.
+L7. THE TIMEFRAME IS THE TRADER'S OWN LABEL, NOT A CHART YOU WERE GIVEN. A "5m resistance" is
+    a line their indicator drew on the 5-minute chart; you cannot confirm it or see it. Compare
+    timeframes only from the counts in the prompt, and never rank one against another on a thin
+    sample.
+L8. THE OUTLOOKS ARE THE TRADER'S OWN OPINION, NOT YOURS AND NOT A MARKET FACT. Report what
+    they expected, including when the instruments disagree. Never present an outlook as a
+    reason to take a trade, and never quote a past outlook as a call that "worked".`;
 
 /**
  * The rules for reading the session-extreme log honestly.
@@ -607,6 +620,102 @@ function formatLevelEdgeForPrompt(edge: LevelEdge | undefined): string[] {
           ` → ${touchOutcomeWord(touch.outcome)}` +
           (touch.maxExcursionPoints !== null ? `, ran ${touch.maxExcursionPoints} point(s)` : '') +
           (touch.checks ? `, checked ${touch.checks} time(s)` : '')
+      );
+    }
+  }
+
+  return lines;
+}
+
+/**
+ * The marked-level record by timeframe, rendered so a mark count cannot be read as a rate.
+ *
+ * The distinction stated in the text — tested against never tested — is the whole point of
+ * this section, and it is the one a model would otherwise blur: a line price never reached is
+ * not a line that failed, and it is not a setup waiting to be traded. Both counts are quoted,
+ * and any rate only ever comes from the tested lines' decided touches.
+ */
+function formatLevelTimeframesForPrompt(read: LevelTimeframesRead | undefined): string[] {
+  const lines: string[] = [];
+  // Optional for the same reason as the level-touch section: an older client's digest will not
+  // carry this, and it must degrade to nothing rather than crash the public endpoint.
+  if (!read || !read.marked) return lines;
+
+  lines.push('');
+  lines.push(
+    "=== MARKED LEVELS BY TIMEFRAME (the trader's own lines, written before any was touched) ==="
+  );
+  lines.push(
+    'The trader marks support and resistance from their indicator on 1m, 3m, 5m, 15m, 30m and 1h '
+      + 'charts, for MES, MNQ, MCL and VIX, every day. A line is TESTED when a touch was logged '
+      + 'against it and NEVER TESTED when nothing has been; the two are different facts and are '
+      + 'never merged into one number.'
+  );
+  lines.push(
+    `${read.marked} line(s) marked: ${read.tested} tested, ${read.untested} never tested` +
+      (read.testRate === null ? '.' : ` (${read.testRate}% of marked lines were tested).`)
+  );
+
+  if (read.rows.length) {
+    lines.push('');
+    lines.push('By instrument, timeframe and side, busiest tested lines first:');
+    for (const row of read.rows) {
+      const frame = row.timeframe ?? 'no timeframe recorded';
+      const rate =
+        row.decided > 0
+          ? `held ${row.holdRate === null ? 'not readable yet' : `${row.holdRate}%`} of ${row.decided} decided`
+          : 'no decided touch yet';
+      lines.push(
+        `- ${row.symbol} ${frame} ${row.kind}: ${row.marked} marked, ${row.tested} tested, ` +
+          `${row.untested} never tested; ${rate}` +
+          (row.watching ? `, ${row.watching} still watching` : '')
+      );
+    }
+  }
+  if (read.rowsOmitted > 0) {
+    lines.push('');
+    lines.push(
+      `(${read.rowsOmitted} further instrument/timeframe row(s) were left out of this list — ` +
+        'do not claim to have seen them.)'
+    );
+  }
+
+  return lines;
+}
+
+/**
+ * The trader's daily outlooks, rendered as their own opinion rather than a market fact.
+ *
+ * The instruments are allowed to disagree, and the text says so, so the model does not flatten
+ * "MES bullish, MCL bearish" into one house view. The previous lean travels with today's so a
+ * change of mind can be named — and quoted as the trader's, not as a call the coach is making.
+ */
+function formatLevelOutlooksForPrompt(read: LevelOutlookRead | undefined): string[] {
+  const lines: string[] = [];
+  if (!read || (read.today.length === 0 && read.previous.length === 0)) return lines;
+
+  lines.push('');
+  lines.push("=== THE TRADER'S OUTLOOK (their own read, written before the session) ===");
+  lines.push(
+    "These are the trader's own expectations for the day, one per instrument. They are not a "
+      + 'market read and not yours, and they may disagree with each other — MES bullish while MCL '
+      + 'is bearish is normal. Treat them as what the trader thought, never as a fact about price.'
+  );
+
+  if (read.today.length) {
+    lines.push('Today:');
+    for (const entry of read.today) {
+      lines.push(`- ${entry.symbol}: ${entry.bias}${entry.notes ? ` — "${entry.notes}"` : ''}`);
+    }
+  } else {
+    lines.push('No outlook has been written for today.');
+  }
+
+  if (read.previous.length) {
+    lines.push('Most recent earlier leans:');
+    for (const entry of read.previous) {
+      lines.push(
+        `- ${entry.symbol} ${entry.date}: ${entry.bias}${entry.notes ? ` — "${entry.notes}"` : ''}`
       );
     }
   }
@@ -1252,6 +1361,14 @@ export function formatDigestForPrompt(digest: JournalDigest, mode?: CoachMode): 
   // Only emitted when there are touches, which keeps the no-market vocabulary out of every
   // prompt built from a journal that has never logged one.
   for (const line of formatLevelEdgeForPrompt(digest.levelEdge)) lines.push(line);
+
+  // ---- The same record, by the chart each line came off -------------------
+  // Emitted whenever any line was marked, so the timeframe counts are in the prompt in every
+  // mode and are never quoted from a mode whose guardrails did not mention them.
+  for (const line of formatLevelTimeframesForPrompt(digest.levelTimeframes)) lines.push(line);
+
+  // ---- What the trader expected each instrument to do ---------------------
+  for (const line of formatLevelOutlooksForPrompt(digest.levelOutlooks)) lines.push(line);
 
   // ---- Where the session extremes printed ---------------------------------
   // Emitted whenever the log holds anything, in every mode, so an extreme count is never
@@ -2140,8 +2257,13 @@ export function buildCoachPrompt(
         `conditions marked readable, quoting their rates and the decided and watching counts ` +
         `they came from, and name separately what is logged but not yet decidable. Say what ` +
         `the record shows has happened, never what it predicts will happen — and never call a ` +
-        `hold a profit. If nothing is readable yet, say exactly that and make nextStep about ` +
-        `logging more touches.`
+        `hold a profit. Then read MARKED LEVELS BY TIMEFRAME, which is the lines the trader ` +
+        `marked before any of them was touched: report how many were tested against how many ` +
+        `never were, and which timeframes and sides price reaches most, keeping the ` +
+        `never-tested lines as their own count rather than folding them into a rate. Read THE ` +
+        `TRADER'S OUTLOOK as what they expected for the day, including where the instruments ` +
+        `disagree, and never as a market fact. If nothing is readable yet, say exactly that ` +
+        `and make nextStep about logging more touches or marking more lines.`
       : mode === 'extremes'
       ? `Read this trader's SESSION EXTREMES: where each session's high and low printed on ` +
         `their own clock, and whether the regular session kept an overnight extreme that ` +
@@ -2313,7 +2435,10 @@ export function buildCoachPrompt(
       // Appended whenever the record is in the prompt, in every mode, so the hold rate is
       // never read in a mode whose guardrails did not mention it. Optional for the same
       // reason as the formatter: a digest that predates the record simply has none.
-      (digest.levelEdge?.touches ?? 0) > 0,
+      (digest.levelEdge?.touches ?? 0) > 0 ||
+        (digest.levelTimeframes?.marked ?? 0) > 0 ||
+        (digest.levelOutlooks?.today.length ?? 0) > 0 ||
+        (digest.levelOutlooks?.previous.length ?? 0) > 0,
       // Gated on the mode, not on whether an image happened to arrive: the rules about
       // naming setups from the record apply even when the trader attached no screenshot.
       mode === 'learn',

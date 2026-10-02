@@ -14,6 +14,9 @@ import {
   ChartSearch,
   Lesson,
   CoachPlan,
+  FeedbackNote,
+  MarkedLevel,
+  LevelOutlook,
 } from '../../types';
 import {
   DEFAULT_INSTRUMENTS,
@@ -115,10 +118,13 @@ const STORAGE_KEYS = {
   REVIEWS: 'ptj_reviews_v1',
   PATTERN_STUDIES: 'ptj_pattern_studies_v1',
   LEVEL_TOUCHES: 'ptj_level_touches_v1',
+  MARKED_LEVELS: 'ptj_marked_levels_v1',
+  LEVEL_OUTLOOKS: 'ptj_level_outlooks_v1',
   SESSION_EXTREMES: 'ptj_session_extremes_v1',
   CHART_SEARCHES: 'ptj_chart_searches_v1',
   LESSONS: 'ptj_lessons_v1',
   COACH_PLANS: 'ptj_coach_plans_v1',
+  FEEDBACK: 'ptj_feedback_v1',
   SETUP_CATALOG: 'ptj_setup_catalog_v1',
   LESSON_ACK: 'ptj_lesson_ack_v1',
   RECOVERY: 'ptj_recovery_v1',
@@ -189,6 +195,22 @@ export interface StorageState {
    */
   levelTouches?: LevelTouch[];
   /**
+   * The prices the trader marked before any of them was touched.
+   *
+   * Optional for the same reason as the lists around it — a snapshot saved before this
+   * feature existed must still load, and every reader treats a missing list as empty. It is
+   * a record of one session's levels, so a journal reset clears it with the touches.
+   */
+  markedLevels?: MarkedLevel[];
+  /**
+   * What the trader thought each instrument would do, written down with its levels.
+   *
+   * Optional for the same reason as the lists around it — a snapshot saved before this feature
+   * existed must still load, and every reader treats a missing list as empty. It is a record
+   * about one day's market, so a journal reset clears it with the touched levels.
+   */
+  levelOutlooks?: LevelOutlook[];
+  /**
    * The trader's own record of where each session's high and low printed on the clock,
    * for the instruments they trade.
    *
@@ -222,6 +244,15 @@ export interface StorageState {
    * a plan is tied to the market it was made against, so a reset clears it with the days.
    */
   coachPlans?: CoachPlan[];
+  /**
+   * Notes the trader left about the app itself: what is broken, confusing or missing.
+   *
+   * Optional for the same reason as the lists above — a snapshot saved before this feature
+   * existed must still load, and every reader treats a missing list as empty rather than as
+   * an error. It is the trader's own material about the app, not about a trade, so a journal
+   * reset keeps it while a sign-out clears it with everything else on the device.
+   */
+  feedback?: FeedbackNote[];
   /**
    * The carried-forward lesson the trader has acknowledged, if any.
    *
@@ -1035,10 +1066,13 @@ export const storage = {
       reviews: this.getReviews(),
       patternStudies: this.getPatternStudies(),
       levelTouches: this.getLevelTouches(),
+      markedLevels: this.getMarkedLevels(),
+      levelOutlooks: this.getLevelOutlooks(),
       sessionExtremes: this.getSessionExtremes(),
       chartSearches: this.getChartSearches(),
       lessons: this.getLessons(),
       coachPlans: this.getCoachPlans(),
+      feedback: this.getFeedback(),
       lessonAck: this.getLessonAck(),
     };
     return JSON.stringify(state, null, 2);
@@ -1070,10 +1104,13 @@ export const storage = {
       // cannot wipe study notes that are already here.
       if (parsed.patternStudies) setItem(STORAGE_KEYS.PATTERN_STUDIES, parsed.patternStudies);
       if (parsed.levelTouches) setItem(STORAGE_KEYS.LEVEL_TOUCHES, parsed.levelTouches);
+      if (parsed.markedLevels) setItem(STORAGE_KEYS.MARKED_LEVELS, parsed.markedLevels);
+      if (parsed.levelOutlooks) setItem(STORAGE_KEYS.LEVEL_OUTLOOKS, parsed.levelOutlooks);
       if (parsed.sessionExtremes) setItem(STORAGE_KEYS.SESSION_EXTREMES, parsed.sessionExtremes);
       if (parsed.chartSearches) setItem(STORAGE_KEYS.CHART_SEARCHES, parsed.chartSearches);
       if (parsed.lessons) setItem(STORAGE_KEYS.LESSONS, parsed.lessons);
       if (parsed.coachPlans) setItem(STORAGE_KEYS.COACH_PLANS, parsed.coachPlans);
+      if (parsed.feedback) setItem(STORAGE_KEYS.FEEDBACK, parsed.feedback);
       // Written even when null (an explicit "nothing acknowledged"), so adopting a snapshot
       // carries that state across too. A backup taken before this existed has no key at
       // all and leaves what is here untouched.
@@ -1141,6 +1178,106 @@ export const storage = {
       STORAGE_KEYS.LEVEL_TOUCHES,
       this.getLevelTouches().filter((touch) => touch.id !== id)
     );
+  },
+
+  /** Every level the trader has marked, newest first. */
+  getMarkedLevels(): MarkedLevel[] {
+    return getItem<MarkedLevel[]>(STORAGE_KEYS.MARKED_LEVELS, []);
+  },
+
+  getMarkedLevelsForDay(dayId: string): MarkedLevel[] {
+    return this.getMarkedLevels().filter((level) => level.tradingDayId === dayId);
+  },
+
+  /**
+   * Upserts one marked level, newest first, keyed by id.
+   *
+   * A level is edited after it is written down — a price is corrected, a label is added — so
+   * this is both the create and the update path, the same way every other record here is.
+   */
+  saveMarkedLevel(level: MarkedLevel): MarkedLevel[] {
+    const levels = this.getMarkedLevels();
+    const index = levels.findIndex((existing) => existing.id === level.id);
+    const updated: MarkedLevel = { ...level, updatedAt: new Date().toISOString() };
+    const next =
+      index >= 0
+        ? [...levels.slice(0, index), updated, ...levels.slice(index + 1)]
+        : [updated, ...levels];
+    setItem(STORAGE_KEYS.MARKED_LEVELS, next);
+    return next;
+  },
+
+  /**
+   * Adds a batch of levels at once, which is how the indicator's lines arrive.
+   *
+   * Re-pasting the same lines must not pile up duplicates, so a level whose day, instrument,
+   * side and price are already on the record is skipped rather than added a second time. The
+   * list is returned rather than only written because the caller shows what was actually
+   * kept.
+   */
+  saveMarkedLevels(levels: MarkedLevel[]): MarkedLevel[] {
+    const existing = this.getMarkedLevels();
+    const seen = new Set(
+      existing.map((level) => `${level.tradingDayId}|${level.instrumentId}|${level.kind}|${level.price}`)
+    );
+    const added: MarkedLevel[] = [];
+    for (const level of levels) {
+      const key = `${level.tradingDayId}|${level.instrumentId}|${level.kind}|${level.price}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      added.push(level);
+    }
+    if (added.length === 0) return existing;
+    const next = [...added, ...existing];
+    setItem(STORAGE_KEYS.MARKED_LEVELS, next);
+    return next;
+  },
+
+  deleteMarkedLevel(id: string): MarkedLevel[] {
+    const next = this.getMarkedLevels().filter((level) => level.id !== id);
+    setItem(STORAGE_KEYS.MARKED_LEVELS, next);
+    return next;
+  },
+
+  /** Every daily outlook the trader has written, newest first. */
+  getLevelOutlooks(): LevelOutlook[] {
+    return getItem<LevelOutlook[]>(STORAGE_KEYS.LEVEL_OUTLOOKS, []);
+  },
+
+  getLevelOutlook(dayId: string, instrumentId: string): LevelOutlook | undefined {
+    return this.getLevelOutlooks().find(
+      (outlook) => outlook.tradingDayId === dayId && outlook.instrumentId === instrumentId
+    );
+  },
+
+  /**
+   * Upserts one outlook, keyed by day and instrument as well as id.
+   *
+   * Chosen once and changed as the day's read firms up, so this is both the create and the
+   * edit path. Matching on the day and instrument as well as the id means a record written by
+   * an older client under a different id is corrected rather than duplicated.
+   */
+  saveLevelOutlook(outlook: LevelOutlook): LevelOutlook[] {
+    const outlooks = this.getLevelOutlooks();
+    const index = outlooks.findIndex(
+      (existing) =>
+        existing.id === outlook.id ||
+        (existing.tradingDayId === outlook.tradingDayId &&
+          existing.instrumentId === outlook.instrumentId)
+    );
+    const updated: LevelOutlook = { ...outlook, updatedAt: new Date().toISOString() };
+    const next =
+      index >= 0
+        ? [...outlooks.slice(0, index), updated, ...outlooks.slice(index + 1)]
+        : [updated, ...outlooks];
+    setItem(STORAGE_KEYS.LEVEL_OUTLOOKS, next);
+    return next;
+  },
+
+  deleteLevelOutlook(id: string): LevelOutlook[] {
+    const next = this.getLevelOutlooks().filter((outlook) => outlook.id !== id);
+    setItem(STORAGE_KEYS.LEVEL_OUTLOOKS, next);
+    return next;
   },
 
   getSessionExtremes(): SessionExtreme[] {
@@ -1297,6 +1434,36 @@ export const storage = {
     return next;
   },
 
+  /** The notes the trader left about the app itself, newest first. */
+  getFeedback(): FeedbackNote[] {
+    return getItem<FeedbackNote[]>(STORAGE_KEYS.FEEDBACK, []);
+  },
+
+  /**
+   * Upserts one note, newest first, keyed by id.
+   *
+   * Writing a note and marking one fixed are the same write on purpose: resolving a note is
+   * a change to the note that was already written, so it keeps its place in the list rather
+   * than jumping to the front as if it were new.
+   */
+  saveFeedback(note: FeedbackNote): FeedbackNote[] {
+    const notes = this.getFeedback();
+    const index = notes.findIndex((existing) => existing.id === note.id);
+    const updated: FeedbackNote = { ...note, updatedAt: new Date().toISOString() };
+    const next =
+      index >= 0
+        ? [...notes.slice(0, index), updated, ...notes.slice(index + 1)]
+        : [updated, ...notes];
+    setItem(STORAGE_KEYS.FEEDBACK, next);
+    return next;
+  },
+
+  deleteFeedback(id: string): FeedbackNote[] {
+    const next = this.getFeedback().filter((note) => note.id !== id);
+    setItem(STORAGE_KEYS.FEEDBACK, next);
+    return next;
+  },
+
   /**
    * Clears every journal entry — trades, daily plans and reviews — while
    * keeping the trader's settings, instruments and playbook set-ups. This is
@@ -1317,6 +1484,11 @@ export const storage = {
       // The touches are the record of what a level did; they go with the days they
       // were taken on, unlike the playbook material that survives a reset.
       STORAGE_KEYS.LEVEL_TOUCHES,
+      // The levels themselves were marked for the same sessions the touches were logged
+      // on, so they go with the touches rather than outliving the journal they described.
+      STORAGE_KEYS.MARKED_LEVELS,
+      // The outlooks describe the same day's market as the levels they were written beside.
+      STORAGE_KEYS.LEVEL_OUTLOOKS,
       // The extremes are the same kind of thing: a record of one session, not material
       // about the trader's setups.
       STORAGE_KEYS.SESSION_EXTREMES,
@@ -1354,10 +1526,13 @@ export const storage = {
       STORAGE_KEYS.REVIEWS,
       STORAGE_KEYS.PATTERN_STUDIES,
       STORAGE_KEYS.LEVEL_TOUCHES,
+      STORAGE_KEYS.MARKED_LEVELS,
+      STORAGE_KEYS.LEVEL_OUTLOOKS,
       STORAGE_KEYS.SESSION_EXTREMES,
       STORAGE_KEYS.CHART_SEARCHES,
       STORAGE_KEYS.LESSONS,
       STORAGE_KEYS.COACH_PLANS,
+      STORAGE_KEYS.FEEDBACK,
       STORAGE_KEYS.SETUP_CATALOG,
       STORAGE_KEYS.LESSON_ACK,
       STORAGE_KEYS.RECOVERY,

@@ -325,6 +325,32 @@ export interface ChartSearch {
   matches: ChartSearchMatch[];
 }
 
+/** Whether a note the trader left about the app itself is still to do or handled. */
+export type FeedbackStatus = 'open' | 'fixed';
+
+/**
+ * One note the trader left about something to fix or change in the app itself.
+ *
+ * Deliberately about the app, not about a trade: it is the trader writing down what is
+ * broken, confusing or missing while they are looking at it, so it does not get lost
+ * before it can be raised. The `context` records where they were when they wrote it, and
+ * the status lets a note be marked handled rather than only deleted — a list that can only
+ * forget is not a list of what is still to do.
+ */
+export interface FeedbackNote {
+  id: string;
+  userId: string;
+  /** What needs fixing or changing, in the trader's own words. */
+  text: string;
+  /** The tab or screen they were on, so a note can be found again in context. */
+  context?: string;
+  status: FeedbackStatus;
+  createdAt: string;
+  updatedAt: string;
+  /** When the note was marked fixed, so the list can be read in order. */
+  resolvedAt?: string;
+}
+
 export interface TradeExecutionReview {
   id: string;
   tradeId: string;
@@ -734,6 +760,17 @@ export interface Lesson {
 export type LevelKind = 'support' | 'resistance';
 
 /**
+ * The chart timeframe a marked level was read off.
+ *
+ * The trader's indicator draws support and resistance on several resolutions at once, and the
+ * same price means something different on a 1-minute chart than on a 1-hour one. The timeframe
+ * is the trader's own label for which line a price came from — the app never sees the chart —
+ * and it is what lets the record compare, say, how often the 5-minute resistance is reached
+ * against the 30-minute one.
+ */
+export type LevelTimeframe = '1m' | '3m' | '5m' | '15m' | '30m' | '1h';
+
+/**
  * What price did after the level was touched.
  *
  * `watching` is the honest state for a fresh touch: it is only a break-and-run once
@@ -816,8 +853,110 @@ export interface LevelTouch {
 
   /** The trade this touch became, when the trader actually took it. */
   tradeId?: string;
+  /**
+   * The timeframe carried over from the marked level this touch came from, when it did.
+   *
+   * Stored on the touch as well as the level so a touch stays self-describing: the record can
+   * be grouped by timeframe without joining every touch back to the level it was struck from.
+   */
+  timeframe?: LevelTimeframe;
+  /**
+   * The marked level this touch was struck from, when it came from one.
+   *
+   * A touch can be logged straight, but the way the journal prefers is to write the levels
+   * down first and tap the one price reached. This link is what lets the record say which of
+   * the marked levels were ever tested and which were not — the untouched ones are a real
+   * observation about the trader, not a gap.
+   */
+  levelId?: string;
   notes?: string;
   images?: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * One price the trader marked on the chart before anything happened at it.
+ *
+ * The touch log can only describe a level once price has reached it, which loses the thing
+ * the trader actually knows at the open: the two, four or six lines their indicator is
+ * showing, before any of them is tested. This is that record. Levels are written down for a
+ * session, kept whether or not price ever comes near them, and a level that is reached turns
+ * into a {@link LevelTouch} through {@link LevelTouch.levelId} — so the same tap that logs a
+ * touch also says which of the marked lines it came from.
+ *
+ * Keeping the untouched ones matters: a level the indicator keeps offering that price never
+ * tests is a fact about how the trader reads their own chart, and it only exists if the
+ * levels are recorded before they are touched.
+ */
+export interface MarkedLevel {
+  id: string;
+  userId: string;
+  /** The trading day the level was marked on. */
+  tradingDayId: string;
+  /** YYYY-MM-DD, denormalised so a level stays readable and countable without its day. */
+  tradeDate: string;
+  instrumentId: string;
+  /** Which side of price the level sits on. */
+  kind: LevelKind;
+  price: number;
+  /** The zone width to carry onto the touch, in points. */
+  zonePoints: number;
+  /** Where the level came from — "overnight high", "prior day low", "indicator R1". */
+  label?: string;
+  /** The session the trader was watching the levels for. Carried onto the touch. */
+  session: TradingSession;
+  /**
+   * Which chart the level came off — 1m, 3m, 5m, 15m, 30m or 1h.
+   *
+   * Optional so a level logged before the trader tracked timeframes still reads: absent is
+   * treated as "no timeframe recorded", never as a timeframe of its own.
+   */
+  timeframe?: LevelTimeframe;
+  /**
+   * Whether the trader typed this level by hand or pasted it from their indicator.
+   *
+   * Kept so the record can tell the two apart later; both are the trader's own level and
+   * neither is treated as better than the other.
+   */
+  source?: 'indicator' | 'manual';
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * What the trader expects an instrument to do with the day.
+ *
+ * Three states, deliberately: a lean up, a lean down, or no lean at all. `neutral` is a real
+ * answer — "I have no read today" — and is not the same as an unset outlook, so the record
+ * can tell a considered flat day from one nobody wrote down.
+ */
+export type MarketOutlookBias = 'bullish' | 'bearish' | 'neutral';
+
+/**
+ * One instrument's outlook for one trading day.
+ *
+ * Written at the level-marking step, beside the lines it goes with: the trader looks at MES's
+ * timeframes and says which way they think it leans, then does the same for MCL, MNQ and VIX.
+ * The instruments can disagree — MES bullish while MCL is bearish — which is exactly why the
+ * outlook is per instrument and per day rather than one note for the whole session.
+ *
+ * It is the trader's own opinion, recorded before the session, so the record can later show
+ * what they expected against what price did. Nothing here is a market read by the app, and the
+ * coach is told so explicitly.
+ */
+export interface LevelOutlook {
+  /** Stable per day and instrument, so re-choosing today's bias edits rather than adds. */
+  id: string;
+  userId: string;
+  tradingDayId: string;
+  /** YYYY-MM-DD, carried on the outlook itself so it reads without its day. */
+  tradeDate: string;
+  instrumentId: string;
+  bias: MarketOutlookBias;
+  /** Why they think so, in their own words. Optional. */
+  notes?: string;
   createdAt: string;
   updatedAt: string;
 }

@@ -1,12 +1,30 @@
 import { describe, it, expect } from 'vitest';
-import { LevelTouch } from '../../../types';
+import { LevelTouch, MarkedLevel } from '../../../types';
 import {
   evaluateTouch,
   findLevelEdges,
   MIN_DECIDED,
+  summarizeMarkedLevels,
   summarizeTouches,
   type PriceSample,
 } from '../level-edge';
+
+function marked(over: Partial<MarkedLevel> = {}): MarkedLevel {
+  return {
+    id: 'l',
+    userId: 'u',
+    tradingDayId: 'd',
+    tradeDate: '2026-09-28',
+    instrumentId: 'mes',
+    kind: 'resistance',
+    price: 100,
+    zonePoints: 2,
+    session: 'Overnight',
+    createdAt: '2026-09-28T02:00:00Z',
+    updatedAt: '2026-09-28T02:00:00Z',
+    ...over,
+  };
+}
 
 function touch(over: Partial<LevelTouch> = {}): LevelTouch {
   return {
@@ -146,6 +164,41 @@ describe('summarizeTouches', () => {
       )
     );
     expect(enough.enoughData).toBe(true);
+  });
+});
+
+describe('summarizeMarkedLevels', () => {
+  it('counts tested lines by the touches that link back to them', () => {
+    const levels = [
+      marked({ id: 'a' }),
+      marked({ id: 'b' }),
+      marked({ id: 'c' }),
+      marked({ id: 'd' }),
+    ];
+    const touches = [
+      touch({ id: 't1', levelId: 'a', outcome: 'never-returned' }),
+      touch({ id: 't2', levelId: 'b', outcome: 'returned' }),
+      // A touch with no level behind it belongs to the older record and must not count
+      // towards the marked-level coverage either way.
+      touch({ id: 't3', outcome: 'never-returned' }),
+    ];
+
+    const coverage = summarizeMarkedLevels(levels, touches);
+    expect(coverage.marked).toBe(4);
+    expect(coverage.tested).toBe(2);
+    expect(coverage.untested).toBe(2);
+    expect(coverage.testRate).toBe(50);
+    // The hold rate is over the tested lines only: 1 held of 2 decided.
+    expect(coverage.testedStats.decided).toBe(2);
+    expect(coverage.testedStats.holdRate).toBe(50);
+  });
+
+  it('reports a null test rate while nothing has been marked', () => {
+    const coverage = summarizeMarkedLevels([], [touch({ levelId: 'ghost' })]);
+    expect(coverage.marked).toBe(0);
+    expect(coverage.tested).toBe(0);
+    expect(coverage.testRate).toBeNull();
+    expect(coverage.testedStats.touches).toBe(0);
   });
 });
 

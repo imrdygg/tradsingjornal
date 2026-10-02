@@ -92,6 +92,8 @@ interface PlaybookViewProps {
     levelTouches: LevelTouch[];
     /** The marked levels, so the finder can report how many of them were tested. */
     markedLevels?: MarkedLevel[];
+    /** The day's per-instrument outlooks, read by the finder's entry-edge read. */
+    levelOutlooks?: LevelOutlook[];
     /** The tracked level instruments, including any levels-only symbol like VIX. */
     levelInstruments?: Instrument[];
     /** The trader's grades of the coach's own plans, carried into the read's digest. */

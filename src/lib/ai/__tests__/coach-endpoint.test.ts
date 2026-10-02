@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isRetryable, modelChain } from '../../../../src/api/coach';
+import { isRetryable, modelChain, readEntryEdgeFacts } from '../../../../src/api/coach';
 import { COACH_MODES } from '../coach-prompt';
 
 /**
@@ -54,6 +54,26 @@ describe('isRetryable', () => {
   });
 });
 
+describe('readEntryEdgeFacts', () => {
+  it('accepts a symbol, a side and a price', () => {
+    expect(readEntryEdgeFacts({ symbol: ' MES ', direction: 'long', entryPrice: 7745 })).toEqual({
+      symbol: 'MES',
+      direction: 'long',
+      entryPrice: 7745,
+      contracts: undefined,
+    });
+  });
+
+  it('refuses anything it could not read an entry out of', () => {
+    expect(readEntryEdgeFacts(null)).toBeNull();
+    expect(readEntryEdgeFacts({ symbol: 'MES', direction: 'sideways', entryPrice: 1 })).toBeNull();
+    expect(readEntryEdgeFacts({ symbol: '', direction: 'long', entryPrice: 1 })).toBeNull();
+    // A zero or negative entry is not a price, and would corrupt every distance computed from it.
+    expect(readEntryEdgeFacts({ symbol: 'MES', direction: 'long', entryPrice: 0 })).toBeNull();
+    expect(readEntryEdgeFacts({ symbol: 'MES', direction: 'long' })).toBeNull();
+  });
+});
+
 describe('mode coverage', () => {
   it('keeps the runtime mode list in step with the supported modes', () => {
     // COACH_MODES is a plain array because the union lives in a types-only module, so
@@ -81,6 +101,7 @@ describe('mode coverage', () => {
         'ask',
         'lessons',
         'selfplan',
+        'entryedge',
       ].sort()
     );
   });

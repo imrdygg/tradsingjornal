@@ -221,6 +221,9 @@ const MODES_WITH_LIVE_FETCH: readonly CoachMode[] = [
   'entrycall',
   'chartread',
   'extremecall',
+  // The entry edge fetches a live quote server-side before calling the model, so it needs the
+  // longer budget for the same reason the other live modes do.
+  'entryedge',
 ];
 
 export async function requestCoach(
@@ -260,6 +263,8 @@ export async function requestCoach(
         ? 'Could not reach the coach service to review the plan. Check your connection and try again.'
         : mode === 'entrycall'
         ? 'Could not reach the coach service to record its call on this entry.'
+        : mode === 'entryedge'
+        ? 'Could not reach the coach service to read this entry against your levels.'
         : 'Could not reach the coach service. Check your connection and try again.',
     };
   }

@@ -10,6 +10,7 @@ import type {
   CoachMode,
   CoachPositionFacts,
   CoachTradeFacts,
+  EntryEdgeFacts,
 } from '../lib/ai/coach-types';
 import { readCoachImages, type CoachImagePart } from '../lib/ai/coach-images';
 import type { JournalDigest } from '../lib/ai/journal-digest';
@@ -74,7 +75,7 @@ interface ApiResponse {
  * knows the meaning of gets updated without being read. Bump it when the request or response
  * contract changes in a way a caller could notice.
  */
-export const ENDPOINT_VERSION = 19;
+export const ENDPOINT_VERSION = 20;
 
 /** Total time to spend trying models before returning what we have. */
 const REQUEST_BUDGET_MS = 45_000;
@@ -749,6 +750,33 @@ export function readEntryFacts(raw: unknown): CoachEntryFacts | null {
 }
 
 /**
+ * The entry being weighed up, re-validated on the server.
+ *
+ * Deliberately the thinnest facts of any mode: a symbol, a side and a price. There is no stop
+ * to check and no size to keep honest, because the read is about the trader's own marked lines
+ * rather than about a position — and anything else would be a market view this mode is not
+ * meant to carry.
+ */
+export function readEntryEdgeFacts(raw: unknown): EntryEdgeFacts | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const record = raw as Record<string, unknown>;
+
+  const symbol = typeof record.symbol === 'string' ? record.symbol.trim() : '';
+  const direction =
+    record.direction === 'short' ? 'short' : record.direction === 'long' ? 'long' : null;
+  const entryPrice = readNumber(record.entryPrice);
+
+  if (!symbol || !direction || entryPrice === undefined || entryPrice <= 0) return null;
+
+  return {
+    symbol,
+    direction,
+    entryPrice,
+    contracts: readNumber(record.contracts),
+  };
+}
+
+/**
  * Minimal shape check on the digest. We do not re-validate every field — the client
  * built it from its own types — but we must reject anything that would leave the prompt
  * with no facts at all, because a coach with no data invents data.
@@ -840,7 +868,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       error:
         'Unknown coach mode. Expected brief, weekly, setups, form, edge, learn, match, ' +
         'extremes, extremecall, trade, prep, postclose, planreview, planfield, planbuild, ' +
-        'scalein, entrycall, chartread, ask, lessons or selfplan.',
+        'scalein, entrycall, chartread, ask, lessons, selfplan or entryedge.',
     });
     return;
   }
@@ -898,6 +926,18 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       return;
     }
     extras.entry = entry;
+  }
+
+  if (mode === 'entryedge') {
+    const facts = readEntryEdgeFacts(extrasRaw.entryEdge);
+    if (!facts) {
+      res.status(400).json({
+        error:
+          'Entry-edge mode needs the entry being considered: the symbol, the side and the entry price.',
+      });
+      return;
+    }
+    extras.entryEdge = facts;
   }
 
   if (mode === 'ask') {
@@ -958,7 +998,12 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   if (allowsMarketOpinion(mode)) {
     const fromExtras = typeof extrasRaw.instrument === 'string' ? extrasRaw.instrument.trim() : '';
     const instrument =
-      extras.position?.symbol || extras.entry?.symbol || fromExtras;
+      extras.position?.symbol ||
+      extras.entry?.symbol ||
+      // Taken from the entry being weighed up when the request did not name one, so a caller
+      // cannot ask about one instrument while describing an entry in another.
+      extras.entryEdge?.symbol ||
+      fromExtras;
     extras.instrument = instrument;
     // A failure here degrades inside getInstrumentQuote to ok:false with a reason, and
     // the guardrails require the model to stand aside rather than fill the gap.

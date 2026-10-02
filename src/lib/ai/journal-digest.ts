@@ -222,6 +222,59 @@ export interface LevelTimeframesRead {
 }
 
 /**
+ * One of today's marked lines, with what the record says has happened at that exact line.
+ *
+ * The timeframe read above is counts per bucket. This is the individual line, because an entry
+ * question is about one price: whether the 15-minute resistance the trader is walking into was
+ * ever reached today, and if it was, whether price broke through it and stayed away or came
+ * straight back. A line nothing has been logged against is `never-touched` — which is not the
+ * same as holding, and is never quoted as one.
+ */
+export interface TodayLevelRead {
+  symbol: string;
+  /** Null when the line was marked before timeframes existed, so nothing is invented. */
+  timeframe: LevelTimeframe | null;
+  kind: LevelKind;
+  price: number;
+  /** The width the line was marked with, in points, which sets what counts as a break. */
+  zonePoints: number;
+  label: string | null;
+  /**
+   * What the record says at this line.
+   *
+   * `never-touched` is the absence of a logged touch, and it is kept distinct from every
+   * outcome: a line price never reached is not a line that held.
+   */
+  status: 'never-touched' | TouchOutcome;
+  /** The session the touch fell in, when there is one. */
+  session: string | null;
+  touchedAt: string | null;
+  /** Points price ran away from the line after the touch, when it was measured. */
+  maxExcursionPoints: number | null;
+  /** How many times that touch has been checked against price. */
+  checks: number | null;
+}
+
+/**
+ * Today's marked lines, one row per line, with each line's own logged state.
+ *
+ * Built for the question a trader actually asks before an entry — "what is between me and where
+ * I think this goes, and what did those lines do the last time they were reached?" — which the
+ * bucket counts above cannot answer, because they aggregate the very lines that have to be told
+ * apart. Only today's lines are here; the history stays in the timeframe read.
+ */
+export interface TodayLevelsRead {
+  /** The trading date these lines belong to, YYYY-MM-DD. */
+  date: string;
+  /** The symbols with at least one line marked today. */
+  symbols: string[];
+  /** The lines themselves, grouped by symbol, then chart, then side. */
+  levels: TodayLevelRead[];
+  /** Lines beyond the bounded list, so the coach knows it is not seeing all of them. */
+  omitted: number;
+}
+
+/**
  * What the trader expected each instrument to do, written beside the levels it goes with.
  *
  * Per instrument on purpose: MES can lean up while MCL leans down, and collapsing them into one
@@ -573,6 +626,13 @@ export interface JournalDigest {
    * the 30-minute ones?".
    */
   levelTimeframes: LevelTimeframesRead;
+  /**
+   * Today's marked lines, one row each, with what the record says happened at each one.
+   *
+   * The bucket counts above answer "which charts get reached". This answers the entry question:
+   * which named lines sit around a price right now, and what each of those lines did.
+   */
+  todayLevels: TodayLevelsRead;
   /**
    * What the trader expected each instrument to do, written down before the session. Read as
    * the trader's own opinion, never as a market fact.
@@ -1023,6 +1083,73 @@ function buildLevelTimeframes(
     minDecided: MIN_DECIDED,
     rows: rows.slice(0, MAX_LEVEL_TIMEFRAME_ROWS),
     rowsOmitted: Math.max(0, rows.length - MAX_LEVEL_TIMEFRAME_ROWS),
+  };
+}
+
+/** How many of today's lines the digest carries before the rest are only counted. */
+const MAX_TODAY_LEVELS = 48;
+
+/**
+ * Turns today's marked lines into one row each, with the state of each line attached.
+ *
+ * A line's state comes from the touch that links back to it by id, and from nothing else: a
+ * touch logged the old way, with no level behind it, cannot be attributed to a line and so
+ * never changes one. The order is symbol, chart, side, then price — the way the trader reads
+ * their own card — so the coach sees one chart at a time rather than a shuffled list.
+ */
+function buildTodayLevels(
+  levels: MarkedLevel[],
+  touches: LevelTouch[],
+  instruments: Instrument[],
+  todayTradeDate: string
+): TodayLevelsRead {
+  const touchByLevel = new Map<string, LevelTouch>();
+  for (const touch of touches) {
+    if (touch.levelId) touchByLevel.set(touch.levelId, touch);
+  }
+
+  const symbolOf = (level: MarkedLevel) => instrumentSymbol(instruments, level.instrumentId);
+  const today = levels
+    .filter((level) => level.tradeDate === todayTradeDate)
+    .sort((a, b) => {
+      const symbol = symbolOf(a).localeCompare(symbolOf(b));
+      if (symbol !== 0) return symbol;
+      const frame = (a.timeframe ?? '').localeCompare(b.timeframe ?? '');
+      if (frame !== 0) return frame;
+      if (a.kind !== b.kind) return a.kind.localeCompare(b.kind);
+      // Support reads upward from the lowest line, resistance downward from the highest, which
+      // is the direction price would travel through them.
+      const direction = a.kind === 'support' ? 1 : -1;
+      return (a.price - b.price) * direction;
+    });
+
+  const rows: TodayLevelRead[] = today.map((level) => {
+    const touch = touchByLevel.get(level.id);
+    return {
+      symbol: symbolOf(level),
+      timeframe: level.timeframe ?? null,
+      kind: level.kind,
+      price: level.price,
+      zonePoints: level.zonePoints,
+      label: level.label?.trim() || null,
+      // No linked touch is a fact about the record, not an outcome: never-touched, stated as
+      // its own status so it can never be read as a line that held.
+      status: touch ? touch.outcome : 'never-touched',
+      session: touch ? touch.session : null,
+      touchedAt: touch ? touch.touchedAt ?? null : null,
+      maxExcursionPoints:
+        touch && typeof touch.maxExcursionPoints === 'number'
+          ? round(touch.maxExcursionPoints)
+          : null,
+      checks: touch ? touch.checks : null,
+    };
+  });
+
+  return {
+    date: todayTradeDate,
+    symbols: [...new Set(today.map(symbolOf))],
+    levels: rows.slice(0, MAX_TODAY_LEVELS),
+    omitted: Math.max(0, rows.length - MAX_TODAY_LEVELS),
   };
 }
 
@@ -1546,6 +1673,12 @@ export function buildJournalDigest(input: {
     input.levelTouches ?? [],
     instruments
   );
+  const todayLevels = buildTodayLevels(
+    input.markedLevels ?? [],
+    input.levelTouches ?? [],
+    instruments,
+    todayTradeDate
+  );
   const levelOutlooks = buildLevelOutlooks(
     input.levelOutlooks ?? [],
     instruments,
@@ -1711,6 +1844,7 @@ export function buildJournalDigest(input: {
     behavior,
     levelEdge,
     levelTimeframes,
+    todayLevels,
     levelOutlooks,
     extremeRead,
     lessonRead,

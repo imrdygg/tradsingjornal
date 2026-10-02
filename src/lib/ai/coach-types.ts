@@ -92,7 +92,18 @@ export type CoachMode =
    * writes feedback afterwards. An opinion mode, so it may name levels — but only numbers it
    * was handed, and it is stored so the grade has something to land on.
    */
-  | 'selfplan';
+  | 'selfplan'
+  /**
+   * The entry edge: the trader names a symbol, a side and the price they are thinking of
+   * entering at, and the coach reads that entry against TODAY'S OWN MARKED LINES — the chart,
+   * the side, the price, and what the record says happened at each one — plus the live read.
+   *
+   * The record is the point: every line the coach talks about is one the trader marked, with
+   * its own logged state, so the answer is "here is what your own lines did around a price like
+   * this", never a signal. An opinion mode, so it may name levels and a side, but only numbers
+   * it was handed.
+   */
+  | 'entryedge';
 
 /** The plan fields the coach will draft text for, one at a time. */
 export type PlanFieldName = 'waitingFor' | 'stayOutIf';
@@ -113,6 +124,63 @@ export interface CoachPositionFacts {
   plannedLossLimit?: number;
   /** What the open position is worth right now, when the journal can compute it. */
   openPoints?: number;
+}
+
+/**
+ * The entry the trader is weighing up, described for the entry-edge read.
+ *
+ * Deliberately thin: a symbol, a side and a price. Everything else the read needs is already in
+ * the digest — the trader's own marked lines and what each one did — so this exists to say which
+ * entry the question is about, not to hand the model a market view.
+ */
+export interface EntryEdgeFacts {
+  symbol: string;
+  direction: 'long' | 'short';
+  /** The price the trader is thinking of entering at. */
+  entryPrice: number;
+  /** Contracts they are considering, when they have said. Bounded on the server. */
+  contracts?: number;
+}
+
+/** One line the entry-edge read is told to watch, tied to the trader's own marked level. */
+export interface EntryEdgeNote {
+  /** The line it is about, named as the trader marked it, e.g. "MES 15m resistance 7760". */
+  level: string;
+  /** What the trader's own record says has happened at that line, or that nothing has. */
+  note: string;
+  /** The logged state of the line: touched, never-touched, held, failed, watching or void. */
+  status: string;
+}
+
+/**
+ * The read of one prospective entry against the trader's own marked lines.
+ *
+ * Not a signal and shaped so it cannot become one: `stance` may say the record sits against the
+ * entry, the lines must be ones the trader marked or prices the read was handed, and the counts
+ * behind any rate are required. `notInJournal` exists so the answer says plainly what the record
+ * cannot settle instead of filling the gap.
+ */
+export interface EntryEdgeResponse {
+  headline: string;
+  /** The entry read back against the live price, using only the numbers it was handed. */
+  entryRead: string;
+  /** What the trader's marked lines say about a price like this one, counts quoted. */
+  levelRead: string;
+  /** Whether the trader's own record sits with the entry, against it, or splits. */
+  stance: 'with-the-record' | 'against-the-record' | 'mixed';
+  confidence: 'low' | 'medium' | 'high';
+  /** The lines to watch, each tied to a level the trader actually marked today. */
+  watch: EntryEdgeNote[];
+  /** What would make this entry a mistake, or a thin record, stated plainly. */
+  risks: string[];
+  /** What the record does not settle, so the gap is named rather than guessed at. */
+  notInJournal: string;
+  /** One concrete thing to log that would sharpen the next read of an entry like this. */
+  nextStep: string;
+  /** The read in plain words, labelled as an opinion that can be wrong. */
+  rationale: string;
+  /** Each line, price and journal fact it used, one per item, quoted so it can be checked. */
+  basedOn: string[];
 }
 
 /** The entry the trader has just recorded, described for the coach's own call. */
@@ -140,6 +208,8 @@ export interface CoachExtras {
   field?: PlanFieldName;
   position?: CoachPositionFacts;
   entry?: CoachEntryFacts;
+  /** The entry the trader is weighing up, for the entry-edge read. */
+  entryEdge?: EntryEdgeFacts;
   /**
    * The trader's own words for the `ask` mode.
    *
@@ -715,7 +785,8 @@ export type CoachResponse =
   | EntryCallResponse
   | ChartReadResponse
   | LessonsResponse
-  | SelfPlanResponse;
+  | SelfPlanResponse
+  | EntryEdgeResponse;
 
 export function isCoachEntryCall(value: unknown): value is CoachEntryCall {
   if (!value || typeof value !== 'object') return false;

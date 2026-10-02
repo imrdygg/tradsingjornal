@@ -8,6 +8,7 @@ import {
   COACH_RESPONSE_SHAPES,
   extractJsonFromModelText,
   formatDigestForPrompt,
+  formatEntryEdgeForPrompt,
   formatTradeForPrompt,
   isCoachMode,
   parseCoachResponse,
@@ -27,6 +28,7 @@ import {
   DailyReview,
   DailyReviewQuestions,
   LevelTouch,
+  MarkedLevel,
   SessionExtreme,
   Trade,
   TradingDay,
@@ -126,6 +128,151 @@ const digestFor = (overrides: Partial<Parameters<typeof buildJournalDigest>[0]> 
     timezone: 'America/New_York',
     ...overrides,
   });
+
+/** One line the trader marked, for the entry-edge tests. */
+function markedLevel(overrides: Partial<MarkedLevel> = {}): MarkedLevel {
+  return {
+    id: 'ml1',
+    userId: 'u1',
+    tradingDayId: 'd1',
+    tradeDate: '2026-09-18',
+    instrumentId: 'mes',
+    kind: 'resistance',
+    timeframe: '5m',
+    price: 7760,
+    zonePoints: 4,
+    session: 'Regular Session',
+    createdAt: '2026-09-18T09:00:00.000Z',
+    updatedAt: '2026-09-18T09:00:00.000Z',
+    ...overrides,
+  };
+}
+
+/** One logged touch, linked back to the line it came from. */
+function linkedTouch(overrides: Partial<LevelTouch> = {}): LevelTouch {
+  return {
+    id: 'lt1',
+    userId: 'u1',
+    tradingDayId: 'd1',
+    tradeDate: '2026-09-18',
+    instrumentId: 'mes',
+    kind: 'resistance',
+    price: 7760,
+    zonePoints: 4,
+    timeframe: '5m',
+    touchedAt: '2026-09-18T14:05:00.000Z',
+    session: 'Regular Session',
+    outcome: 'never-returned',
+    checks: 3,
+    levelId: 'ml1',
+    createdAt: '2026-09-18T14:05:00.000Z',
+    updatedAt: '2026-09-18T14:05:00.000Z',
+    ...overrides,
+  };
+}
+
+describe('the entry edge', () => {
+  const support = markedLevel({ id: 'ml2', kind: 'support', timeframe: '15m', price: 7700 });
+  const resistanceTouch = linkedTouch({});
+
+  const textFor = (entryPrice: number, direction: 'long' | 'short' = 'long') => {
+    const digest = digestFor({
+      markedLevels: [markedLevel(), support],
+      levelTouches: [resistanceTouch],
+    });
+    return formatEntryEdgeForPrompt(
+      { symbol: 'MES', direction, entryPrice },
+      undefined,
+      digest.todayLevels
+    );
+  };
+
+  it('computes each line\u2019s distance from the entry instead of leaving it to the model', () => {
+    const text = textFor(7745);
+    // 7760 is 15 points above 7745; 7700 is 45 below.
+    expect(text).toContain('15 points ABOVE the entry');
+    expect(text).toContain('45 points BELOW the entry');
+  });
+
+  it('says whether a line is ahead of or behind the side being weighed', () => {
+    expect(textFor(7745, 'long')).toContain('AHEAD of the entry');
+    // The same lines read the other way round for a short: the support below is on its way.
+    const short = textFor(7745, 'short');
+    expect(short).toContain('BEHIND the entry');
+    expect(short).toContain('7700');
+  });
+
+  it('states the logged outcome of a touched line', () => {
+    expect(textFor(7745)).toContain('NOT come back');
+  });
+
+  it('names a line nothing was logged against as never touched, not as held', () => {
+    const text = textFor(7745);
+    expect(text).toContain('NEVER TOUCHED');
+  });
+
+  it('says so plainly when the instrument has nothing marked today', () => {
+    const digest = digestFor();
+    const text = formatEntryEdgeForPrompt(
+      { symbol: 'MCL', direction: 'long', entryPrice: 70 },
+      undefined,
+      digest.todayLevels
+    );
+    expect(text).toContain('Nothing is marked for this instrument today');
+  });
+
+  it('reports the live read as unavailable rather than letting the model fill the gap', () => {
+    expect(textFor(7745)).toContain('LIVE READ: unavailable');
+  });
+
+  it('carries its own guardrails and the entry block into the prompt', () => {
+    const digest = digestFor({ markedLevels: [markedLevel()], levelTouches: [resistanceTouch] });
+    const { systemInstruction, userPrompt } = buildCoachPrompt(
+      'entryedge',
+      digest,
+      undefined,
+      undefined,
+      { entryEdge: { symbol: 'MES', direction: 'long', entryPrice: 7745 }, instrument: 'MES' }
+    );
+
+    // The rules that stop the read becoming a signal travel with the request.
+    expect(systemInstruction).toContain('THE ENTRY EDGE');
+    expect(systemInstruction).toContain('NOT A SIGNAL');
+    expect(systemInstruction).toContain('E3.');
+    // And it is an opinion mode, so the opinion rules are appended too.
+    expect(systemInstruction).toContain('YOUR OPINION WAS ASKED FOR');
+    expect(userPrompt).toContain('THE ENTRY BEING CONSIDERED');
+  });
+
+  it('keeps the entry block out of every other mode', () => {
+    const digest = digestFor({ markedLevels: [markedLevel()], levelTouches: [resistanceTouch] });
+    const { userPrompt } = buildCoachPrompt('edge', digest);
+    expect(userPrompt).not.toContain('THE ENTRY BEING CONSIDERED');
+  });
+
+  it('parses a valid entry-edge answer', () => {
+    const answer = parseCoachResponse('entryedge', {
+      headline: 'Your record sits against this entry.',
+      entryRead: 'You are buying into the 5m resistance you marked.',
+      levelRead: 'That line broke and never came back once, out of one logged touch.',
+      stance: 'against-the-record',
+      confidence: 'medium',
+      watch: [{ level: 'MES 15m support 7700', note: 'Never reached today.', status: 'never-touched' }],
+      risks: ['The line above you is the one your record says holds.'],
+      notInJournal: '',
+      nextStep: 'Log the 15m line when price reaches it.',
+      rationale: 'This is my read of your record, not a signal, and it can be wrong.',
+      basedOn: ['MES 5m resistance 7760 \u2014 touched, broke away and never came back'],
+    }) as { stance: string; watch: unknown[] };
+
+    expect(answer.stance).toBe('against-the-record');
+    expect(answer.watch).toHaveLength(1);
+  });
+
+  it('refuses an answer that never read the entry', () => {
+    expect(() => parseCoachResponse('entryedge', { headline: 'ok' })).toThrow();
+  });
+});
 
 describe('coach guardrails', () => {
   it('forbids market claims outright', () => {

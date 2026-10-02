@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { CoachPlan, DailyReview, DailyReviewQuestions, Lesson, LevelTouch, Setup, Trade, TradingDay } from '../../../types';
+import { CoachPlan, DailyReview, DailyReviewQuestions, Lesson, LevelTouch, MarkedLevel, Setup, Trade, TradingDay } from '../../../types';
 import { buildJournalDigest, FULL_HISTORY_TRADE_SAMPLES } from '../journal-digest';
 import { DEFAULT_INSTRUMENTS } from '../../trading/instruments';
 
@@ -1094,5 +1094,87 @@ describe("the coach's own plans and the trader's grades", () => {
     expect(read.total).toBe(0);
     expect(read.plans).toEqual([]);
     expect(read.feedback).toEqual([]);
+  });
+});
+
+describe('todayLevels', () => {
+  const level = (overrides: Partial<MarkedLevel> = {}): MarkedLevel => ({
+    id: 'a',
+    userId: 'u1',
+    tradingDayId: 'd1',
+    tradeDate: '2026-09-18',
+    instrumentId: 'mes',
+    kind: 'resistance',
+    timeframe: '5m',
+    price: 7760,
+    zonePoints: 4,
+    session: 'Regular Session',
+    createdAt: '2026-09-18T09:00:00.000Z',
+    updatedAt: '2026-09-18T09:00:00.000Z',
+    ...overrides,
+  });
+
+  const touch = (overrides: Partial<LevelTouch> = {}): LevelTouch => ({
+    id: 't1',
+    userId: 'u1',
+    tradingDayId: 'd1',
+    tradeDate: '2026-09-18',
+    instrumentId: 'mes',
+    kind: 'resistance',
+    price: 7760,
+    zonePoints: 4,
+    touchedAt: '2026-09-18T14:05:00.000Z',
+    session: 'Regular Session',
+    outcome: 'watching',
+    checks: 0,
+    createdAt: '2026-09-18T14:05:00.000Z',
+    updatedAt: '2026-09-18T14:05:00.000Z',
+    ...overrides,
+  });
+
+  it('gives each of today\u2019s lines its own row with the state the record shows', () => {
+    const read = build({
+      markedLevels: [
+        level({ id: 'a', price: 7760 }),
+        level({ id: 'b', kind: 'support', timeframe: '15m', price: 7700 }),
+      ],
+      levelTouches: [
+        touch({ id: 't1', levelId: 'a', outcome: 'never-returned', checks: 3, maxExcursionPoints: 12 }),
+      ],
+    }).todayLevels;
+
+    expect(read.date).toBe('2026-09-18');
+    expect(read.symbols).toEqual(['MES']);
+    const byPrice = new Map(read.levels.map((row) => [row.price, row]));
+    expect(byPrice.get(7760)?.status).toBe('never-returned');
+    expect(byPrice.get(7760)?.checks).toBe(3);
+    expect(byPrice.get(7760)?.maxExcursionPoints).toBe(12);
+    expect(byPrice.get(7760)?.session).toBe('Regular Session');
+  });
+
+  it('reports a line nothing was logged against as never touched, never as held', () => {
+    const read = build({
+      markedLevels: [level({ id: 'b', kind: 'support', price: 7700 })],
+    }).todayLevels;
+
+    expect(read.levels[0].status).toBe('never-touched');
+    expect(read.levels[0].session).toBeNull();
+    expect(read.levels[0].checks).toBeNull();
+  });
+
+  it('leaves out lines marked on earlier days', () => {
+    const read = build({ markedLevels: [level({ id: 'old', tradeDate: '2026-09-17' })] }).todayLevels;
+    expect(read.levels).toEqual([]);
+    expect(read.symbols).toEqual([]);
+  });
+
+  it('does not attribute a touch that names no line', () => {
+    const read = build({
+      markedLevels: [level({ id: 'a' })],
+      // The older mark-as-you-go touch carries no levelId, so it cannot be tied to this line.
+      levelTouches: [touch({ id: 't1', levelId: undefined, outcome: 'never-returned' })],
+    }).todayLevels;
+
+    expect(read.levels[0].status).toBe('never-touched');
   });
 });

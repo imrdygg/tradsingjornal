@@ -2015,6 +2015,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               // the trader's own lines were ever tested, not only how the tested ones held,
               // and the level instruments label VIX and the rest in that breakdown.
               markedLevels,
+              levelOutlooks,
               levelInstruments,
               coachPlans,
             }}

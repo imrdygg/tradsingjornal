@@ -13,6 +13,7 @@ import type {
   LevelEdge,
   LevelOutlookRead,
   LevelTimeframesRead,
+  TodayLevelsRead,
 } from './journal-digest';
 import { hourLabel } from '../analytics/session-extremes';
 import type { SetupDirection, SetupVerdict, SetupWeek } from '../analytics/setup-week';
@@ -22,6 +23,8 @@ import type {
   CoachMode,
   CoachResponse,
   CoachTradeFacts,
+  EntryEdgeFacts,
+  EntryEdgeNote,
   LearnedSetup,
   LessonsResponse,
   LessonTheme,
@@ -105,6 +108,13 @@ export const COACH_MODES: readonly CoachMode[] = [
    */
   'selfplan',
   /**
+   * The entry edge: the trader names a side and the price they are thinking of entering at, and
+   * the coach reads that entry against THEIR OWN lines marked today — each one with its own
+   * logged state — plus the live read. An opinion mode, and the narrowest one: it answers about
+   * one entry, from the trader's record, and never turns a hold rate into a signal.
+   */
+  'entryedge',
+  /**
    * The lesson read: the trader's own written notes, tags and still images, read back on
    * request. Kept to its own mode so lessons never bleed into the other answers; journal
    * material only, and no market opinion.
@@ -132,6 +142,9 @@ export const COACH_OPINION_MODES: readonly CoachMode[] = [
   // they logged is still an opinion about the market, so it belongs on this list — and every
   // rule the other opinion modes carry applies to it unchanged.
   'extremecall',
+  // The entry edge is an opinion by construction — it names a side and levels — so it belongs
+  // here, and it carries the opinion rules plus its own entry-edge rules below.
+  'entryedge',
 ];
 
 export function isCoachMode(value: unknown): value is CoachMode {
@@ -179,7 +192,8 @@ export function coachGuardrails(
   withMatch = false,
   withLessons = false,
   withSelfPlan = false,
-  withPlanGrades = false
+  withPlanGrades = false,
+  withEntryEdge = false
 ): string {
   let text = COACH_GUARDRAILS;
   if (withLearn) text += LEARN_GUARDRAILS_SUFFIX;
@@ -187,6 +201,9 @@ export function coachGuardrails(
   if (withLessons) text += LESSONS_GUARDRAILS_SUFFIX;
   if (withSelfPlan) text += SELFPLAN_GUARDRAILS_SUFFIX;
   if (withPlanGrades) text += PLAN_GRADES_GUARDRAILS_SUFFIX;
+  // Appended for the entry-edge read only: it is the one mode that talks about a specific
+  // entry against specific lines, so it needs rules about not turning that into a signal.
+  if (withEntryEdge) text += ENTRY_EDGE_GUARDRAILS_SUFFIX;
   if (withLevelEdge) text += LEVEL_EDGE_GUARDRAILS_SUFFIX;
   if (withExtremes) text += EXTREMES_GUARDRAILS_SUFFIX;
   if (withMarketData) text += MARKET_GUARDRAILS_SUFFIX;
@@ -340,6 +357,42 @@ L7. THE TIMEFRAME IS THE TRADER'S OWN LABEL, NOT A CHART YOU WERE GIVEN. A "5m r
 L8. THE OUTLOOKS ARE THE TRADER'S OWN OPINION, NOT YOURS AND NOT A MARKET FACT. Report what
     they expected, including when the instruments disagree. Never present an outlook as a
     reason to take a trade, and never quote a past outlook as a call that "worked".`;
+
+/**
+ * The rules for reading one prospective entry against the trader's own marked lines.
+ *
+ * The danger here is specific and worth its own rules: the trader has already decided a side
+ * and a price, so the easy failure is to become a machine that justifies it. The rules make
+ * "your record sits against this entry" a first-class answer, keep a line the trader never
+ * reached from being read as a line that held, and require every shared price to be one the
+ * trader marked rather than one recalled from nowhere.
+ */
+const ENTRY_EDGE_GUARDRAILS_SUFFIX = `\n\nTHE ENTRY EDGE — SPECIAL RULES FOR THIS REQUEST ONLY.
+The trader has named a side and a price they are thinking of entering at, and you have been
+handed THEIR OWN lines marked today, each with its own logged state, plus the live read.
+
+E1. THIS IS NOT A SIGNAL AND NOT A RECOMMENDATION. Never tell them to take, skip, size or
+    time the entry. Say what their own record shows about an entry there and hand it back.
+    Never phrase it as "you should", "take it", "this is a buy" or anything close.
+E2. EVERY LEVEL YOU NAME MUST BE ONE THEY MARKED TODAY, OR A NUMBER IN THE LIVE READ. The
+    lines are listed with their chart, side and price. Never invent a level, never recall
+    one from outside this prompt, and never round or approximate one.
+E3. A LINE MARKED AND NEVER TOUCHED IS NOT EVIDENCE FOR OR AGAINST ANYTHING. Say that it
+    was never reached and that nothing can be read from it, and do not let it support the
+    entry or argue against it. Only an outcome that was actually logged says something.
+E4. A HOLD RATE IS A COUNT OF WHAT HAPPENED, NOT A PROBABILITY. Quote the decided count
+    with any rate, never state a percentage for a section marked too thin to read, and
+    never call a hold a profit or a reason the trade will work.
+E5. THE DISTANCES ARE COMPUTED FOR YOU AND ARE FACTS. Use the points-between numbers you were
+    handed as they are. Do not do your own arithmetic on prices, and do not estimate a
+    distance the prompt did not give you.
+E6. SAY WHEN THE RECORD SITS AGAINST THE ENTRY. If the trader's own lines show this side of
+    the price failing, or the level they are walking into holding, say so plainly. Agreeing
+    with their chosen side is never the goal; an honest mixed or against-the-record answer is
+    a complete answer.
+E7. NAME WHAT THE RECORD CANNOT SETTLE. Whether the line will hold this time, what the news
+    is, and what price does next are all outside the record — put them in notInJournal
+    rather than inferring them.`;
 
 /**
  * The rules for reading the session-extreme log honestly.
@@ -1851,6 +1904,130 @@ export function formatEntryForPrompt(entry: {
   return lines.join('\n');
 }
 
+/** Plain words for a line's logged state, so an absence is never read as an outcome. */
+function todayLevelStatusWord(status: string): string {
+  switch (status) {
+    case 'never-touched':
+      return 'NEVER TOUCHED — nothing has been logged against it, so it is not a line that held';
+    case 'watching':
+      return 'touched, still WATCHING — price has not left the line on the break side yet';
+    case 'never-returned':
+      return 'touched, broken and NOT come back — the break-and-run the record looks for';
+    case 'returned':
+      return 'touched, then price came BACK inside the line — the level did not hold';
+    case 'invalid':
+      return 'touched, then set aside by the trader as invalid — it counts in no rate';
+    default:
+      return status;
+  }
+}
+
+/** A signed distance as plain words: "12.50 points ABOVE", "45.00 points BELOW". */
+function distanceWords(from: number, price: number): string {
+  const delta = price - from;
+  const magnitude = Math.abs(delta);
+  const rounded = Math.round(magnitude * 100) / 100;
+  if (rounded === 0) return 'AT the same price';
+  return `${rounded} points ${delta > 0 ? 'ABOVE' : 'BELOW'}`;
+}
+
+/**
+ * The entry being weighed up, read against the trader's own lines for that instrument.
+ *
+ * The distances are computed here rather than left to the model, and they are computed from
+ * both the entry and the live price, because "is this line ahead of me or behind me" is the
+ * whole question and a model doing that subtraction in its head gets it wrong often enough to
+ * matter. Only the entry's own instrument is listed: the lines of another market are not part
+ * of this entry, and including them would invite the model to reason across them.
+ *
+ * Every line is printed with its logged state, and a line nothing was logged against is
+ * printed as NEVER TOUCHED rather than omitted — a line the trader marked and price never
+ * reached is a fact about their chart, and dropping it would leave the model to assume the
+ * space between two lines is empty.
+ */
+export function formatEntryEdgeForPrompt(
+  entry: EntryEdgeFacts,
+  quote: InstrumentQuote | undefined,
+  todayLevels: TodayLevelsRead
+): string {
+  const lines: string[] = [];
+  lines.push('=== THE ENTRY BEING CONSIDERED ===');
+  lines.push(
+    `The trader is thinking of going ${entry.direction.toUpperCase()} ${entry.symbol} at ` +
+      `${entry.entryPrice}` +
+      (entry.contracts && entry.contracts > 0 ? `, ${entry.contracts} contract(s)` : '') +
+      '. This is what they are weighing up, not an instruction to you.'
+  );
+
+  // The live read, when the server could fetch one. A failed read is stated as failed: the
+  // formatter that renders it says so, and the guardrails forbid filling the gap.
+  lines.push('');
+  if (quote) lines.push(formatInstrumentQuoteForPrompt(quote));
+  else lines.push('LIVE READ: unavailable — no live price was fetched for this request.');
+
+  const live = quote && quote.ok && typeof quote.price === 'number' ? quote.price : null;
+
+  const forSymbol = todayLevels.levels.filter(
+    (level) => level.symbol.trim().toUpperCase() === entry.symbol.trim().toUpperCase()
+  );
+
+  lines.push('');
+  lines.push(
+    `=== THE TRADER'S OWN LINES FOR ${entry.symbol.toUpperCase()}, MARKED TODAY ` +
+      `(${todayLevels.date}) ===`
+  );
+  if (forSymbol.length === 0) {
+    lines.push(
+      'Nothing is marked for this instrument today. Say exactly that: their own record has no ' +
+        'line to read this entry against, and any answer would be invention.'
+    );
+  } else {
+    lines.push(
+      'Each line is one the trader wrote down themselves, with its chart and its own logged ' +
+        'state. The distances are computed for you: "AHEAD" means further in the direction they ' +
+        'are leaning, "BEHIND" the opposite way.'
+    );
+    for (const level of forSymbol) {
+      const frame = level.timeframe ?? 'no timeframe recorded';
+      const label = level.label ? `, marked "${level.label}"` : '';
+      const fromEntry = distanceWords(entry.entryPrice, level.price);
+      const signed = level.price - entry.entryPrice;
+      // Ahead or behind is about the side they are leaning: a long travels up, so a line above
+      // the entry is on its way; a short travels down, so a line below it is.
+      const ahead = entry.direction === 'long' ? signed > 0 : signed < 0;
+      const side = signed === 0 ? 'AT the entry' : ahead ? 'AHEAD of the entry' : 'BEHIND the entry';
+      const liveNote =
+        live === null ? '' : `, and ${distanceWords(live, level.price)} the live price (${live})`;
+      lines.push(
+        `- ${level.symbol} ${frame} ${level.kind} at ${level.price} (width \u00b1${level.zonePoints})` +
+          `${label}: ${fromEntry} the entry of ${entry.entryPrice}, ${side}${liveNote}. ` +
+          `State: ${todayLevelStatusWord(level.status)}` +
+          (level.touchedAt ? ` (touched ${level.touchedAt}` : '') +
+          (level.touchedAt && level.checks ? `, checked ${level.checks} time(s))` : level.touchedAt ? ')' : '') +
+          (level.maxExcursionPoints !== null ? `, ran ${level.maxExcursionPoints} point(s)` : '') +
+          '.'
+      );
+    }
+  }
+
+  if (todayLevels.omitted > 0) {
+    lines.push('');
+    lines.push(
+      `(${todayLevels.omitted} of today's lines were left out of this list — do not claim to ` +
+        'have seen them.)'
+    );
+  }
+
+  lines.push('');
+  lines.push(
+    'Read this entry against those lines and the counts in the level-touch record above. Do not ' +
+      'invent a line that is not listed, do not do your own arithmetic on these prices, and do ' +
+      'not let a line that was never reached count for or against the entry.'
+  );
+
+  return lines.join('\n');
+}
+
 /**
  * The trader's own typed question, framed so it can only ever be read as a question.
  *
@@ -2160,6 +2337,23 @@ You are also drafting TODAY'S PLAN around this one instrument: bias, contracts, 
   "nextStep": "one concrete, checkable thing to do differently, or an empty string when the question did not call for one"
 }
 Answer the question that was actually asked, and only that — no summary of their record and no advice they did not ask for. If the question is about the market, say plainly that you cannot see the market and that this journal records only their own trades, then answer whatever part of it their records can settle. If it needs something the journal does not hold — how they felt, what the chart looked like, what the news was — put that in notInJournal rather than inferring it. A question the journal cannot answer is answered by saying so.`,
+  entryedge: `Return exactly this JSON:
+{
+  "headline": "one sentence, under 16 words, on what their own record says about this entry",
+  "entryRead": "2-3 sentences reading the entry back against the live price, using only the numbers you were handed: where the entry sits relative to the live read, and which marked lines sit between it and the side they are leaning",
+  "levelRead": "2-4 sentences on what THEIR OWN marked lines say about a price like this one, quoting the line, its chart, its logged state and any decided counts behind it",
+  "stance": "one of with-the-record, against-the-record, mixed — what their own record says about this entry",
+  "confidence": "one of low, medium, high",
+  "watch": [
+    { "level": "the line as the trader marked it, e.g. MES 15m resistance 7760", "note": "what their record says happened at that line, or that it was never reached", "status": "one of touched, never-touched, held, failed, watching, void" }
+  ],
+  "risks": ["1-3 specific things that would make this entry a mistake, tied to their own lines or counts"],
+  "notInJournal": "what the record cannot settle about this entry, in plain words. Empty string when it settles everything you would need",
+  "nextStep": "one concrete thing to log that would sharpen the next read of an entry like this",
+  "rationale": "3-4 sentences: the read, what their record supports, and plainly that this is your opinion and can be wrong",
+  "basedOn": ["each line, price and journal fact you used, one per item, quoting the numbers as they appear in the prompt"]
+}
+Every level in "watch" must be a line the trader actually marked today, copied from the list you were handed. If nothing is marked for that instrument today, return an empty list and say so rather than filling the gap. Their own record disagreeing with the side they chose is a real and useful answer — say it plainly.`,
 };
 
 /**
@@ -2359,6 +2553,21 @@ export function buildCoachPrompt(
         `you would exit, and what would prove the call wrong. Where THE TRADER'S GRADES OF ` +
         `YOUR PAST PLANS appears, let their notes and grades shape how you write this one. ` +
         `State plainly that this is your opinion and can be wrong.`
+      : mode === 'entryedge'
+      ? `The trader has named a side and the price they are thinking of entering at for ` +
+        `{instrument}, and asked what their OWN record says about an entry there. Read THE ` +
+        `ENTRY BEING CONSIDERED: the entry, the live read, and every line they marked today ` +
+        `for that instrument with its own logged state and its computed distance from the ` +
+        `entry. Work from that record and nothing else. Say where the entry sits, which ` +
+        `marked lines sit between it and the side they are leaning, and what those lines did ` +
+        `the last time they were reached — quoting the line, its chart and any decided counts ` +
+        `behind it. A line marked and never reached says nothing either way and must be named ` +
+        `as such. Say plainly when the record sits against the side they picked, or splits — ` +
+        `that is a complete and useful answer, and agreeing with them is never the goal. Never ` +
+        `tell them to take or skip the trade, never turn a hold into a probability or a ` +
+        `profit, and never do your own arithmetic on prices: the distances you were handed ` +
+        `are the facts. Put whatever the record cannot settle in notInJournal. State plainly ` +
+        `that this is your opinion and can be wrong.`
       : `Critique the single trade described below. Judge the decision and the execution separately. ` +
         `Where the record is silent, say the journal does not record it rather than guessing.`;
 
@@ -2393,6 +2602,14 @@ export function buildCoachPrompt(
   const entryBlock =
     mode === 'entrycall' && extras?.entry
       ? `\n\n${formatEntryForPrompt(extras.entry)}`
+      : '';
+  // The entry being weighed up, the live read, and the trader's own lines for that instrument,
+  // each with its logged state and its distance from the entry. One block, because the whole
+  // read is the relationship between those three things — splitting them across sections
+  // would let the model line up a level against the wrong price.
+  const entryEdgeBlock =
+    mode === 'entryedge' && extras?.entryEdge
+      ? `\n\n${formatEntryEdgeForPrompt(extras.entryEdge, extras.instrumentQuote, digest.todayLevels)}`
       : '';
   const fieldBlock =
     mode === 'planfield' && extras?.field
@@ -2431,7 +2648,7 @@ export function buildCoachPrompt(
       : '';
 
   const userPrompt =
-    `${context}${marketBlock}${instrumentBlock}${chartBlock}${imagesBlock}${tradeBlock}${positionBlock}${entryBlock}${fieldBlock}${questionBlock}` +
+    `${context}${marketBlock}${instrumentBlock}${chartBlock}${imagesBlock}${tradeBlock}${positionBlock}${entryBlock}${entryEdgeBlock}${fieldBlock}${questionBlock}` +
     `\n\n=== YOUR TASK ===\n${task.replace('{instrument}', extras?.instrument || 'the instrument')}\n\n${COACH_RESPONSE_SHAPES[mode]}`;
 
   return {
@@ -2466,7 +2683,10 @@ export function buildCoachPrompt(
       // the level-touch and extreme rules are: a grade is the trader's judgement of the
       // coach's writing, and it must never be read as evidence about the market. Optional for
       // the same reason as the formatter — a digest without the record simply has none.
-      (digest.coachPlanRead?.total ?? 0) > 0
+      (digest.coachPlanRead?.total ?? 0) > 0,
+      // And the entry-edge rules, gated on the one mode that talks about a specific entry
+      // against specific lines and could otherwise become a machine for justifying it.
+      mode === 'entryedge'
     ),
     userPrompt,
   };
@@ -2673,6 +2893,40 @@ export function parseCoachResponse(
       holding: asTextList(obj.holding, 'holding'),
       nextStep: asText(obj.nextStep, 'nextStep'),
       motivation: asText(obj.motivation, 'motivation'),
+    };
+  }
+
+  if (mode === 'entryedge') {
+    const watchRaw = Array.isArray(obj.watch) ? obj.watch : [];
+    const watch: EntryEdgeNote[] = watchRaw
+      .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+      .map((item) => ({
+        level: typeof item.level === 'string' ? item.level.trim() : '',
+        note: typeof item.note === 'string' ? item.note.trim() : '',
+        status: typeof item.status === 'string' ? item.status.trim() : '',
+      }))
+      // A watch entry with no line named cannot be checked against a marked level, so it is
+      // dropped rather than rendered as a line the trader never marked.
+      .filter((item) => item.level);
+
+    return {
+      headline: asText(obj.headline, 'headline'),
+      entryRead: asText(obj.entryRead, 'entryRead'),
+      levelRead: asText(obj.levelRead, 'levelRead'),
+      stance: asEnum(
+        obj.stance,
+        ['with-the-record', 'against-the-record', 'mixed'] as const,
+        'mixed'
+      ),
+      confidence: asEnum(obj.confidence, ['low', 'medium', 'high'] as const, 'low'),
+      watch,
+      risks: asTextList(obj.risks, 'risks'),
+      // Loose on purpose: an empty string is the honest answer when the record settles what the
+      // trader needs, and requiring text here would push the model to invent a gap to fill.
+      notInJournal: asLooseText(obj.notInJournal),
+      nextStep: asText(obj.nextStep, 'nextStep'),
+      rationale: asText(obj.rationale, 'rationale'),
+      basedOn: asTextList(obj.basedOn, 'basedOn'),
     };
   }
 

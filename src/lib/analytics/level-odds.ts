@@ -1,4 +1,11 @@
-import type { LevelKind, LevelTimeframe, LevelTouch, MarkedLevel } from '../../types';
+import type {
+  LevelKind,
+  LevelTimeframe,
+  LevelTouch,
+  MarkedLevel,
+  TradingDay,
+  TradingSession,
+} from '../../types';
 import { hourInTimezone } from '../storage/date-utils';
 import { MIN_DECIDED, summarizeTouches, type LevelEdgeStats } from './level-edge';
 import { WEEKDAY_NAMES } from './level-recurrence';
@@ -38,6 +45,38 @@ export const MIN_DAYS_FOR_RATE = 3;
 
 /** Fewest reached days before a "what happened next" line is drawn. */
 export const MIN_DAYS_FOR_SEQUENCE = 3;
+
+/** Weekday names indexed by `Date.getUTCDay()` (0 = Sunday), shared with the card's selector. */
+export const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
+
+/**
+ * The calendar weekday (0 = Sunday) of a `YYYY-MM-DD` trading date.
+ *
+ * Read in UTC on purpose: a trading date is a calendar label, so its weekday must not shift
+ * with the reader's timezone. Parsing it as a local instant would move a date across midnight
+ * for anyone east or west of the record's own clock.
+ */
+export function weekdayOfTradeDate(tradeDate: string): number {
+  const date = new Date(`${tradeDate}T00:00:00Z`);
+  return Number.isNaN(date.getTime()) ? 0 : date.getUTCDay();
+}
+
+/**
+ * A narrowing of the read: "Mondays", "the overnight session", "around 03:00".
+ *
+ * Each field is optional and unset means "all". A weekday or session narrows both the marked
+ * days that form the denominator and the touches that count as reaches; an hour narrows only
+ * the reaches, because a marked line has a day and a session but no hour of its own. This is how
+ * a pattern like "Mondays, overnight, around 03:00" is isolated from the rest of the record.
+ */
+export interface LevelOddsCondition {
+  /** 0 = Sunday … 6 = Saturday, or null/absent for every weekday. */
+  weekday?: number | null;
+  /** One session, or null/absent for all of them. */
+  session?: TradingSession | null;
+  /** An hour of day, 0–23, or null/absent for any hour. */
+  hour?: number | null;
+}
 
 function round(value: number, dp = 1): number {
   if (!Number.isFinite(value)) return 0;
@@ -135,6 +174,8 @@ export interface LevelOddsReport {
   sequences: LevelSequenceRow[];
   minDaysForRate: number;
   minDaysForSequence: number;
+  /** The narrowing this report was built under; all-unset fields narrow nothing. */
+  condition: LevelOddsCondition;
 }
 
 /**
@@ -171,23 +212,46 @@ export function summarizeLevelOdds(
   touches: LevelTouch[],
   instrumentId: string,
   timezone: string,
+  condition: LevelOddsCondition = {},
   minDecided = MIN_DECIDED,
   minDaysForRate = MIN_DAYS_FOR_RATE,
   minDaysForSequence = MIN_DAYS_FOR_SEQUENCE
 ): LevelOddsReport {
+  const wantWeekday = condition.weekday ?? null;
+  const wantSession = condition.session ?? null;
+  const wantHour = condition.hour ?? null;
+
+  const dayMatches = (tradeDate: string) =>
+    wantWeekday === null || weekdayOfTradeDate(tradeDate) === wantWeekday;
+
   // Only lines that carry a timeframe can be attributed to a bucket; a level from before
-  // timeframes existed is left out rather than invented into one.
+  // timeframes existed is left out rather than invented into one. A weekday or session
+  // condition narrows which marked days form the denominator.
   const instrumentLevels = levels.filter(
-    (level) => level.instrumentId === instrumentId && !!level.timeframe
+    (level) =>
+      level.instrumentId === instrumentId &&
+      !!level.timeframe &&
+      dayMatches(level.tradeDate) &&
+      (wantSession === null || level.session === wantSession)
   );
   const levelById = new Map(instrumentLevels.map((level) => [level.id, level]));
 
   const bucketOfLevel = (level: MarkedLevel): string =>
     levelOddsKey(level.timeframe as LevelTimeframe, level.kind);
 
-  // A touch counts only when it links back to a marked line; the free-standing, older touches
-  // have no bucket to attribute to.
-  const linked = touches.filter((touch) => touch.levelId && levelById.has(touch.levelId));
+  // A touch counts only when it links back to a marked line that survived the condition; the
+  // free-standing, older touches have no bucket to attribute to.
+  const linkedByLevel = touches.filter((touch) => {
+    if (!touch.levelId || !levelById.has(touch.levelId)) return false;
+    if (!dayMatches(touch.tradeDate)) return false;
+    if (wantSession !== null && touch.session !== wantSession) return false;
+    return true;
+  });
+
+  // The hour narrows which reaches count; the sequence read below keeps to whole days.
+  const linked = linkedByLevel.filter(
+    (touch) => wantHour === null || hourInTimezone(touchDate(touch), timezone) === wantHour
+  );
 
   const markedDays = new Map<string, Set<string>>();
   const reachedDays = new Map<string, Set<string>>();
@@ -269,11 +333,12 @@ export function summarizeLevelOdds(
       a.key.localeCompare(b.key)
   );
 
-  // ---- What happened next: the earliest reach of each line, day by day ------
-  // The earliest touch per line per day is what orders the day: a later reach of another line
-  // is a "next step", an earlier one is not.
+  // ---- What happened next: whole days, before the hour narrows the reaches ----
+  // An hour condition is a reach-side narrowing, not an ordering, so the sequence read is built
+  // from the weekday- and session-allowed touches and keeps to the whole day.
   const reachedAtByDay = new Map<string, Map<string, number>>();
-  for (const touch of linked) {
+  const seqReachedDays = new Map<string, Set<string>>();
+  for (const touch of linkedByLevel) {
     const level = levelById.get(touch.levelId as string);
     if (!level) continue;
     const key = bucketOfLevel(level);
@@ -285,10 +350,17 @@ export function summarizeLevelOdds(
     }
     const existing = byBucket.get(key);
     if (existing === undefined || ms < existing) byBucket.set(key, ms);
+
+    let days = seqReachedDays.get(key);
+    if (!days) {
+      days = new Set();
+      seqReachedDays.set(key, days);
+    }
+    days.add(touch.tradeDate);
   }
 
   const sequences: LevelSequenceRow[] = [];
-  for (const [key, days] of reachedDays) {
+  for (const [key, days] of seqReachedDays) {
     if (days.size < minDaysForSequence) continue;
     const alsoCount = new Map<string, number>();
     for (const day of days) {
@@ -324,5 +396,68 @@ export function summarizeLevelOdds(
     sequences,
     minDaysForRate,
     minDaysForSequence,
+    condition,
+  };
+}
+
+/** What today's own weekday says about the lines the trader marked today. */
+export interface LevelTodayProjection {
+  /** Today's calendar weekday, 0 = Sunday. */
+  weekday: number;
+  /** Its short name, e.g. `Mon`. */
+  weekdayName: string;
+  /**
+   * The lines marked today, each with the record's read for this weekday.
+   *
+   * Empty when nothing has been marked for the day yet, so the caller can stay silent rather
+   * than show an empty promise. Only buckets marked today are returned, and each one's counts
+   * are the same-line, same-weekday history — never a projection the record cannot support.
+   */
+  rows: LevelOddsRow[];
+}
+
+/**
+ * The lines marked today, read against the same weekday in the record.
+ *
+ * This is the "what does my record say about a day like today" view: for the buckets the trader
+ * has marked for today's trading day, it reports how often price reached that same line on this
+ * weekday before. The result is the same counts the full read gives, narrowed to one weekday, so
+ * a pattern like "the 5-minute line is reached most Mondays" is checkable rather than asserted.
+ */
+export function todayProjection(
+  levels: MarkedLevel[],
+  touches: LevelTouch[],
+  todayTradingDay: TradingDay,
+  instrumentId: string,
+  timezone: string,
+  minDecided = MIN_DECIDED,
+  minDaysForRate = MIN_DAYS_FOR_RATE,
+  minDaysForSequence = MIN_DAYS_FOR_SEQUENCE
+): LevelTodayProjection {
+  const weekday = weekdayOfTradeDate(todayTradingDay.tradeDate);
+  const todayKeys = new Set(
+    levels
+      .filter(
+        (level) =>
+          level.tradingDayId === todayTradingDay.id &&
+          level.instrumentId === instrumentId &&
+          !!level.timeframe
+      )
+      .map((level) => levelOddsKey(level.timeframe as LevelTimeframe, level.kind))
+  );
+  const report = summarizeLevelOdds(
+    levels,
+    touches,
+    instrumentId,
+    timezone,
+    { weekday },
+    minDecided,
+    minDaysForRate,
+    minDaysForSequence
+  );
+  return {
+    weekday,
+    weekdayName: WEEKDAY_LABELS[weekday],
+    rows: report.rows.filter((row) => todayKeys.has(row.key)),
   };
 }

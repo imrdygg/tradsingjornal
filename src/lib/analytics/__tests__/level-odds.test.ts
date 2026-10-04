@@ -1,6 +1,35 @@
 import { describe, it, expect } from 'vitest';
-import { LevelKind, LevelTimeframe, LevelTouch, MarkedLevel } from '../../../types';
-import { mostReachedLine, summarizeLevelOdds } from '../level-odds';
+import { LevelKind, LevelTimeframe, LevelTouch, MarkedLevel, TradingDay } from '../../../types';
+import {
+  mostReachedLine,
+  summarizeLevelOdds,
+  todayProjection,
+  weekdayOfTradeDate,
+} from '../level-odds';
+
+function tradingDay(over: Partial<TradingDay> = {}): TradingDay {
+  return {
+    id: 'day-today',
+    userId: 'u',
+    tradeDate: '2026-09-28',
+    status: 'active',
+    riskMode: 'normal',
+    normalLossLimit: 0,
+    plannedLossLimit: 0,
+    contractsPlanned: 1,
+    primaryInstrument: 'MES',
+    allowedSessions: ['Regular Session'],
+    marketBias: 'neutral',
+    watchedSetups: [],
+    importantLevels: [],
+    waitingFor: '',
+    stayOutIf: '',
+    planChanges: [],
+    createdAt: '2026-09-28T00:00:00Z',
+    updatedAt: '2026-09-28T00:00:00Z',
+    ...over,
+  };
+}
 
 function marked(over: Partial<MarkedLevel> = {}): MarkedLevel {
   return {
@@ -254,6 +283,110 @@ describe('mostReachedLine', () => {
     const levels = [marked({ id: 'a', timeframe: '5m' })];
     const report = summarizeLevelOdds(levels, [], 'mes', 'America/New_York');
     expect(mostReachedLine(report.rows)).toBeNull();
+  });
+});
+
+describe('summarizeLevelOdds — condition', () => {
+  it('narrows to a weekday, both the denominator and the reaches', () => {
+    // 2026-09-28 is a Monday, 2026-09-29 a Tuesday.
+    const levels = [
+      marked({ id: 'a', tradeDate: '2026-09-28' }),
+      marked({ id: 'b', tradeDate: '2026-09-29' }),
+    ];
+    const touches = [touch({ id: 't1', levelId: 'a', tradeDate: '2026-09-28' })];
+
+    const all = summarizeLevelOdds(levels, touches, 'mes', 'America/New_York');
+    expect(all.rows[0].daysMarked).toBe(2);
+    expect(all.rows[0].daysReached).toBe(1);
+
+    const mondays = summarizeLevelOdds(levels, touches, 'mes', 'America/New_York', {
+      weekday: weekdayOfTradeDate('2026-09-28'),
+    });
+    expect(mondays.rows[0].daysMarked).toBe(1);
+    expect(mondays.rows[0].daysReached).toBe(1);
+    expect(mondays.rows[0].reachRate).toBe(100);
+
+    const tuesdays = summarizeLevelOdds(levels, touches, 'mes', 'America/New_York', {
+      weekday: weekdayOfTradeDate('2026-09-29'),
+    });
+    expect(tuesdays.rows[0].daysMarked).toBe(1);
+    expect(tuesdays.rows[0].daysReached).toBe(0);
+    expect(tuesdays.rows[0].reachRate).toBe(0);
+  });
+
+  it('narrows to a session on both the marked lines and the touches', () => {
+    const levels = [
+      marked({ id: 'a', tradeDate: '2026-09-28', session: 'Overnight' }),
+      marked({ id: 'b', tradeDate: '2026-09-29', session: 'Regular Session' }),
+    ];
+    const touches = [
+      touch({ id: 't1', levelId: 'a', tradeDate: '2026-09-28', session: 'Overnight' }),
+      touch({ id: 't2', levelId: 'b', tradeDate: '2026-09-29', session: 'Regular Session' }),
+    ];
+
+    const overnight = summarizeLevelOdds(levels, touches, 'mes', 'America/New_York', {
+      session: 'Overnight',
+    });
+    expect(overnight.rows).toHaveLength(1);
+    expect(overnight.rows[0].daysMarked).toBe(1);
+    expect(overnight.rows[0].daysReached).toBe(1);
+  });
+
+  it('narrows reaches to an hour without changing the days marked', () => {
+    const levels = [
+      marked({ id: 'a', tradeDate: '2026-09-28' }),
+      marked({ id: 'b', tradeDate: '2026-09-29' }),
+      marked({ id: 'c', tradeDate: '2026-09-30' }),
+    ];
+    const touches = [
+      // 09:00, 11:00, 09:00 local (America/New_York, EDT).
+      touch({ id: 't1', levelId: 'a', tradeDate: '2026-09-28', touchedAt: '2026-09-28T13:00:00Z' }),
+      touch({ id: 't2', levelId: 'b', tradeDate: '2026-09-29', touchedAt: '2026-09-29T15:00:00Z' }),
+      touch({ id: 't3', levelId: 'c', tradeDate: '2026-09-30', touchedAt: '2026-09-30T13:00:00Z' }),
+    ];
+
+    const nine = summarizeLevelOdds(levels, touches, 'mes', 'America/New_York', { hour: 9 });
+    // Three days marked, but only the two 09:00 reaches count.
+    expect(nine.rows[0].daysMarked).toBe(3);
+    expect(nine.rows[0].daysReached).toBe(2);
+    expect(nine.rows[0].stats.touches).toBe(2);
+    expect(nine.rows[0].hours[0].hour).toBe(9);
+  });
+});
+
+describe('todayProjection', () => {
+  it('reads today\'s marked lines against the same weekday in the record', () => {
+    const day = tradingDay({ tradeDate: '2026-09-28' }); // Monday
+    const levels = [
+      // Today's line, and two earlier Mondays of the same line.
+      marked({ id: 'today', tradingDayId: day.id, tradeDate: '2026-09-28', timeframe: '5m' }),
+      marked({ id: 'p1', tradingDayId: 'd1', tradeDate: '2026-09-21', timeframe: '5m' }),
+      marked({ id: 'p2', tradingDayId: 'd2', tradeDate: '2026-09-14', timeframe: '5m' }),
+    ];
+    const touches = [
+      touch({ id: 't1', levelId: 'p1', tradeDate: '2026-09-21' }),
+      touch({ id: 't2', levelId: 'p2', tradeDate: '2026-09-14' }),
+    ];
+
+    const projection = todayProjection(levels, touches, day, 'mes', 'America/New_York');
+    expect(projection.weekdayName).toBe('Mon');
+    expect(projection.rows).toHaveLength(1);
+    expect(projection.rows[0].key).toBe('5m|resistance');
+    // Three Mondays marked (including today), two reached.
+    expect(projection.rows[0].daysMarked).toBe(3);
+    expect(projection.rows[0].daysReached).toBe(2);
+  });
+
+  it('is empty when nothing has been marked for today', () => {
+    const day = tradingDay({ id: 'day-other', tradeDate: '2026-09-28' });
+    const projection = todayProjection(
+      [marked({ id: 'a', tradingDayId: 'd1', tradeDate: '2026-09-21' })],
+      [],
+      day,
+      'mes',
+      'America/New_York'
+    );
+    expect(projection.rows).toHaveLength(0);
   });
 });
 

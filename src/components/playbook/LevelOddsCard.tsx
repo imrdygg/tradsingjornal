@@ -1,11 +1,28 @@
 import React, { useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, Clock, History } from 'lucide-react';
-import { Instrument, LevelTimeframe, LevelTouch, MarkedLevel, TradingDay } from '../../types';
+import {
+  Instrument,
+  LevelTimeframe,
+  LevelTouch,
+  MarkedLevel,
+  TradingDay,
+  TradingSession,
+} from '../../types';
 import { CoachCard } from '../coach/coach-ui';
 import { instrumentSymbol } from '../../lib/trading/instruments';
 import { MIN_DECIDED } from '../../lib/analytics/level-edge';
 import { TIMEFRAME_LABEL } from '../../lib/analytics/level-timeframes';
-import { mostReachedLine, summarizeLevelOdds, type LevelOddsRow } from '../../lib/analytics/level-odds';
+import {
+  mostReachedLine,
+  summarizeLevelOdds,
+  todayProjection,
+  WEEKDAY_LABELS,
+  type LevelOddsCondition,
+  type LevelOddsRow,
+} from '../../lib/analytics/level-odds';
+
+/** The sessions a condition can narrow to, in the order they happen. */
+const SESSIONS: TradingSession[] = ['Overnight', 'Premarket', 'Regular Session'];
 
 /**
  * What the trader's own record says usually happens at each of their indicator lines.
@@ -65,13 +82,54 @@ export const LevelOddsCard: React.FC<LevelOddsCardProps> = ({
   });
   const instrumentId = controlledInstrumentId ?? ownInstrumentId;
 
+  /**
+   * The narrowing on the full read: "Mondays", "the overnight session", "around 03:00".
+   *
+   * Empty fields mean "all", so the card opens on the whole record and the trader narrows it.
+   * The today block below is separate and always reads against today's own weekday.
+   */
+  const [condition, setCondition] = useState<LevelOddsCondition>({});
+  const hasCondition =
+    condition.weekday != null || condition.session != null || condition.hour != null;
+  const conditionLabel = [
+    condition.weekday != null ? WEEKDAY_LABELS[condition.weekday] : null,
+    condition.session ?? null,
+    condition.hour != null ? `${String(condition.hour).padStart(2, '0')}:00` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
   const report = useMemo(
-    () => summarizeLevelOdds(levels, touches, instrumentId, timezone),
-    [levels, touches, instrumentId, timezone]
+    () => summarizeLevelOdds(levels, touches, instrumentId, timezone, condition),
+    [levels, touches, instrumentId, timezone, condition]
   );
   const symbol = instrumentSymbol(instruments, instrumentId);
   // The single line the card leads with: the one price reaches most, with its counts.
   const headline = useMemo(() => mostReachedLine(report.rows), [report.rows]);
+
+  // The lines marked today, read against the same weekday in the record.
+  const projection = useMemo(
+    () => todayProjection(levels, touches, todayTradingDay, instrumentId, timezone),
+    [levels, touches, todayTradingDay, instrumentId, timezone]
+  );
+
+  const setWeekday = (value: string) =>
+    setCondition((prev) => ({ ...prev, weekday: value === '' ? null : Number(value) }));
+  const setSession = (value: string) =>
+    setCondition((prev) => ({
+      ...prev,
+      session: value === '' ? null : (value as TradingSession),
+    }));
+  const setHour = (value: string) =>
+    setCondition((prev) => ({ ...prev, hour: value === '' ? null : Number(value) }));
+
+  /** The highlighting and the today block both need the side icon, kept in one place. */
+  const SideIcon: React.FC<{ kind: LevelOddsRow['kind'] }> = ({ kind }) =>
+    kind === 'support' ? (
+      <ArrowDown className="h-3 w-3 text-sky-300" />
+    ) : (
+      <ArrowUp className="h-3 w-3 text-amber-300" />
+    );
 
   /** The one-line read of what price did after a touch on this line. */
   const holdLine = (row: LevelOddsRow): string => {
@@ -152,7 +210,9 @@ export const LevelOddsCard: React.FC<LevelOddsCardProps> = ({
           <p className="text-xs text-zinc-400 mt-0.5">
             Read from your own marked lines and logged touches, per timeframe and side. How often
             price reached each line, how it behaved after a touch, when it tends to happen, and
-            what else got reached next. History from your record — not a forecast.
+            what else got reached next. Narrow it to a weekday, session or hour to isolate a
+            pattern, and see today's own weekday read above. History from your record — not a
+            forecast.
           </p>
         </div>
       </div>
@@ -179,10 +239,103 @@ export const LevelOddsCard: React.FC<LevelOddsCardProps> = ({
         </select>
       </div>
 
+      {/* What today's own weekday says about the lines marked today. */}
+      {projection.rows.length > 0 && (
+        <div
+          id="level-odds-today"
+          className="space-y-2 rounded-xl border border-sky-900/50 bg-sky-950/20 p-3"
+        >
+          <span className="flex items-center gap-1.5 text-[10px] font-mono uppercase font-bold text-sky-300">
+            <Clock className="h-3 w-3" />
+            Today · {projection.weekdayName}
+          </span>
+          <p className="text-[10px] text-zinc-400">
+            On {projection.weekdayName}s before, the lines you have marked today:
+          </p>
+          <div className="space-y-1.5">
+            {projection.rows.map((row) => (
+              <div
+                key={row.key}
+                data-level-today={row.key}
+                className="flex flex-wrap items-center justify-between gap-2 text-[11px]"
+              >
+                <span className="flex items-center gap-1.5 text-zinc-200">
+                  <SideIcon kind={row.kind} />
+                  {TIMEFRAME_LABEL[row.timeframe]}{' '}
+                  <span className="capitalize text-zinc-400">{row.kind}</span>
+                </span>
+                <span className="font-mono text-zinc-300">
+                  {row.daysReached} of {row.daysMarked} {projection.weekdayName} days
+                  {row.enoughDays ? ` · ${row.reachRate}%` : ' · tally'}
+                  {row.hours.length
+                    ? ` · ~${String(row.hours[0].hour).padStart(2, '0')}:00`
+                    : ''}
+                </span>
+              </div>
+            ))}
+          </div>
+          <p className="text-[10px] text-zinc-600">
+            Counted from your own record for this weekday — what happened, not a prediction.
+          </p>
+        </div>
+      )}
+
+      {/* Narrow the whole read to a weekday, session or hour. */}
+      <div className="space-y-1.5">
+        <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
+          Narrow the record
+        </span>
+        <div className="grid grid-cols-3 gap-2">
+          <select
+            id="level-odds-weekday"
+            aria-label="Weekday"
+            value={condition.weekday == null ? '' : String(condition.weekday)}
+            onChange={(event) => setWeekday(event.target.value)}
+            className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-[11px] text-zinc-100 focus:border-zinc-600 focus:outline-none"
+          >
+            <option value="">Any day</option>
+            {WEEKDAY_LABELS.map((label, index) => (
+              <option key={label} value={index}>
+                {label}
+              </option>
+            ))}
+          </select>
+          <select
+            id="level-odds-session"
+            aria-label="Session"
+            value={condition.session ?? ''}
+            onChange={(event) => setSession(event.target.value)}
+            className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-[11px] text-zinc-100 focus:border-zinc-600 focus:outline-none"
+          >
+            <option value="">Any session</option>
+            {SESSIONS.map((value) => (
+              <option key={value} value={value}>
+                {value}
+              </option>
+            ))}
+          </select>
+          <select
+            id="level-odds-hour"
+            aria-label="Hour of day"
+            value={condition.hour == null ? '' : String(condition.hour)}
+            onChange={(event) => setHour(event.target.value)}
+            className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-[11px] text-zinc-100 focus:border-zinc-600 focus:outline-none"
+          >
+            <option value="">Any hour</option>
+            {Array.from({ length: 24 }, (_, hour) => (
+              <option key={hour} value={hour}>
+                {String(hour).padStart(2, '0')}:00
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
       {report.daysMarked === 0 ? (
         <p className="rounded-xl border border-dashed border-zinc-800 bg-zinc-950/40 px-3 py-4 text-[11px] italic text-zinc-500">
-          Nothing to read yet for {symbol}. Mark some lines for it on a day or two and log what
-          price did — this fills in as your record grows.
+          {hasCondition
+            ? 'No marked lines match this narrowing. Widen the day, session or hour, or log more of the record.'
+            : `Nothing to read yet for ${symbol}. Mark some lines for it on a day or two and log what price did — this fills in as your record grows.`}
         </p>
       ) : (
         <>
@@ -206,7 +359,7 @@ export const LevelOddsCard: React.FC<LevelOddsCardProps> = ({
 
           <p className="text-[10px] text-zinc-500">
             Read across {report.daysMarked} day{report.daysMarked === 1 ? '' : 's'} you marked{' '}
-            {symbol} lines.
+            {symbol} lines{conditionLabel ? `, narrowed to ${conditionLabel}` : ''}.
           </p>
 
           <div className="space-y-2">{report.rows.map(renderRow)}</div>

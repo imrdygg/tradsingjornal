@@ -47,6 +47,7 @@ import { EdgeFinderCard } from './EdgeFinderCard';
 import { CoachSetupsCard } from './CoachSetupsCard';
 import { MarkedLevelsCard } from './MarkedLevelsCard';
 import { LevelOddsCard } from './LevelOddsCard';
+import { LevelChartCard } from './LevelChartCard';
 import { isFocusSetup, splitFocusSetups } from '../../lib/playbook/focus-setups';
 import { PATTERNS } from '../../lib/playbook/patterns';
 import { isVideoUrl } from '../../lib/media/media-utils';
@@ -568,6 +569,23 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
           instrumentId={levelInstrumentId}
           onInstrumentChange={setLevelInstrumentId}
           timeframe={levelTimeframe}
+        />
+      )}
+
+      {/*
+        The same record as pictures: reach by symbol, the hold rate building, the touch timeline
+        and per-session coverage. Fed by the levels and touches above and driven by the same
+        instrument selection, so the three level cards read as one.
+      */}
+      {markedLevels && (
+        <LevelChartCard
+          levels={markedLevels.levels}
+          touches={markedLevels.touches}
+          instruments={markedLevels.instruments}
+          todayTradingDay={markedLevels.todayTradingDay}
+          timezone={markedLevels.timezone}
+          instrumentId={levelInstrumentId}
+          onInstrumentChange={setLevelInstrumentId}
         />
       )}
 

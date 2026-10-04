@@ -20,6 +20,12 @@ import { expect, test, type Page } from '@playwright/test';
 const PROFILE_ID = 'solo-trader-01';
 
 /**
+ * Run on the trader's own clock, so a `datetime-local` value typed here lands on the same
+ * session date the app derives. The seed below works out its dates in New York explicitly.
+ */
+test.use({ timezoneId: 'America/New_York' });
+
+/**
  * Seeds yesterday's session with an imported trade. The seed runs in the page because
  * "yesterday" has to be worked out in the trader's own timezone, the same way the app
  * does it.
@@ -174,5 +180,41 @@ test.describe('Editing a trade keeps its day and its provenance', () => {
     await expect(page.locator(ASSUMED_RISK_SUMMARY)).toHaveText(
       /1 trade still use an assumed stop/i
     );
+  });
+
+  test('changing the entry date re-files the trade on the session it was moved to', async ({
+    page,
+  }) => {
+    await gotoTab(page, 'trades', /Trade Log/i);
+
+    const cardEdit = page.locator('[title="Edit Trade"]:visible');
+    const tableEdit = page.locator('button:visible', { hasText: /^Edit$/ });
+    const button = (await cardEdit.count()) > 0 ? cardEdit.first() : tableEdit.first();
+    await button.click();
+
+    const save = page.getByRole('button', { name: /Update Trade/i });
+    await expect(save).toBeVisible();
+
+    // The entry time carries the trade's date; moving it is how a trade logged under the
+    // wrong day is put back on its real one. Here it is deliberately moved onto today,
+    // which the provenance rule would otherwise never do on its own.
+    // The entry time lives under the form's optional fields, so unfold them first.
+    const toggle = page.locator('#trade-more-options-toggle');
+    if ((await toggle.getAttribute('aria-expanded')) === 'false') await toggle.click();
+
+    const today = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/New_York',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+    await page.locator('#trade-entry-time').fill(`${today}T10:00`);
+    // The exit has to move with the entry, or the form rightly refuses a trade that exits
+    // before it was taken.
+    await page.locator('#trade-exit-time').fill(`${today}T10:30`);
+    await save.click();
+
+    await gotoTab(page, 'today', /^Today$/);
+    await expect(page.getByText(/Today's Trade Executions \(1\)/)).toBeVisible();
   });
 });

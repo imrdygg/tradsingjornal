@@ -252,6 +252,7 @@ const ExtremeRow: React.FC<{
   const [editTime, setEditTime] = useState(extreme.time);
   const [editPrice, setEditPrice] = useState(String(extreme.price));
   const [editNotes, setEditNotes] = useState(extreme.notes ?? '');
+  const [editDate, setEditDate] = useState(extreme.tradeDate);
 
   /** Seeds every draft from the record, so an edit always starts from what is stored. */
   const startEdit = () => {
@@ -262,12 +263,24 @@ const ExtremeRow: React.FC<{
     setEditTime(extreme.time);
     setEditPrice(String(extreme.price));
     setEditNotes(extreme.notes ?? '');
+    setEditDate(extreme.tradeDate);
     setEditError('');
     setEditing(true);
   };
 
-  /** Writes the draft back onto the same print, re-deriving the window from the new time. */
+  /**
+   * Writes the draft back onto the same print, re-deriving the window from the new time.
+   *
+   * The date is editable because a print is often written down after the session it was read
+   * from — Friday's close logged on Saturday, so the calendar date no longer matches the
+   * session. Storage keys a print on symbol, date, kind, window, chart and time, so changing
+   * the date rewrites the same record rather than leaving a copy behind on the wrong day.
+   */
   const saveEdit = () => {
+    if (!editDate) {
+      setEditError('Pick the session this print belongs to.');
+      return;
+    }
     const window = sessionWindowForTime(editTime);
     if (window === null) {
       setEditError(
@@ -290,6 +303,7 @@ const ExtremeRow: React.FC<{
 
     onSave({
       ...extreme,
+      tradeDate: editDate,
       instrumentId: instrument.id,
       symbol: instrument.symbol,
       kind: editKind,
@@ -365,6 +379,14 @@ const ExtremeRow: React.FC<{
                 </option>
               ))}
             </select>
+            <input
+              id={`extreme-edit-date-${extreme.id}`}
+              type="date"
+              value={editDate}
+              onChange={(e) => setEditDate(e.target.value)}
+              aria-label="Session date"
+              className={fieldClass}
+            />
             <input
               id={`extreme-edit-time-${extreme.id}`}
               type="time"

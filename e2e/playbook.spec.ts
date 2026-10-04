@@ -446,6 +446,93 @@ test.describe('Level odds — weekday narrowing', () => {
 });
 
 /**
+ * The level record drawn as charts: reach by symbol, the edge building, the touch timeline and
+ * per-session coverage. One marked line and one decided touch is enough for every view to draw.
+ */
+test.describe('Level charts', () => {
+  test('draws each of the four views from the marked lines and touches', async ({ page }) => {
+    // A marked-line record with decided touches, so every view has data to draw. Seeded
+    // rather than tapped in, because the outcome of a touch is not set from the card.
+    await page.addInitScript(() => {
+      const level = (
+        id: string,
+        price: number,
+        tradeDate: string,
+        resolution?: 'never-touched' | 'void'
+      ) => ({
+        id,
+        userId: 'solo-trader-01',
+        tradingDayId: `day-${tradeDate}`,
+        tradeDate,
+        instrumentId: 'mes',
+        kind: 'resistance',
+        price,
+        zonePoints: 2,
+        session: 'Overnight',
+        timeframe: '5m',
+        resolution,
+        createdAt: `${tradeDate}T02:00:00.000Z`,
+        updatedAt: `${tradeDate}T02:00:00.000Z`,
+      });
+      const touch = (id: string, levelId: string, tradeDate: string, outcome: string, price: number) => ({
+        id,
+        userId: 'solo-trader-01',
+        tradingDayId: `day-${tradeDate}`,
+        tradeDate,
+        instrumentId: 'mes',
+        kind: 'resistance',
+        price,
+        zonePoints: 2,
+        touchedAt: `${tradeDate}T02:00:00.000Z`,
+        session: 'Overnight',
+        outcome,
+        checks: 0,
+        levelId,
+        createdAt: `${tradeDate}T02:00:00.000Z`,
+        updatedAt: `${tradeDate}T02:00:00.000Z`,
+      });
+
+      localStorage.setItem(
+        'ptj_marked_levels_v1',
+        JSON.stringify([
+          level('l1', 7760, '2026-09-28'),
+          level('l2', 7775, '2026-09-28', 'never-touched'),
+          level('l3', 7790, '2026-09-29'),
+        ])
+      );
+      localStorage.setItem(
+        'ptj_level_touches_v1',
+        JSON.stringify([
+          touch('t1', 'l1', '2026-09-28', 'never-returned', 7760),
+          touch('t2', 'l3', '2026-09-29', 'returned', 7790),
+        ])
+      );
+    });
+    await page.reload();
+    await gotoPlaybook(page);
+
+    // The card opens on coverage.
+    await expect(page.locator('#playbook-level-charts')).toBeVisible();
+    await expect(page.locator('#level-chart-coverage svg[role="application"]')).toBeVisible();
+
+    await page.locator('#level-chart-tab-edge').click();
+    await expect(page.locator('#level-chart-edge svg[role="application"]')).toBeVisible();
+
+    await page.locator('#level-chart-tab-timeline').click();
+    await expect(page.locator('#level-chart-timeline svg[role="application"]')).toBeVisible();
+
+    await page.locator('#level-chart-tab-sessions').click();
+    await expect(page.locator('#level-chart-sessions svg[role="application"]')).toBeVisible();
+
+    // And it survives a reload, because it is drawn from the journal, not from React state.
+    await page.reload();
+    await gotoPlaybook(page);
+    await expect(page.locator('#playbook-level-charts')).toBeVisible();
+    await expect(page.locator('#level-chart-coverage svg[role="application"]')).toBeVisible();
+  });
+});
+
+/**
  * Attaching reference charts and video clips to a setup.
  *
  * The upload path was shipping uncovered, which matters because a setup's media is

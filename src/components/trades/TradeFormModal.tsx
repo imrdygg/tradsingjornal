@@ -1155,6 +1155,12 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
               className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none"
               required
             />
+            {editingTrade && (
+              <p className="mt-1 text-[10px] leading-snug text-zinc-500">
+                Change the date to re-file the trade on the session it was actually taken —
+                it moves to that day's log.
+              </p>
+            )}
           </div>
           </>
           )}

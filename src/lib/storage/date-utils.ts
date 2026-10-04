@@ -127,6 +127,31 @@ export function hourInTimezone(date: Date, timezone: string): number {
   }
 }
 
+/**
+ * The clock time (`HH:MM`) of an instant in the given timezone.
+ *
+ * Used to label a logged touch on the trader's own clock, the same clock the touch log itself
+ * reads. Missing parts fall back to the host clock rather than throwing, because a bad profile
+ * timezone must not stop a chart drawing.
+ */
+export function timeInTimezone(date: Date, timezone: string): string {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).formatToParts(date);
+    const hour = Number(parts.find((part) => part.type === 'hour')?.value);
+    const minute = Number(parts.find((part) => part.type === 'minute')?.value);
+    const h = Number.isFinite(hour) ? ((hour % 24) + 24) % 24 : date.getHours();
+    const m = Number.isFinite(minute) ? minute : date.getMinutes();
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  } catch {
+    return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+  }
+}
+
 export function formatTimestamp(isoString: string, timezone = 'America/New_York'): string {
   try {
     const date = new Date(isoString);

@@ -58,3 +58,36 @@ test('plots all three symbols separately and keeps price edits and ratings', asy
   await expect(page.locator('#extremes-price-pattern [data-extreme-price-chart="MNQ"]')).toHaveAttribute('data-extreme-chart-count', '1');
   await expect(page.locator('#extremes-price-pattern [data-extreme-price-chart="MCL"]')).toHaveAttribute('data-extreme-chart-count', '1');
 });
+
+/**
+ * A print is often written down after the session it was read from — Friday's close logged on
+ * Saturday — so its date has to be editable, not only the time and price.
+ */
+test('re-dates a logged extreme to the session it belongs to, and it survives a reload', async ({
+  page,
+}) => {
+  const card = page.locator('#session-extremes');
+  await card.scrollIntoViewIfNeeded();
+
+  await page.locator('#extreme-instrument').selectOption({ label: 'MES' });
+  await page.locator('#extreme-kind-high').click();
+  await page.locator('#extreme-time').fill('08:05');
+  await page.locator('#extreme-price').fill('6012.25');
+  await page.locator('#extreme-save').click();
+
+  const row = card.locator('[data-extreme-row]').filter({ hasText: '08:05' });
+  const id = await row.getAttribute('data-extreme-row');
+  await row.getByRole('button', { name: 'Edit the 08:05 high' }).click();
+
+  const editForm = card.locator(`[data-extreme-editing="${id}"]`);
+  await editForm.locator('input[aria-label="Session date"]').fill('2026-09-24');
+  await editForm.getByRole('button', { name: 'Save', exact: true }).click();
+
+  // The print now reads under the earlier session in the log.
+  await expect(page.locator('#extremes-log')).toContainText('Sep 24');
+
+  await page.reload();
+  const restored = page.locator('#session-extremes').locator('[data-extreme-row]').filter({ hasText: '08:05' });
+  await expect(restored).toHaveCount(1);
+  await expect(page.locator('#extremes-log')).toContainText('Sep 24');
+});

@@ -123,6 +123,7 @@ import { findAssumedRiskTrades, RiskFixItem } from './lib/trading/risk-fixup';
 import { instrumentSymbol } from './lib/trading/instruments';
 import { riskTierAmounts, tierCapStatuses } from './lib/trading/risk-tiers';
 import { acknowledgementFor, isLessonAcknowledged } from './lib/storage/lesson-ack';
+import { tradingDateOf } from './lib/storage/date-utils';
 import {
   assessPlannedSize,
   assessRiskCapacity,
@@ -841,14 +842,28 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   const handleSaveTrade = (tradeData: Partial<Trade>) => {
     const stored = editingTrade;
     const now = new Date().toISOString();
+    const entryTime = tradeData.entryTime || now;
+
+    // A trade belongs to the session its entry falls in. Editing is not allowed to move a
+    // past trade into today on its own — that is what used to corrupt both days at once — but
+    // the entry time carries the date, and changing it is exactly how a trade written down on
+    // the wrong day (a Friday close logged as Saturday) is re-filed onto its real session. So
+    // the day only moves when the entry's date actually changed.
+    let tradingDayId = stored?.tradingDayId ?? todayTradingDay.id;
+    const entryDate = tradingDateOf(entryTime, profile.timezone);
+    if (stored && entryDate) {
+      const storedDate = storage.getTradingDayById(stored.tradingDayId)?.tradeDate;
+      if (entryDate !== storedDate) {
+        tradingDayId = storage.getOrCreateDay(entryDate).id;
+        setTradingDays(storage.getTradingDays());
+      }
+    }
 
     const tradeToSave: Trade = {
       // Identity and provenance are not the form's to change.
       id: stored?.id ?? `trade-${Date.now()}`,
       userId: profile.id,
-      // A trade stays on the day it was taken. Editing last week's note must not move it
-      // into today, which would corrupt both days' figures at once.
-      tradingDayId: stored?.tradingDayId ?? todayTradingDay.id,
+      tradingDayId,
       // An import stays an import, so the risk fix-up flow can still tell which stops
       // were invented for it.
       source: stored?.source ?? 'manual',
@@ -862,7 +877,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       entryPrice: tradeData.entryPrice || 0,
       initialStop: tradeData.initialStop || 0,
       exitPrice: tradeData.exitPrice,
-      entryTime: tradeData.entryTime || now,
+      entryTime,
       exitTime: tradeData.exitTime,
       session: tradeData.session || 'Regular Session',
       // A trade saved without a setup still has to carry a label, and the one the app is

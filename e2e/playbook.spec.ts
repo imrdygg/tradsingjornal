@@ -426,6 +426,48 @@ test.describe('Marked levels — never touched and void', () => {
     await reloaded.locator('button[id^="level-void-btn-"]').click();
     await expect(reloaded).toHaveAttribute('data-level-resolution', 'open');
   });
+
+  test('decides a logged touch from the line it belongs to, and it survives a reload', async ({
+    page,
+  }) => {
+    await gotoPlaybook(page);
+    await markResistance(page, '7758');
+
+    const row = page.locator('[data-marked-level]').first();
+    await row.locator('button[id^="level-touch-first-"]').click();
+    await row.getByRole('button', { name: 'Log touch' }).click();
+    await expect(row.locator('[data-level-touch]')).toHaveCount(1);
+
+    // Logging a touch opens its outcome controls, so deciding it is the next thing, not a hunt.
+    const touchId = await row.locator('[data-level-touch]').first().getAttribute('data-level-touch');
+    const controls = page.locator(`[data-touch-outcome-controls="${touchId}"]`);
+    await expect(controls).toBeVisible();
+
+    // A fresh touch is watching until it is decided.
+    await expect(row.locator('[data-level-touch]').first()).toContainText('watching');
+
+    await page.locator(`#touch-outcome-never-returned-${touchId}`).click();
+    await expect(page.locator(`#touch-outcome-never-returned-${touchId}`)).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
+    // The badge reads the held outcome, which is what every rate is built from.
+    await expect(row.locator('[data-level-touch]').first()).toContainText('held');
+
+    await page.reload();
+    await gotoPlaybook(page);
+    const reloaded = page.locator('[data-marked-level]').first();
+    await expect(reloaded.locator('[data-level-touch]').first()).toContainText('held');
+
+    // And the decision is editable from the same place, back to watching if it was too soon.
+    const reloadedTouchId = await reloaded
+      .locator('[data-level-touch]')
+      .first()
+      .getAttribute('data-level-touch');
+    await reloaded.locator('button[id^="level-touch-decide-"]').first().click();
+    await page.locator(`#touch-outcome-watching-${reloadedTouchId}`).click();
+    await expect(reloaded.locator('[data-level-touch]').first()).toContainText('watching');
+  });
 });
 
 /**

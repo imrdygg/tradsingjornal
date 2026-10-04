@@ -4,6 +4,7 @@ import {
   ArrowUp,
   Ban,
   Check,
+  ChevronDown,
   Crosshair,
   EyeOff,
   Layers,
@@ -46,6 +47,11 @@ import {
   parsePastedPrices,
   parseTaggedLevels,
 } from '../../lib/trading/level-paste';
+import {
+  TOUCH_OUTCOME_BADGE,
+  TOUCH_OUTCOME_LABEL,
+  TouchOutcomeControls,
+} from './TouchOutcomeControls';
 
 /**
  * Where the trader writes their levels down before any of them is tested.
@@ -128,20 +134,6 @@ const EMPTY_DRAFT = { support: '', resistance: '' };
  */
 const DEFAULT_TIMEFRAME: LevelTimeframe = '5m';
 
-const OUTCOME_BADGE: Record<TouchOutcome, string> = {
-  watching: 'bg-zinc-800/80 text-zinc-300 border-zinc-700',
-  'never-returned': 'bg-emerald-950/80 text-emerald-300 border-emerald-800',
-  returned: 'bg-rose-950/70 text-rose-300 border-rose-900/80',
-  invalid: 'bg-zinc-900 text-zinc-500 border-zinc-800',
-};
-
-const OUTCOME_LABEL: Record<TouchOutcome, string> = {
-  watching: 'Watching',
-  'never-returned': 'Never came back',
-  returned: 'Came back',
-  invalid: 'Void',
-};
-
 /** A `datetime-local` value for right now, in the browser's own zone. */
 function localDateTimeInput(): string {
   const now = new Date();
@@ -194,6 +186,14 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
     SESSIONS.find((value) => todayTradingDay.allowedSessions?.includes(value)) ?? 'Regular Session'
   );
   const [label, setLabel] = useState('');
+  /**
+   * The touch whose outcome controls are open, if any.
+   *
+   * A touch is written down as `watching` and decided later, so the row has to offer a place
+   * to say how it ended. Only one is open at a time — the record is read a touch at a time, and
+   * a wall of controls would bury the lines it sits between.
+   */
+  const [expandedTouchId, setExpandedTouchId] = useState<string | null>(null);
   /**
    * The two paste boxes, kept per instrument and timeframe rather than shared.
    *
@@ -670,7 +670,7 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
     const touchDate = tradingDateOf(touchedAt, timezone) || todayTradingDay.tradeDate;
     const day =
       touchDate === todayTradingDay.tradeDate ? todayTradingDay : onResolveDay(touchDate);
-    onSaveTouch({
+    const touch: LevelTouch = {
       id: `touch-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       userId: level.userId,
       tradingDayId: day.id,
@@ -691,7 +691,11 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
       notes: notes?.trim() || undefined,
       createdAt: now,
       updatedAt: now,
-    });
+    };
+    onSaveTouch(touch);
+    // Open the controls on the touch just logged, because deciding it is the very next thing
+    // the trader does — and leaving them to hunt for the row makes the whole record slower.
+    setExpandedTouchId(touch.id);
   };
 
   /**
@@ -905,35 +909,70 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
         */}
         {levelTouches.length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5">
-            {levelTouches.map((touch, index) => (
-              <span
-                key={touch.id}
-                data-level-touch={touch.id}
-                className={`inline-flex items-center gap-1 rounded-lg border px-1.5 py-0.5 text-[10px] font-mono ${OUTCOME_BADGE[touch.outcome]}`}
-                title={`Touch ${index + 1} of ${levelTouches.length}: ${OUTCOME_LABEL[touch.outcome]}`}
-              >
-                <span className="font-bold">{formatTimestamp(touch.touchedAt, timezone)}</span>
-                <span className="uppercase opacity-80">{OUTCOME_SHORT[touch.outcome]}</span>
-                {/*
-                  Removing a touch tapped by mistake.
-
-                  A touch counts as a reach the moment it is logged, so an accidental one would
-                  sit in every rate built from this line until it is taken off. Small and quiet
-                  because it is an undo, not a main action.
-                */}
-                <button
-                  type="button"
-                  id={`level-touch-remove-${touch.id}`}
-                  onClick={() => onDeleteTouch(touch.id)}
-                  title="Remove this touch — for one logged by mistake"
-                  className="ml-0.5 rounded p-0.5 text-current opacity-60 transition-colors hover:bg-black/30 hover:text-rose-300 hover:opacity-100"
+            {levelTouches.map((touch, index) => {
+              const expanded = expandedTouchId === touch.id;
+              return (
+                <span
+                  key={touch.id}
+                  data-level-touch={touch.id}
+                  className={`inline-flex items-center gap-1 rounded-lg border px-1.5 py-0.5 text-[10px] font-mono ${TOUCH_OUTCOME_BADGE[touch.outcome]}`}
                 >
-                  <X className="h-2.5 w-2.5" />
-                </button>
-              </span>
-            ))}
+                  {/* The badge itself opens the controls: the outcome is the thing left to
+                      say, so it is the thing that is clickable. */}
+                  <button
+                    type="button"
+                    id={`level-touch-decide-${touch.id}`}
+                    aria-expanded={expanded}
+                    aria-label={`Decide touch ${index + 1} of ${levelTouches.length}`}
+                    onClick={() =>
+                      setExpandedTouchId((prev) => (prev === touch.id ? null : touch.id))
+                    }
+                    title={`Touch ${index + 1} of ${levelTouches.length}: ${TOUCH_OUTCOME_LABEL[touch.outcome]} — click to say how it ended`}
+                    className="flex items-center gap-1 rounded p-0.5 text-left transition-colors hover:bg-black/20"
+                  >
+                    <span className="font-bold">{formatTimestamp(touch.touchedAt, timezone)}</span>
+                    <span className="uppercase opacity-80">{OUTCOME_SHORT[touch.outcome]}</span>
+                    <ChevronDown
+                      className={`h-2.5 w-2.5 transition-transform ${expanded ? 'rotate-180' : ''}`}
+                    />
+                  </button>
+                  {/*
+                    Removing a touch tapped by mistake.
+
+                    A touch counts as a reach the moment it is logged, so an accidental one would
+                    sit in every rate built from this line until it is taken off. Small and quiet
+                    because it is an undo, not a main action.
+                  */}
+                  <button
+                    type="button"
+                    id={`level-touch-remove-${touch.id}`}
+                    onClick={() => onDeleteTouch(touch.id)}
+                    title="Remove this touch — for one logged by mistake"
+                    className="ml-0.5 rounded p-0.5 text-current opacity-60 transition-colors hover:bg-black/30 hover:text-rose-300 hover:opacity-100"
+                  >
+                    <X className="h-2.5 w-2.5" />
+                  </button>
+                </span>
+              );
+            })}
           </div>
         )}
+
+        {/* Deciding the open touch: what price did after it reached the line, plus the optional
+            distance. Kept inline so the answer is recorded on the level it belongs to. */}
+        {expandedTouchId &&
+          (() => {
+            const openTouch = levelTouches.find((touch) => touch.id === expandedTouchId);
+            if (!openTouch) return null;
+            return (
+              <TouchOutcomeControls
+                touch={openTouch}
+                onSave={onSaveTouch}
+                onDelete={onDeleteTouch}
+                compact
+              />
+            );
+          })()}
 
         {/*
           Correcting a line in place.

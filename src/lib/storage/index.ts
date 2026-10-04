@@ -27,7 +27,7 @@ import { DEFAULT_RISK_TIER_AMOUNTS } from '../trading/risk-tiers';
 import { FOCUS_SETUP_NAMES } from '../playbook/focus-setups';
 import { timeframeOf } from '../analytics/session-extremes';
 import { clearCachedNotes } from '../ai/checkpoints';
-import { getCurrentTradingDate } from './date-utils';
+import { getCurrentTradingSessionDate } from './date-utils';
 
 /**
  * The built-in setup catalog: exactly two setups.
@@ -741,7 +741,9 @@ export const storage = {
 
   getOrCreateToday(): TradingDay {
     const profile = this.getProfile();
-    const todayStr = getCurrentTradingDate(profile.timezone);
+    // The session date, not the calendar date: a Saturday rolls back to Friday so the app never
+    // opens a day the market cannot trade on.
+    const todayStr = getCurrentTradingSessionDate(profile.timezone);
     const existing = this.getTradingDayByDate(todayStr);
 
     if (existing) {

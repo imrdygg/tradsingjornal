@@ -296,6 +296,36 @@ test.describe('Marked levels — never touched and void', () => {
     ).toBeVisible();
   });
 
+  test('moves a line to another chart and carries its touch with it', async ({ page }) => {
+    await gotoPlaybook(page);
+    await markResistance(page, '7760');
+
+    // A touch is logged while the line lives on the 5m chart.
+    const row = page.locator('[data-marked-level]').first();
+    await row.locator('button[id^="level-touch-first-"]').click();
+    await row.getByRole('button', { name: 'Log touch' }).click();
+    await expect(row.locator('[data-level-touch]')).toHaveCount(1);
+
+    // Re-tag the line onto the 15m chart.
+    await row.locator('button[id^="level-edit-"]').first().click();
+    await row.locator('select[id^="level-edit-timeframe-"]').selectOption('15m');
+    await row.locator('button[id^="level-edit-save-"]').click();
+
+    // It is gone from the 5m chart it no longer belongs to...
+    await expect(page.locator('[data-marked-level]')).toHaveCount(0);
+
+    // ...and present on the 15m chart, with the touch that moved with it.
+    await page.locator('#level-tf-15m').click();
+    const moved = page.locator('[data-marked-level]').first();
+    await expect(moved.getByText('7760', { exact: true })).toBeVisible();
+    await expect(moved.locator('[data-level-touch]')).toHaveCount(1);
+
+    await page.reload();
+    await gotoPlaybook(page);
+    await page.locator('#level-tf-15m').click();
+    await expect(page.locator('[data-marked-level]').first().locator('[data-level-touch]')).toHaveCount(1);
+  });
+
   test('removes a touch tapped by mistake, leaving the line in place', async ({ page }) => {
     await gotoPlaybook(page);
     await markResistance(page, '7760');

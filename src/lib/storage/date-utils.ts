@@ -17,6 +17,41 @@ export function getCurrentTradingDate(timezone = 'America/New_York'): string {
   }
 }
 
+/**
+ * The calendar weekday (0 = Sunday) of a `YYYY-MM-DD` trading date.
+ *
+ * Read in UTC on purpose: a trading date is a calendar label, so its weekday must not shift
+ * with the reader's timezone. Parsing it as a local instant would move the date across midnight
+ * for anyone east or west of the record's own clock.
+ */
+export function weekdayOfTradingDate(dateStr: string): number {
+  const date = new Date(`${dateStr}T00:00:00Z`);
+  return Number.isNaN(date.getTime()) ? 0 : date.getUTCDay();
+}
+
+/** Steps a `YYYY-MM-DD` date by whole days, staying on the same calendar. */
+export function shiftTradingDate(dateStr: string, days: number): string {
+  const date = new Date(`${dateStr}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return dateStr;
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+/**
+ * The trading date the app should treat as the current session.
+ *
+ * The futures market is closed on Saturday: it reopens Sunday evening and runs through Friday
+ * afternoon. A Saturday has no session of its own, so rather than opening a day nothing can
+ * trade on, this rolls back to Friday — the session that just closed — and the app carries on
+ * with that. Every other day is returned unchanged, Sunday included, since 6pm Sunday is
+ * already the week's open.
+ */
+export function getCurrentTradingSessionDate(timezone = 'America/New_York'): string {
+  const today = getCurrentTradingDate(timezone);
+  // 6 = Saturday, the one weekday the market never trades.
+  return weekdayOfTradingDate(today) === 6 ? shiftTradingDate(today, -1) : today;
+}
+
 export function getCurrentTradingTime(timezone = 'America/New_York'): string {
   try {
     const formatter = new Intl.DateTimeFormat('en-US', {

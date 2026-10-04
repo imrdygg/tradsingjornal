@@ -224,6 +224,7 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
     price: string;
     label: string;
     session: TradingSession;
+    timeframe: LevelTimeframe;
   } | null>(null);
   /**
    * Whether the list reaches back past today.
@@ -370,6 +371,9 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
       price: String(level.price),
       label: level.label ?? '',
       session: level.session,
+      // A line marked before timeframes existed shows under the default chart; opening the
+      // editor and saving is how it gets a real one.
+      timeframe: level.timeframe ?? DEFAULT_TIMEFRAME,
     });
     // An edit and a touch form are two answers to the same row; only one may be open.
     setTouchFormLevelId(null);
@@ -380,18 +384,32 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
     setEditDraft(null);
   };
 
-  /** Writes the corrected price, label and session back to the same level. */
+  /**
+   * Writes the corrected line back, moving its touches with it when the chart changes.
+   *
+   * The timeframe is denormalised onto every touch as well as the level, so a line moved to a
+   * different chart has to carry its own touches across or the record would disagree with
+   * itself — the line would sit under one chart and its touches under another.
+   */
   const submitEdit = (event: React.FormEvent, level: MarkedLevel) => {
     event.preventDefault();
     if (!editDraft) return;
     const price = Number(editDraft.price);
     if (!Number.isFinite(price) || price <= 0) return;
+
+    const timeframe = editDraft.timeframe;
     onUpdateLevel({
       ...level,
       price,
       label: editDraft.label.trim() || undefined,
       session: editDraft.session,
+      timeframe,
     });
+    if (timeframe !== level.timeframe) {
+      for (const touch of touches.filter((entry) => entry.levelId === level.id)) {
+        onSaveTouch({ ...touch, timeframe });
+      }
+    }
     closeEdit();
   };
 
@@ -898,6 +916,29 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
                 }
                 className="w-24 rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1 text-[11px] font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none"
               />
+            </label>
+            <label
+              className="flex items-center gap-1.5 text-[10px] font-mono uppercase text-zinc-400"
+              htmlFor={`level-edit-timeframe-${level.id}`}
+            >
+              Chart
+              <select
+                id={`level-edit-timeframe-${level.id}`}
+                value={editDraft.timeframe}
+                onChange={(event) =>
+                  setEditDraft({
+                    ...editDraft,
+                    timeframe: event.target.value as LevelTimeframe,
+                  })
+                }
+                className="rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1 text-[11px] font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none"
+              >
+                {LEVEL_TIMEFRAMES.map((frame) => (
+                  <option key={frame} value={frame}>
+                    {TIMEFRAME_LABEL[frame]}
+                  </option>
+                ))}
+              </select>
             </label>
             <label
               className="flex items-center gap-1.5 text-[10px] font-mono uppercase text-zinc-400"

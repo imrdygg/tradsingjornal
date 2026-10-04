@@ -16,7 +16,10 @@ import {
   Target,
   MessageSquarePlus,
 } from 'lucide-react';
-import { getCurrentTradingDate } from '../../lib/storage/date-utils';
+import {
+  getCurrentTradingDate,
+  getCurrentTradingSessionDate,
+} from '../../lib/storage/date-utils';
 import { SyncStatusBadge, SyncStatus } from './SyncStatusBadge';
 import { AccountMenu } from './AccountMenu';
 import { RiskMode, DayStatus } from '../../types';
@@ -90,7 +93,11 @@ export const AppShell: React.FC<AppShellProps> = ({
   feedbackCount = 0,
   children,
 }) => {
-  const todayDate = getCurrentTradingDate(timezone);
+  // The date chip names the session the app is working on, not the wall-clock day. On a
+  // Saturday they differ: the market is closed, so the app stays on Friday's session, and the
+  // chip says so rather than showing a date nothing is trading against.
+  const sessionDate = getCurrentTradingSessionDate(timezone);
+  const marketClosed = getCurrentTradingDate(timezone) !== sessionDate;
   const [statusExpanded, setStatusExpanded] = useState(false);
 
   const navItems: Array<{ id: NavTab; label: string; icon: React.ComponentType<{ className?: string }> }> = [
@@ -203,7 +210,12 @@ export const AppShell: React.FC<AppShellProps> = ({
                 </span>
                 <span className="hidden items-center gap-1.5 rounded-full border border-zinc-700/60 bg-zinc-800/80 px-2.5 py-0.5 font-mono text-[11px] text-zinc-200 xl:inline-flex">
                   <Calendar className="h-3.5 w-3.5 text-emerald-400" />
-                  {todayDate}
+                  {sessionDate}
+                  {marketClosed && (
+                    <span className="ml-0.5 rounded-full border border-amber-900/70 bg-amber-950/50 px-1.5 py-px font-sans text-[10px] font-semibold text-amber-300">
+                      market closed
+                    </span>
+                  )}
                 </span>
               </div>
               {/* Kept for xl and up only: this long subtitle widened the brand

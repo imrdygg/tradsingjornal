@@ -2088,6 +2088,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               onUpdateLevel: handleUpdateMarkedLevel,
               onDeleteLevel: handleDeleteMarkedLevel,
               onSaveTouch: handleSaveLevelTouch,
+              onDeleteTouch: handleDeleteLevelTouch,
             }}
             userId={userId}
             lessons={lessons}

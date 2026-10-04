@@ -1,5 +1,17 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowDown, ArrowUp, Ban, Check, Crosshair, EyeOff, Layers, ListPlus, Trash2 } from 'lucide-react';
+import {
+  ArrowDown,
+  ArrowUp,
+  Ban,
+  Check,
+  Crosshair,
+  EyeOff,
+  Layers,
+  ListPlus,
+  Pencil,
+  Trash2,
+  X,
+} from 'lucide-react';
 import {
   Instrument,
   LevelKind,
@@ -12,7 +24,7 @@ import {
   TradingSession,
 } from '../../types';
 import { CoachCard } from '../coach/coach-ui';
-import { formatTimestamp } from '../../lib/storage/date-utils';
+import { formatTimestamp, formatTradingDate } from '../../lib/storage/date-utils';
 import {
   defaultLevelZonePoints,
   formatPoints,
@@ -70,6 +82,13 @@ export interface MarkedLevelsCardProps {
   onDeleteLevel: (levelId: string) => void;
   /** Logs the touch a marked level produced. The same write the touch log uses. */
   onSaveTouch: (touch: LevelTouch) => void;
+  /**
+   * Removes a touch logged against a level, for when one was struck by mistake.
+   *
+   * A touch is a claim price reached the line; if it was tapped in error, leaving it on the
+   * record would count a reach that never happened and pollute every rate built from it.
+   */
+  onDeleteTouch: (touchId: string) => void;
   /**
    * The instrument and timeframe currently open, when a parent owns them.
    *
@@ -144,6 +163,7 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
   onUpdateLevel,
   onDeleteLevel,
   onSaveTouch,
+  onDeleteTouch,
   instrumentId: controlledInstrumentId,
   onInstrumentChange,
   timeframe: controlledTimeframe,
@@ -191,6 +211,28 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
   const [bulkText, setBulkText] = useState('');
   /** The side an untagged bulk line falls back to; its timeframe falls back to the open chart. */
   const [bulkDefaultSide, setBulkDefaultSide] = useState<LevelKind>('support');
+  /**
+   * The level whose edit form is open, and its draft price, label and session.
+   *
+   * A line written down in a hurry is corrected here rather than deleted and re-pasted, so the
+   * touches already logged against it keep pointing at it. The timeframe is deliberately not
+   * editable: a line belongs to the chart it was read off, and moving it between charts would
+   * silently rewrite which record its touches belong to.
+   */
+  const [editingLevelId, setEditingLevelId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<{
+    price: string;
+    label: string;
+    session: TradingSession;
+  } | null>(null);
+  /**
+   * Whether the list reaches back past today.
+   *
+   * The card opens on today because that is the day being traded, but a line from an earlier
+   * session is still the trader's own record and used to be unreachable once the day passed.
+   * This reveals it, so a price can be corrected or a level deleted at any time.
+   */
+  const [showEarlier, setShowEarlier] = useState(false);
 
   const currentInstrument = instruments.find((inst) => inst.id === instrumentId);
   // The level width is the instrument's own default; it decides how a touch is graded later.
@@ -264,22 +306,44 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
     () => levels.filter((level) => level.tradingDayId === todayTradingDay.id),
     [levels, todayTradingDay.id]
   );
-  const earlierCount = levels.length - todayLevels.length;
 
-  const view = useMemo(
-    () =>
-      todayLevels.filter(
-        (level) =>
-          level.instrumentId === instrumentId &&
-          (level.timeframe ?? DEFAULT_TIMEFRAME) === timeframe
-      ),
-    [todayLevels, instrumentId, timeframe]
-  );
+  /**
+   * The lines on screen: today's, or every day's when the trader reaches back.
+   *
+   * Filtered by the instrument and chart being looked at either way, so the record stays one
+   * chart at a time and a correction cannot be made against the wrong timeframe's numbers.
+   */
+  const view = useMemo(() => {
+    const pool = showEarlier ? levels : todayLevels;
+    return pool.filter(
+      (level) =>
+        level.instrumentId === instrumentId &&
+        (level.timeframe ?? DEFAULT_TIMEFRAME) === timeframe
+    );
+  }, [levels, todayLevels, showEarlier, instrumentId, timeframe]);
 
+  /** Earlier lines for this instrument and chart, so the toggle can say how many there are. */
+  const earlierInScope = levels.filter(
+    (level) =>
+      level.instrumentId === instrumentId &&
+      (level.timeframe ?? DEFAULT_TIMEFRAME) === timeframe &&
+      level.tradingDayId !== todayTradingDay.id
+  ).length;
+
+  /**
+   * One side's lines, today first and then newest day down, each day read low-to-high for
+   * support and high-to-low for resistance — the order price would travel through them.
+   */
   const byKind = (which: LevelKind) =>
     view
       .filter((level) => level.kind === which)
-      .sort((a, b) => (which === 'support' ? a.price - b.price : b.price - a.price));
+      .sort((a, b) => {
+        const aToday = a.tradeDate === todayTradingDay.tradeDate ? 0 : 1;
+        const bToday = b.tradeDate === todayTradingDay.tradeDate ? 0 : 1;
+        if (aToday !== bToday) return aToday - bToday;
+        if (a.tradeDate !== b.tradeDate) return b.tradeDate.localeCompare(a.tradeDate);
+        return which === 'support' ? a.price - b.price : b.price - a.price;
+      });
 
   const testedInView = view.filter((level) => touchesByLevel.has(level.id)).length;
   const neverTouchedInView = view.filter(
@@ -297,6 +361,38 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
       ...level,
       resolution: level.resolution === resolution ? undefined : resolution,
     });
+  };
+
+  /** Opens the inline edit form on a line, seeded with what is on the record now. */
+  const openEdit = (level: MarkedLevel) => {
+    setEditingLevelId(level.id);
+    setEditDraft({
+      price: String(level.price),
+      label: level.label ?? '',
+      session: level.session,
+    });
+    // An edit and a touch form are two answers to the same row; only one may be open.
+    setTouchFormLevelId(null);
+  };
+
+  const closeEdit = () => {
+    setEditingLevelId(null);
+    setEditDraft(null);
+  };
+
+  /** Writes the corrected price, label and session back to the same level. */
+  const submitEdit = (event: React.FormEvent, level: MarkedLevel) => {
+    event.preventDefault();
+    if (!editDraft) return;
+    const price = Number(editDraft.price);
+    if (!Number.isFinite(price) || price <= 0) return;
+    onUpdateLevel({
+      ...level,
+      price,
+      label: editDraft.label.trim() || undefined,
+      session: editDraft.session,
+    });
+    closeEdit();
   };
 
   // Yesterday's same instrument and timeframe, so what moved is visible beside today's entry.
@@ -317,9 +413,18 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
     [levels, instrumentId, timeframe, yesterdayDate]
   );
 
+  // Always today's lines on both sides of the comparison: when the list reaches back, the
+  // "what moved" read must still be today against yesterday, not today against a mixed pile.
   const diffFor = (which: LevelKind) =>
     diffLevelPrices(
-      view.filter((level) => level.kind === which).map((level) => level.price),
+      todayLevels
+        .filter(
+          (level) =>
+            level.instrumentId === instrumentId &&
+            (level.timeframe ?? DEFAULT_TIMEFRAME) === timeframe &&
+            level.kind === which
+        )
+        .map((level) => level.price),
       yesterdayView.filter((level) => level.kind === which).map((level) => level.price)
     );
 
@@ -554,7 +659,9 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
     const latest = levelTouches[levelTouches.length - 1];
     const isSupport = level.kind === 'support';
     const formOpen = touchFormLevelId === level.id;
+    const editOpen = editingLevelId === level.id;
     const isVoid = level.resolution === 'void';
+    const isEarlier = level.tradeDate !== todayTradingDay.tradeDate;
     return (
       <div
         key={level.id}
@@ -590,6 +697,15 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
               title={`Price has reached this line ${levelTouches.length} times today`}
             >
               ×{levelTouches.length} touches
+            </span>
+          )}
+          {/* Only on the lines reached back to: today's rows are the default and need no date. */}
+          {isEarlier && (
+            <span
+              className="rounded border border-zinc-700 bg-zinc-950/60 px-1.5 py-0.5 text-[10px] font-mono text-zinc-400"
+              title={`Marked on ${level.tradeDate}`}
+            >
+              {formatTradingDate(level.tradeDate, timezone)}
             </span>
           )}
           {level.label && (
@@ -693,6 +809,18 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
             )}
             <button
               type="button"
+              id={`level-edit-${level.id}`}
+              aria-pressed={editOpen}
+              onClick={() => (editOpen ? closeEdit() : openEdit(level))}
+              title="Edit this line's price, label or session"
+              className={`rounded-lg p-1 transition-colors hover:bg-zinc-800 ${
+                editOpen ? 'text-indigo-300' : 'text-zinc-600 hover:text-zinc-200'
+              }`}
+            >
+              <Pencil className="h-3 w-3" />
+            </button>
+            <button
+              type="button"
               onClick={() => onDeleteLevel(level.id)}
               title="Remove this level from the record"
               className="rounded-lg p-1 text-zinc-600 transition-colors hover:bg-zinc-800 hover:text-rose-400"
@@ -721,9 +849,107 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
               >
                 <span className="font-bold">{formatTimestamp(touch.touchedAt, timezone)}</span>
                 <span className="uppercase opacity-80">{OUTCOME_SHORT[touch.outcome]}</span>
+                {/*
+                  Removing a touch tapped by mistake.
+
+                  A touch counts as a reach the moment it is logged, so an accidental one would
+                  sit in every rate built from this line until it is taken off. Small and quiet
+                  because it is an undo, not a main action.
+                */}
+                <button
+                  type="button"
+                  id={`level-touch-remove-${touch.id}`}
+                  onClick={() => onDeleteTouch(touch.id)}
+                  title="Remove this touch — for one logged by mistake"
+                  className="ml-0.5 rounded p-0.5 text-current opacity-60 transition-colors hover:bg-black/30 hover:text-rose-300 hover:opacity-100"
+                >
+                  <X className="h-2.5 w-2.5" />
+                </button>
               </span>
             ))}
           </div>
+        )}
+
+        {/*
+          Correcting a line in place.
+
+          The price, label and session are the things a hurried paste gets wrong, and fixing
+          them here leaves the line where it is — so any touches already logged against it keep
+          pointing at it instead of being orphaned by a delete-and-retype.
+        */}
+        {editOpen && editDraft && (
+          <form
+            onSubmit={(event) => submitEdit(event, level)}
+            className="flex flex-wrap items-center gap-2 rounded-lg border border-indigo-900/60 bg-indigo-950/20 px-2 py-1.5"
+          >
+            <label
+              className="flex items-center gap-1.5 text-[10px] font-mono uppercase text-zinc-400"
+              htmlFor={`level-edit-price-${level.id}`}
+            >
+              Price
+              <input
+                id={`level-edit-price-${level.id}`}
+                type="number"
+                step="0.25"
+                inputMode="decimal"
+                value={editDraft.price}
+                onChange={(event) =>
+                  setEditDraft({ ...editDraft, price: event.target.value })
+                }
+                className="w-24 rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1 text-[11px] font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none"
+              />
+            </label>
+            <label
+              className="flex items-center gap-1.5 text-[10px] font-mono uppercase text-zinc-400"
+              htmlFor={`level-edit-label-${level.id}`}
+            >
+              Label
+              <input
+                id={`level-edit-label-${level.id}`}
+                type="text"
+                value={editDraft.label}
+                placeholder="indicator R1, prior day low…"
+                onChange={(event) =>
+                  setEditDraft({ ...editDraft, label: event.target.value })
+                }
+                className="min-w-[120px] flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1 text-[11px] text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
+              />
+            </label>
+            <label
+              className="flex items-center gap-1.5 text-[10px] font-mono uppercase text-zinc-400"
+              htmlFor={`level-edit-session-${level.id}`}
+            >
+              Session
+              <select
+                id={`level-edit-session-${level.id}`}
+                value={editDraft.session}
+                onChange={(event) =>
+                  setEditDraft({ ...editDraft, session: event.target.value as TradingSession })
+                }
+                className="rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1 text-[11px] text-zinc-100 focus:border-zinc-600 focus:outline-none"
+              >
+                {SESSIONS.map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="submit"
+              id={`level-edit-save-${level.id}`}
+              className="rounded-lg border border-indigo-700/60 bg-indigo-500/20 px-2.5 py-1 text-[10px] font-bold text-indigo-100 transition-colors hover:bg-indigo-500/30"
+            >
+              Save line
+            </button>
+            <button
+              type="button"
+              onClick={closeEdit}
+              className="rounded-lg px-2 py-1 text-[10px] font-medium text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+            >
+              Cancel
+            </button>
+          </form>
         )}
 
         {formOpen && (
@@ -1123,18 +1349,43 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
       <div className="space-y-2.5 border-t border-zinc-800 pt-3">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
-            {symbol} · {TIMEFRAME_LABEL[timeframe]} · today
+            {symbol} · {TIMEFRAME_LABEL[timeframe]} · {showEarlier ? 'all days' : 'today'}
           </span>
           <span className="text-[10px] font-mono text-zinc-500">
             {view.length} marked · {testedInView} touched
             {neverTouchedInView > 0 ? ` · ${neverTouchedInView} never touched` : ''}
-            {earlierCount > 0 ? ` · ${earlierCount} on earlier days` : ''}
           </span>
         </div>
 
+        {/*
+          Reaching back to earlier sessions.
+
+          Shown only when this instrument and chart actually have history, so the control does
+          not offer a view that would come back empty. Once on, every line is editable and
+          deletable exactly as today's are.
+        */}
+        {earlierInScope > 0 && (
+          <button
+            type="button"
+            id="level-show-earlier"
+            aria-pressed={showEarlier}
+            onClick={() => setShowEarlier((value) => !value)}
+            className={`rounded-lg border px-2 py-0.5 text-[10px] font-semibold transition-colors ${
+              showEarlier
+                ? 'border-indigo-600/70 bg-indigo-500/20 text-indigo-200'
+                : 'border-zinc-800 bg-zinc-950/40 text-zinc-400 hover:text-zinc-200'
+            }`}
+          >
+            {showEarlier
+              ? 'Hide earlier days'
+              : `Show ${earlierInScope} earlier line${earlierInScope === 1 ? '' : 's'}`}
+          </button>
+        )}
+
         {view.length === 0 ? (
           <p className="text-xs italic text-zinc-500">
-            Nothing marked for {symbol} on the {TIMEFRAME_LABEL[timeframe]} chart today.
+            Nothing marked for {symbol} on the {TIMEFRAME_LABEL[timeframe]} chart
+            {showEarlier ? ' yet.' : ' today.'}
           </p>
         ) : (
           <div className="space-y-2.5">

@@ -50,6 +50,15 @@ export const MIN_DAYS_FOR_SEQUENCE = 3;
 export const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
 
 /**
+ * The weekdays a session can actually fall on, in the order they happen — the open runs from
+ * Sunday evening through Friday afternoon.
+ *
+ * Saturday is left out on purpose: the market is closed then, so no touch can print on it and a
+ * selector that offered it could only ever return an empty read.
+ */
+export const TRADING_WEEKDAYS = [0, 1, 2, 3, 4, 5] as const;
+
+/**
  * The calendar weekday (0 = Sunday) of a `YYYY-MM-DD` trading date.
  *
  * Read in UTC on purpose: a trading date is a calendar label, so its weekday must not shift

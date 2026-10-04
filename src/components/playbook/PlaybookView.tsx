@@ -136,6 +136,8 @@ interface PlaybookViewProps {
     onUpdateLevel: (level: MarkedLevel) => void;
     onDeleteLevel: (levelId: string) => void;
     onSaveTouch: (touch: LevelTouch) => void;
+    /** Removes a touch logged against a level by mistake. */
+    onDeleteTouch: (touchId: string) => void;
   };
   /** The account a lesson written from this tab belongs to. */
   userId?: string;

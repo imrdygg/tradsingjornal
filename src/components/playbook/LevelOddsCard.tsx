@@ -17,6 +17,7 @@ import {
   mostReachedLine,
   summarizeLevelOdds,
   todayProjection,
+  TRADING_WEEKDAYS,
   WEEKDAY_LABELS,
   type LevelOddsCondition,
   type LevelOddsRow,
@@ -362,9 +363,10 @@ export const LevelOddsCard: React.FC<LevelOddsCardProps> = ({
             className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1.5 text-[11px] text-zinc-100 focus:border-zinc-600 focus:outline-none"
           >
             <option value="">Any day</option>
-            {WEEKDAY_LABELS.map((label, index) => (
-              <option key={label} value={index}>
-                {label}
+            {/* Saturday is omitted: the market is closed, so it can hold no session. */}
+            {TRADING_WEEKDAYS.map((index) => (
+              <option key={index} value={index}>
+                {WEEKDAY_LABELS[index]}
               </option>
             ))}
           </select>

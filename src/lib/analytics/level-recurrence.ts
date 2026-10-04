@@ -139,8 +139,13 @@ export interface LevelRecurrenceReport {
   minDecided: number;
 }
 
-/** Week order for display: Monday first, as a week is read. */
-const WEEK_ORDER = [1, 2, 3, 4, 5, 6, 0];
+/**
+ * Week order for display: Monday first, as a week is read, and Saturday last-to-dropped.
+ *
+ * Saturday is left out because the market is closed then: no touch can print on it, so a
+ * bucket for it could only ever be empty, and listing it would suggest a day worth watching.
+ */
+const WEEK_ORDER = [1, 2, 3, 4, 5, 0];
 
 /**
  * The whole recurrence read, from the touches alone.

@@ -276,6 +276,84 @@ test.describe('Marked levels — never touched and void', () => {
     );
   });
 
+  test('edits a marked line in place and the correction survives a reload', async ({ page }) => {
+    await gotoPlaybook(page);
+    await markResistance(page, '7760');
+
+    const row = page.locator('[data-marked-level]').first();
+    // The pencil is the only edit control before the form is open.
+    await row.locator('button[id^="level-edit-"]').first().click();
+    await row.locator('input[id^="level-edit-price-"]').fill('7765.25');
+    await row.locator('button[id^="level-edit-save-"]').click();
+
+    await expect(row.getByText('7765.25', { exact: true })).toBeVisible();
+
+    await page.reload();
+    await gotoPlaybook(page);
+    // Scoped to the marked-levels card: the same price also renders in the edge finder's list.
+    await expect(
+      page.locator('[data-marked-level]').first().getByText('7765.25', { exact: true })
+    ).toBeVisible();
+  });
+
+  test('removes a touch tapped by mistake, leaving the line in place', async ({ page }) => {
+    await gotoPlaybook(page);
+    await markResistance(page, '7760');
+
+    const row = page.locator('[data-marked-level]').first();
+    await row.locator('button[id^="level-touch-first-"]').click();
+    await row.getByRole('button', { name: 'Log touch' }).click();
+    await expect(row.locator('[data-level-touch]')).toHaveCount(1);
+
+    // The undo: the touch is taken off, the line stays marked.
+    await row.locator('button[id^="level-touch-remove-"]').click();
+    await expect(row.locator('[data-level-touch]')).toHaveCount(0);
+    await expect(row.locator('button[id^="level-touch-first-"]')).toBeVisible();
+
+    await page.reload();
+    await gotoPlaybook(page);
+    const reloaded = page.locator('[data-marked-level]').first();
+    await expect(reloaded.locator('[data-level-touch]')).toHaveCount(0);
+  });
+
+  test('reaches back to earlier days and edits a line that is not today\u2019s', async ({ page }) => {
+    // A line written down a week earlier, and a trading day to hold it. Seeded after the
+    // fresh-journal clear so it is the only level on the record.
+    await page.addInitScript(() => {
+      localStorage.setItem(
+        'ptj_marked_levels_v1',
+        JSON.stringify([
+          {
+            id: 'level-old-mcl',
+            userId: 'solo-trader-01',
+            tradingDayId: 'day-2026-09-25',
+            tradeDate: '2026-09-25',
+            instrumentId: 'mes',
+            kind: 'resistance',
+            price: 7788,
+            zonePoints: 2,
+            session: 'Regular Session',
+            timeframe: '5m',
+            createdAt: '2026-09-25T13:00:00.000Z',
+            updatedAt: '2026-09-25T13:00:00.000Z',
+          },
+        ])
+      );
+    });
+    await page.goto('/');
+    await gotoPlaybook(page);
+
+    // Today's list is empty, but the earlier line is one click away.
+    await expect(page.locator('#level-show-earlier')).toBeVisible();
+    await page.locator('#level-show-earlier').click();
+
+    const row = page.locator('[data-marked-level]').first();
+    await expect(row.getByText('7788', { exact: true })).toBeVisible();
+    await expect(row).toHaveAttribute('data-level-resolution', 'open');
+    // It is reachable rather than only counted: the pencil is there to correct it.
+    await expect(row.locator('button[id^="level-edit-"]').first()).toBeVisible();
+  });
+
   test('sets a line aside as void, keeping it on the record and out of the counts', async ({ page }) => {
     await gotoPlaybook(page);
     await markResistance(page, '7765');
@@ -295,6 +373,23 @@ test.describe('Marked levels — never touched and void', () => {
     // The line is kept, not deleted: it can be reopened from here.
     await reloaded.locator('button[id^="level-void-btn-"]').click();
     await expect(reloaded).toHaveAttribute('data-level-resolution', 'open');
+  });
+});
+
+/**
+ * The weekday narrowing on the level-odds card.
+ *
+ * The market is closed on Saturday, so offering it in the picker could only ever return an
+ * empty read. The trading week runs Sunday evening to Friday, and both ends of it must stay.
+ */
+test.describe('Level odds — weekday narrowing', () => {
+  test('offers the trading week and leaves Saturday out', async ({ page }) => {
+    await gotoPlaybook(page);
+
+    const weekday = page.locator('#level-odds-weekday');
+    await expect(weekday.locator('option', { hasText: 'Sun' })).toHaveCount(1);
+    await expect(weekday.locator('option', { hasText: 'Fri' })).toHaveCount(1);
+    await expect(weekday.locator('option', { hasText: 'Sat' })).toHaveCount(0);
   });
 });
 

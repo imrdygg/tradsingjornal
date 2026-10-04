@@ -200,6 +200,34 @@ describe('summarizeMarkedLevels', () => {
     expect(coverage.testRate).toBeNull();
     expect(coverage.testedStats.touches).toBe(0);
   });
+
+  it('drops a voided line from every count and reports how many were set aside', () => {
+    const levels = [
+      marked({ id: 'a', resolution: 'void' }),
+      marked({ id: 'b' }),
+    ];
+    const coverage = summarizeMarkedLevels(levels, []);
+    expect(coverage.marked).toBe(1);
+    expect(coverage.tested).toBe(0);
+    expect(coverage.untested).toBe(1);
+    expect(coverage.voided).toBe(1);
+    expect(coverage.testRate).toBe(0);
+  });
+
+  it('counts an explicit never-touched line as untested but broken out from the rest', () => {
+    const levels = [
+      marked({ id: 'a', resolution: 'never-touched' }),
+      // Open, not yet resolved.
+      marked({ id: 'b' }),
+      marked({ id: 'c' }),
+    ];
+    const touches = [touch({ id: 't1', levelId: 'c', outcome: 'never-returned' })];
+    const coverage = summarizeMarkedLevels(levels, touches);
+    expect(coverage.marked).toBe(3);
+    expect(coverage.tested).toBe(1);
+    expect(coverage.untested).toBe(2);
+    expect(coverage.neverTouched).toBe(1);
+  });
 });
 
 describe('findLevelEdges', () => {

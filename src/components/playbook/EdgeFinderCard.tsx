@@ -458,10 +458,11 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
               {coverage.tested} of {coverage.marked} tested
             </span>
           </div>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
             <CoachFact label="Levels marked" value={`${coverage.marked}`} />
             <CoachFact label="Tested" value={`${coverage.tested}`} />
             <CoachFact label="Never tested" value={`${coverage.untested}`} />
+            <CoachFact label="Closed out" value={`${coverage.neverTouched}`} />
             <CoachFact
               label="Test rate"
               value={coverage.testRate === null ? '—' : `${coverage.testRate}%`}
@@ -474,7 +475,14 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
               ? `, holding ${formatRate(coverage.testedStats.holdRate)} of the time`
               : ''}
             . {coverage.untested} line{coverage.untested === 1 ? '' : 's'} you marked were never
-            tested — worth noticing if your indicator keeps offering them.
+            tested — worth noticing if your indicator keeps offering them
+            {coverage.neverTouched > 0
+              ? `, and ${coverage.neverTouched} of those you have closed out yourself as never reached`
+              : ''}
+            .
+            {coverage.voided > 0
+              ? ` ${coverage.voided} line${coverage.voided === 1 ? '' : 's'} you set aside as void ${coverage.voided === 1 ? 'is' : 'are'} left out of these counts.`
+              : ''}
           </p>
         </div>
       )}

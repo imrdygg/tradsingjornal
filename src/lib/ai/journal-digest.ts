@@ -189,6 +189,8 @@ export interface LevelTimeframeRow {
   marked: number;
   tested: number;
   untested: number;
+  /** Untested lines the trader has explicitly closed out as never reached. */
+  neverTouched: number;
   testRate: number | null;
   /** Decided touches among the tested lines. */
   decided: number;
@@ -264,8 +266,12 @@ export interface LevelTimeframesRead {
   marked: number;
   /** Marked levels a touch links back to. */
   tested: number;
-  /** Marked levels nothing has been logged against. */
+  /** Marked levels nothing has been logged against, confirmed or not. */
   untested: number;
+  /** Untested levels the trader has explicitly closed out as never reached. */
+  neverTouched: number;
+  /** Levels the trader set aside as void — excluded from every count above. */
+  voided: number;
   /** Tested / marked as a percentage, or null while nothing is marked. */
   testRate: number | null;
   /** Decided touches a row needs before its hold rate may be read as a rate. */
@@ -301,6 +307,14 @@ export interface TodayLevelRead {
    * outcome: a line price never reached is not a line that held.
    */
   status: 'never-touched' | TouchOutcome;
+  /**
+   * True when the trader explicitly closed this never-reached line out as never touched.
+   *
+   * A line with no touch is `never-touched` whether or not the trader got to it; only this flag
+   * says the answer is theirs rather than the absence of a log, so the coach can tell "price
+   * never reached it" from "nothing was written down yet".
+   */
+  confirmed: boolean;
   /** The session the touch fell in, when there is one. */
   session: string | null;
   touchedAt: string | null;
@@ -1138,6 +1152,7 @@ function buildLevelTimeframes(
     marked: bucket.marked,
     tested: bucket.tested,
     untested: bucket.untested,
+    neverTouched: bucket.neverTouched,
     testRate: bucket.testRate,
     decided: bucket.stats.decided,
     holdRate: bucket.stats.holdRate,
@@ -1151,6 +1166,8 @@ function buildLevelTimeframes(
     marked: coverage.marked,
     tested: coverage.tested,
     untested: coverage.untested,
+    neverTouched: coverage.neverTouched,
+    voided: coverage.voided,
     testRate: coverage.testRate,
     minDecided: MIN_DECIDED,
     rows: rows.slice(0, MAX_LEVEL_TIMEFRAME_ROWS),
@@ -1237,7 +1254,9 @@ function buildTodayLevels(
 
   const symbolOf = (level: MarkedLevel) => instrumentSymbol(instruments, level.instrumentId);
   const today = levels
-    .filter((level) => level.tradeDate === todayTradeDate)
+    // A line the trader set aside is not part of today's read: it is not a line price is
+    // watching, and quoting it as never-touched would put a discarded level in front of them.
+    .filter((level) => level.tradeDate === todayTradeDate && level.resolution !== 'void')
     .sort((a, b) => {
       const symbol = symbolOf(a).localeCompare(symbolOf(b));
       if (symbol !== 0) return symbol;
@@ -1262,8 +1281,10 @@ function buildTodayLevels(
       zonePoints: level.zonePoints,
       label: level.label?.trim() || null,
       // No linked touch is a fact about the record, not an outcome: never-touched, stated as
-      // its own status so it can never be read as a line that held.
+      // its own status so it can never be read as a line that held. `confirmed` marks the ones
+      // the trader closed out themselves, so the coach can quote their own answer.
       status: touch ? touch.outcome : 'never-touched',
+      confirmed: !touch && level.resolution === 'never-touched',
       session: touch ? touch.session : null,
       touchedAt: touch ? touch.touchedAt ?? null : null,
       maxExcursionPoints:

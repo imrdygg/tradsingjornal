@@ -318,14 +318,24 @@ export function findLevelEdges(
  * rate they do not belong in. A level is treated as tested when a touch links back to it; a
  * touch with no level behind it belongs to the older, mark-as-you-go record and is left out
  * of both counts here, though it still counts in {@link findLevelEdges}.
+ *
+ * Two further states are carried without being folded into the rate. A level the trader has
+ * explicitly marked `never-touched` is still an untested line — it was never reached — but the
+ * count is broken out so the read can say how much of the record has actually been closed out
+ * rather than merely not logged. A level marked `void` is set aside and dropped from every count
+ * here, exactly as an `invalid` touch is, because it is not evidence about anything.
  */
 export interface MarkedLevelCoverage {
-  /** Every level the trader marked. */
+  /** Every active level the trader marked: voided lines are excluded. */
   marked: number;
   /** Marked levels that price reached and were logged as a touch. */
   tested: number;
-  /** Marked levels nothing has been logged against yet. */
+  /** Marked levels nothing has been logged against yet, confirmed or not. */
   untested: number;
+  /** Untested levels the trader has explicitly closed out as never reached. */
+  neverTouched: number;
+  /** Levels the trader set aside as void; counted here only so the read can say how many. */
+  voided: number;
   /** Tested / marked as a percentage, or null while nothing has been marked. */
   testRate: number | null;
   /** The record of the tested levels alone, so its hold rate excludes the untouched. */
@@ -337,16 +347,23 @@ export function summarizeMarkedLevels(
   touches: LevelTouch[],
   minDecided = MIN_DECIDED
 ): MarkedLevelCoverage {
-  const levelIds = new Set(levels.map((level) => level.id));
+  const active = levels.filter((level) => level.resolution !== 'void');
+  const voided = levels.length - active.length;
+  const levelIds = new Set(active.map((level) => level.id));
   const linked = touches.filter((touch) => touch.levelId && levelIds.has(touch.levelId));
   const testedIds = new Set(linked.map((touch) => touch.levelId));
-  const marked = levels.length;
+  const marked = active.length;
   const tested = testedIds.size;
+  const neverTouched = active.filter(
+    (level) => level.resolution === 'never-touched' && !testedIds.has(level.id)
+  ).length;
 
   return {
     marked,
     tested,
     untested: marked - tested,
+    neverTouched,
+    voided,
     testRate: marked > 0 ? round((tested / marked) * 100, 1) : null,
     testedStats: summarizeTouches(linked, minDecided),
   };

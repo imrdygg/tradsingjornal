@@ -103,6 +103,21 @@ describe('summarizeTimeframeEdges', () => {
     expect(buckets[0].testRate).toBe(0);
     expect(timeframeBucketLabel(buckets[0], 'MES')).toBe('MES no timeframe resistance');
   });
+
+  it('drops a voided line and breaks out the ones closed out as never touched', () => {
+    const levels = [
+      marked({ id: 'a', timeframe: '5m', resolution: 'void' }),
+      marked({ id: 'b', timeframe: '5m', resolution: 'never-touched' }),
+      marked({ id: 'c', timeframe: '5m' }),
+    ];
+    const buckets = summarizeTimeframeEdges(levels, []);
+    const mes5Res = buckets.find((b) => b.key === 'mes|5m|resistance');
+    // The void line is gone entirely: two lines are marked, both untested.
+    expect(mes5Res?.marked).toBe(2);
+    expect(mes5Res?.tested).toBe(0);
+    expect(mes5Res?.untested).toBe(2);
+    expect(mes5Res?.neverTouched).toBe(1);
+  });
 });
 
 describe('timeframeHighlights', () => {

@@ -1160,6 +1160,21 @@ describe('todayLevels', () => {
     expect(read.levels[0].status).toBe('never-touched');
     expect(read.levels[0].session).toBeNull();
     expect(read.levels[0].checks).toBeNull();
+    // Nothing said so: it is open, not a line the trader closed out.
+    expect(read.levels[0].confirmed).toBe(false);
+  });
+
+  it('flags a never-touched line the trader closed out, and drops a voided one', () => {
+    const read = build({
+      markedLevels: [
+        level({ id: 'a', price: 7760, resolution: 'never-touched' }),
+        level({ id: 'x', price: 7780, resolution: 'void' }),
+      ],
+    }).todayLevels;
+
+    expect(read.levels).toHaveLength(1);
+    expect(read.levels[0].status).toBe('never-touched');
+    expect(read.levels[0].confirmed).toBe(true);
   });
 
   it('leaves out lines marked on earlier days', () => {

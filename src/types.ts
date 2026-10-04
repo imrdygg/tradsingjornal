@@ -780,6 +780,24 @@ export interface Lesson {
 export type LevelKind = 'support' | 'resistance';
 
 /**
+ * How a marked level that price never reached was closed out by the trader.
+ *
+ * A marked level with no touch is an open record: the session may still have to play out, or the
+ * trader may simply not have written anything against it. These two answers let that open record
+ * be resolved, which matters because a level the trader has actually checked is a different fact
+ * from one they never got to.
+ *
+ * - `never-touched` — the session is done and price never reached the line. It stays in the
+ *   marked count and is still never-tested; the answer is just made explicit.
+ * - `void` — the line is set aside (mis-marked, a data problem). It is kept on the record so it
+ *   can be recognised or un-marked, but it counts in no rate and is left out of every read the
+ *   coach sees, exactly as an `invalid` touch is.
+ *
+ * Absent means the level is still open — neither reached nor given up on.
+ */
+export type LevelResolution = 'never-touched' | 'void';
+
+/**
  * The chart timeframe a marked level was read off.
  *
  * The trader's indicator draws support and resistance on several resolutions at once, and the
@@ -940,6 +958,13 @@ export interface MarkedLevel {
    * neither is treated as better than the other.
    */
   source?: 'indicator' | 'manual';
+  /**
+   * How the trader closed this level out when price never reached it. Absent means still open.
+   *
+   * A level that was reached carries the answer on its touch, not here; this is only the record
+   * for the lines nothing was logged against. See {@link LevelResolution}.
+   */
+  resolution?: LevelResolution;
   notes?: string;
   createdAt: string;
   updatedAt: string;

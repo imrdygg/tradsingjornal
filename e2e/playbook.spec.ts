@@ -243,6 +243,62 @@ test.describe('Playbook tab', () => {
 });
 
 /**
+ * Closing out a marked level that price never reached.
+ *
+ * A line the trader writes down and nothing was logged against used to be indistinguishable
+ * from one they simply never got to. These tests drive the two new marks through the real
+ * card: a line can be closed out as never touched, or set aside as void, and both survive a
+ * reload because they are written to the journal rather than held in React state.
+ */
+test.describe('Marked levels — never touched and void', () => {
+  /** Writes one resistance line for the instrument on screen and saves it. */
+  async function markResistance(page: Page, price: string) {
+    await page.locator('#level-prices-resistance').fill(price);
+    await page.locator('#level-add-both').click();
+    await expect(page.locator('[data-marked-level]')).toHaveCount(1);
+  }
+
+  test('closes an untouched line out as never touched, and it survives a reload', async ({ page }) => {
+    await gotoPlaybook(page);
+    await markResistance(page, '7760');
+
+    const row = page.locator('[data-marked-level]').first();
+    await row.locator('button[id^="level-never-touched-btn-"]').click();
+
+    await expect(row).toHaveAttribute('data-level-resolution', 'never-touched');
+
+    // The real assertion: it is in the journal, not just on screen.
+    await page.reload();
+    await gotoPlaybook(page);
+    await expect(page.locator('[data-marked-level]').first()).toHaveAttribute(
+      'data-level-resolution',
+      'never-touched'
+    );
+  });
+
+  test('sets a line aside as void, keeping it on the record and out of the counts', async ({ page }) => {
+    await gotoPlaybook(page);
+    await markResistance(page, '7765');
+
+    const row = page.locator('[data-marked-level]').first();
+    await row.locator('button[id^="level-void-btn-"]').click();
+
+    await expect(row).toHaveAttribute('data-level-resolution', 'void');
+    // The badge, not the button: both read "Void", so address the badge by its id.
+    await expect(row.locator('span[id^="level-void-"]')).toBeVisible();
+
+    await page.reload();
+    await gotoPlaybook(page);
+    const reloaded = page.locator('[data-marked-level]').first();
+    await expect(reloaded).toHaveAttribute('data-level-resolution', 'void');
+
+    // The line is kept, not deleted: it can be reopened from here.
+    await reloaded.locator('button[id^="level-void-btn-"]').click();
+    await expect(reloaded).toHaveAttribute('data-level-resolution', 'open');
+  });
+});
+
+/**
  * Attaching reference charts and video clips to a setup.
  *
  * The upload path was shipping uncovered, which matters because a setup's media is

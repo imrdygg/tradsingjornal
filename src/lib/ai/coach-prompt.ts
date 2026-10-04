@@ -724,6 +724,10 @@ function formatLevelTimeframesForPrompt(read: LevelTimeframesRead | undefined): 
   );
   lines.push(
     `${read.marked} line(s) marked: ${read.tested} tested, ${read.untested} never tested` +
+      (read.neverTouched > 0
+        ? ` of which ${read.neverTouched} the trader has explicitly closed out as never reached`
+        : '') +
+      (read.voided > 0 ? `; ${read.voided} line(s) were set aside as void and left out` : '') +
       (read.testRate === null ? '.' : ` (${read.testRate}% of marked lines were tested).`)
   );
 
@@ -743,7 +747,9 @@ function formatLevelTimeframesForPrompt(read: LevelTimeframesRead | undefined): 
           : `${row.decided} decided so far — NOT yet a rate (${read.minDecided} are needed)`;
       lines.push(
         `- ${row.symbol} ${frame} ${row.kind}: ${row.marked} marked, ${row.tested} tested, ` +
-          `${row.untested} never tested; ${rate}` +
+          `${row.untested} never tested` +
+          (row.neverTouched > 0 ? ` (${row.neverTouched} confirmed never reached)` : '') +
+          `; ${rate}` +
           (row.watching ? `, ${row.watching} still watching` : '')
       );
     }
@@ -2105,6 +2111,7 @@ export function formatEntryEdgeForPrompt(
         `- ${level.symbol} ${frame} ${level.kind} at ${level.price} (width \u00b1${level.zonePoints})` +
           `${label}: ${fromEntry} the entry of ${entry.entryPrice}, ${side}${liveNote}. ` +
           `State: ${todayLevelStatusWord(level.status)}` +
+          (level.confirmed ? ' — the trader has explicitly marked this line never touched' : '') +
           (level.touchedAt ? ` (touched ${level.touchedAt}` : '') +
           (level.touchedAt && level.checks ? `, checked ${level.checks} time(s))` : level.touchedAt ? ')' : '') +
           (level.maxExcursionPoints !== null ? `, ran ${level.maxExcursionPoints} point(s)` : '') +

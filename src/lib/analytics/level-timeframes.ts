@@ -57,8 +57,10 @@ export interface TimeframeEdgeBucket {
   marked: number;
   /** Marked levels that were reached and logged as a touch. */
   tested: number;
-  /** Marked levels nothing has been logged against yet. */
+  /** Marked levels nothing has been logged against yet, confirmed or not. */
   untested: number;
+  /** Untested levels the trader has explicitly closed out as never reached. */
+  neverTouched: number;
   /** Tested / marked as a percentage, or null while nothing is marked here. */
   testRate: number | null;
   /** The bucket's touches, so its hold rate is read over the marked levels that were tested. */
@@ -70,16 +72,20 @@ export interface TimeframeEdgeBucket {
  *
  * A level counts as tested when a touch links back to it, so a touch with no marked level
  * behind it (the older, mark-as-you-go record) is left out of every count here — it belongs to
- * `findLevelEdges`, not to this read. Buckets are ordered so the busiest record leads: most
- * tested first, then most marked, because the question being asked is which lines price
- * actually reaches.
+ * `findLevelEdges`, not to this read. A level the trader marked `void` is dropped entirely:
+ * a line set aside is not evidence about which resolutions price reaches. An untested level the
+ * trader closed out as `never-touched` stays in the marked and untested counts — it really was
+ * never reached — and is broken out so the record can say how much has been given an answer.
+ * Buckets are ordered so the busiest record leads: most tested first, then most marked, because
+ * the question being asked is which lines price actually reaches.
  */
 export function summarizeTimeframeEdges(
   levels: MarkedLevel[],
   touches: LevelTouch[],
   minDecided = 5
 ): TimeframeEdgeBucket[] {
-  const levelIds = new Set(levels.map((level) => level.id));
+  const active = levels.filter((level) => level.resolution !== 'void');
+  const levelIds = new Set(active.map((level) => level.id));
   const linked = touches.filter((touch) => touch.levelId && levelIds.has(touch.levelId));
 
   const touchByLevel = new Map<string, LevelTouch>();
@@ -88,7 +94,7 @@ export function summarizeTimeframeEdges(
   }
 
   const groups = new Map<string, MarkedLevel[]>();
-  for (const level of levels) {
+  for (const level of active) {
     const key = `${level.instrumentId}|${level.timeframe ?? 'none'}|${level.kind}`;
     const list = groups.get(key);
     if (list) list.push(level);
@@ -104,6 +110,9 @@ export function summarizeTimeframeEdges(
     const first = group[0];
     const marked = group.length;
     const tested = testedLevels.length;
+    const neverTouched = group.filter(
+      (level) => level.resolution === 'never-touched' && !touchByLevel.has(level.id)
+    ).length;
 
     buckets.push({
       key,
@@ -113,6 +122,7 @@ export function summarizeTimeframeEdges(
       marked,
       tested,
       untested: marked - tested,
+      neverTouched,
       testRate: marked > 0 ? round((tested / marked) * 100, 1) : null,
       stats: summarizeTouches(bucketTouches, minDecided),
     });

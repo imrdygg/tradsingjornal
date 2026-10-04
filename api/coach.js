@@ -969,7 +969,7 @@ function formatLevelTimeframesForPrompt(read) {
     "The trader marks support and resistance from their indicator on 1m, 3m, 5m, 15m, 30m and 1h charts, for MES, MNQ, MCL and VIX, every day. A line is TESTED when a touch was logged against it and NEVER TESTED when nothing has been; the two are different facts and are never merged into one number. A row whose hold rate is marked NOT yet a rate has too few decided touches: report its counts and say plainly that no rate can be read from it."
   );
   lines.push(
-    `${read.marked} line(s) marked: ${read.tested} tested, ${read.untested} never tested` + (read.testRate === null ? "." : ` (${read.testRate}% of marked lines were tested).`)
+    `${read.marked} line(s) marked: ${read.tested} tested, ${read.untested} never tested` + (read.neverTouched > 0 ? ` of which ${read.neverTouched} the trader has explicitly closed out as never reached` : "") + (read.voided > 0 ? `; ${read.voided} line(s) were set aside as void and left out` : "") + (read.testRate === null ? "." : ` (${read.testRate}% of marked lines were tested).`)
   );
   if (read.rows.length) {
     lines.push("");
@@ -978,7 +978,7 @@ function formatLevelTimeframesForPrompt(read) {
       const frame = row.timeframe ?? "no timeframe recorded";
       const rate = row.decided === 0 ? "no decided touch yet" : row.enoughData ? `held ${row.holdRate ?? 0}% of ${row.decided} decided` : `${row.decided} decided so far \u2014 NOT yet a rate (${read.minDecided} are needed)`;
       lines.push(
-        `- ${row.symbol} ${frame} ${row.kind}: ${row.marked} marked, ${row.tested} tested, ${row.untested} never tested; ${rate}` + (row.watching ? `, ${row.watching} still watching` : "")
+        `- ${row.symbol} ${frame} ${row.kind}: ${row.marked} marked, ${row.tested} tested, ${row.untested} never tested` + (row.neverTouched > 0 ? ` (${row.neverTouched} confirmed never reached)` : "") + `; ${rate}` + (row.watching ? `, ${row.watching} still watching` : "")
       );
     }
   }
@@ -1840,7 +1840,7 @@ function formatEntryEdgeForPrompt(entry, quote, todayLevels) {
       const side = signed === 0 ? "AT the entry" : ahead ? "AHEAD of the entry" : "BEHIND the entry";
       const liveNote = live === null ? "" : `, and ${distanceWords(live, level.price)} the live price (${live})`;
       lines.push(
-        `- ${level.symbol} ${frame} ${level.kind} at ${level.price} (width \xB1${level.zonePoints})${label}: ${fromEntry} the entry of ${entry.entryPrice}, ${side}${liveNote}. State: ${todayLevelStatusWord(level.status)}` + (level.touchedAt ? ` (touched ${level.touchedAt}` : "") + (level.touchedAt && level.checks ? `, checked ${level.checks} time(s))` : level.touchedAt ? ")" : "") + (level.maxExcursionPoints !== null ? `, ran ${level.maxExcursionPoints} point(s)` : "") + "." + // A line reached more than once is the case this read is for: the sequence, oldest
+        `- ${level.symbol} ${frame} ${level.kind} at ${level.price} (width \xB1${level.zonePoints})${label}: ${fromEntry} the entry of ${entry.entryPrice}, ${side}${liveNote}. State: ${todayLevelStatusWord(level.status)}` + (level.confirmed ? " \u2014 the trader has explicitly marked this line never touched" : "") + (level.touchedAt ? ` (touched ${level.touchedAt}` : "") + (level.touchedAt && level.checks ? `, checked ${level.checks} time(s))` : level.touchedAt ? ")" : "") + (level.maxExcursionPoints !== null ? `, ran ${level.maxExcursionPoints} point(s)` : "") + "." + // A line reached more than once is the case this read is for: the sequence, oldest
         // first, so the coach can tell a first test that held from a third one that failed.
         (level.touchCount > 1 ? ` Price reached this line ${level.touchCount} time(s) today, oldest first: ` + level.touches.map((t) => `${t.at} ${todayLevelStatusWord(t.outcome)}`).join("; ") + ". The latest test sets the state above." : "")
       );

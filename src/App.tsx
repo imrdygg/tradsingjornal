@@ -1090,6 +1090,16 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     setMarkedLevels(storage.saveMarkedLevels(batch));
   };
 
+  /**
+   * Rewrites one marked level in place.
+   *
+   * Used to close a line out — never touched or void — and to reopen it again. Storage upserts
+   * by id, so this is the same write path a corrected price would take.
+   */
+  const handleUpdateMarkedLevel = (level: MarkedLevel) => {
+    setMarkedLevels(storage.saveMarkedLevel(level));
+  };
+
   const handleDeleteMarkedLevel = (levelId: string) => {
     setMarkedLevels(storage.deleteMarkedLevel(levelId));
   };
@@ -2075,6 +2085,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               instruments: levelInstruments,
               timezone: profile.timezone,
               onSaveLevels: handleSaveMarkedLevels,
+              onUpdateLevel: handleUpdateMarkedLevel,
               onDeleteLevel: handleDeleteMarkedLevel,
               onSaveTouch: handleSaveLevelTouch,
             }}

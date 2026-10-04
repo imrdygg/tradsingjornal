@@ -132,6 +132,8 @@ interface PlaybookViewProps {
     /** The trader's own timezone, so a repeated touch is stamped on their clock. */
     timezone: string;
     onSaveLevels: (levels: MarkedLevel[]) => void;
+    /** Rewrites one level in place, used to close it out as never touched or void. */
+    onUpdateLevel: (level: MarkedLevel) => void;
     onDeleteLevel: (levelId: string) => void;
     onSaveTouch: (touch: LevelTouch) => void;
   };

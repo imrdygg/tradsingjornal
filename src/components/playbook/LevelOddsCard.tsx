@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowDown, ArrowUp, Clock, History } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronDown, Clock, History, Info } from 'lucide-react';
 import {
   Instrument,
   LevelTimeframe,
@@ -9,6 +9,7 @@ import {
   TradingSession,
 } from '../../types';
 import { CoachCard } from '../coach/coach-ui';
+import { Collapse } from '../common/Collapse';
 import { instrumentSymbol } from '../../lib/trading/instruments';
 import { MIN_DECIDED } from '../../lib/analytics/level-edge';
 import { TIMEFRAME_LABEL } from '../../lib/analytics/level-timeframes';
@@ -89,6 +90,8 @@ export const LevelOddsCard: React.FC<LevelOddsCardProps> = ({
    * The today block below is separate and always reads against today's own weekday.
    */
   const [condition, setCondition] = useState<LevelOddsCondition>({});
+  /** The "how this works" note is folded away by default so it costs no space until asked for. */
+  const [helpOpen, setHelpOpen] = useState(false);
   const hasCondition =
     condition.weekday != null || condition.session != null || condition.hour != null;
   const conditionLabel = [
@@ -194,6 +197,11 @@ export const LevelOddsCard: React.FC<LevelOddsCardProps> = ({
           {row.enoughDays ? '' : ' — still collecting; a tally, not a rate'}.
         </p>
         <p className="text-[10px] text-zinc-500">{holdLine(row)}</p>
+        {row.neverTouched > 0 && (
+          <p className="text-[10px] text-amber-300/80">
+            {row.neverTouched} of these you closed out as never touched.
+          </p>
+        )}
         {when && <p className="text-[10px] text-zinc-600">{when}</p>}
       </div>
     );
@@ -215,6 +223,66 @@ export const LevelOddsCard: React.FC<LevelOddsCardProps> = ({
             forecast.
           </p>
         </div>
+      </div>
+
+      {/*
+        The explanation, folded away so it takes no space until asked for. Collapsed by default
+        because the card is read for its numbers, not its manual — but the assumptions here are
+        load-bearing, so they have to be reachable without a wiki.
+      */}
+      <div>
+        <button
+          type="button"
+          id="level-odds-help-toggle"
+          aria-expanded={helpOpen}
+          aria-controls="level-odds-help"
+          onClick={() => setHelpOpen((open) => !open)}
+          className="flex items-center gap-1.5 text-[10px] font-mono uppercase font-bold text-zinc-500 transition-colors hover:text-zinc-300"
+        >
+          <ChevronDown
+            className={`h-3 w-3 transition-transform ${helpOpen ? '' : '-rotate-90'}`}
+          />
+          <Info className="h-3 w-3" />
+          How this works
+        </button>
+
+        <Collapse open={helpOpen} bodyId="level-odds-help">
+          <ul className="mt-2 space-y-1.5 rounded-xl border border-zinc-800 bg-zinc-950/50 p-2.5 text-[10px] leading-relaxed text-zinc-400">
+            <li>
+              <span className="font-semibold text-zinc-300">Where it comes from.</span> Your own
+              marked lines and logged touches only — no market feed. A touch counts only when it
+              links back to a marked level.
+            </li>
+            <li>
+              <span className="font-semibold text-zinc-300">Reach.</span> Of the days you marked
+              this line, how many price reached. A day counts when a touch on it links back to the
+              line.
+            </li>
+            <li>
+              <span className="font-semibold text-zinc-300">Hold.</span> Of the decided touches
+              (never came back vs returned), the share where price never came back. Under five
+              decided it shows a count, not a rate.
+            </li>
+            <li>
+              <span className="font-semibold text-zinc-300">When.</span> The hour and weekday your
+              touches printed at, on your own clock.
+            </li>
+            <li>
+              <span className="font-semibold text-zinc-300">What happened next.</span> On days a
+              line was reached, the other lines price reached later that same day, ordered by the
+              touch times.
+            </li>
+            <li>
+              <span className="font-semibold text-zinc-300">Narrow the record</span> to a weekday,
+              session or hour to isolate a pattern like a line only reached on Mondays around
+              03:00. A thin slice stays a tally rather than a percentage.
+            </li>
+            <li className="text-zinc-500">
+              It grows as you keep marking lines and tapping Touched. Nothing here is a prediction —
+              every number is a count of what your journal already recorded.
+            </li>
+          </ul>
+        </Collapse>
       </div>
 
       <div>

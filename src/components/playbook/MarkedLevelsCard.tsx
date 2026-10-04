@@ -1,8 +1,9 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowDown, ArrowUp, Check, Crosshair, Layers, ListPlus, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Ban, Check, Crosshair, EyeOff, Layers, ListPlus, Trash2 } from 'lucide-react';
 import {
   Instrument,
   LevelKind,
+  LevelResolution,
   LevelTimeframe,
   LevelTouch,
   MarkedLevel,
@@ -44,6 +45,11 @@ import {
  * decides later, so the record says which of the marked lines it came from and on which
  * timeframe. The untouched lines are kept on purpose: a level the trader marks and never tests
  * is a fact about how they read their own chart, and the break-and-run finder reports it.
+ *
+ * A line nothing was logged against can also be closed out, because "price never reached it" and
+ * "I never got to it" are different facts and the record should be able to say which it is. One
+ * tap marks it never touched; another sets it aside as void, which drops it from every rate the
+ * coach reads. Both marks are reversible — the line stays on the record until it is deleted.
  */
 
 export interface MarkedLevelsCardProps {
@@ -59,6 +65,8 @@ export interface MarkedLevelsCardProps {
   timezone: string;
   /** Adds a batch of levels, skipping any already marked for the same day, instrument and price. */
   onSaveLevels: (levels: MarkedLevel[]) => void;
+  /** Rewrites one level in place — used to close it out as never touched or void. */
+  onUpdateLevel: (level: MarkedLevel) => void;
   onDeleteLevel: (levelId: string) => void;
   /** Logs the touch a marked level produced. The same write the touch log uses. */
   onSaveTouch: (touch: LevelTouch) => void;
@@ -133,6 +141,7 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
   instruments,
   timezone,
   onSaveLevels,
+  onUpdateLevel,
   onDeleteLevel,
   onSaveTouch,
   instrumentId: controlledInstrumentId,
@@ -273,6 +282,22 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
       .sort((a, b) => (which === 'support' ? a.price - b.price : b.price - a.price));
 
   const testedInView = view.filter((level) => touchesByLevel.has(level.id)).length;
+  const neverTouchedInView = view.filter(
+    (level) => !touchesByLevel.has(level.id) && level.resolution === 'never-touched'
+  ).length;
+
+  /**
+   * Closes a level out, or clears the mark when it is already set.
+   *
+   * Only the untested lines are offered this: once a touch links back to a line, the answer
+   * lives on the touch, and marking the level never-touched would contradict the record.
+   */
+  const setResolution = (level: MarkedLevel, resolution: LevelResolution) => {
+    onUpdateLevel({
+      ...level,
+      resolution: level.resolution === resolution ? undefined : resolution,
+    });
+  };
 
   // Yesterday's same instrument and timeframe, so what moved is visible beside today's entry.
   const yesterdayDate = useMemo(
@@ -529,11 +554,17 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
     const latest = levelTouches[levelTouches.length - 1];
     const isSupport = level.kind === 'support';
     const formOpen = touchFormLevelId === level.id;
+    const isVoid = level.resolution === 'void';
     return (
       <div
         key={level.id}
         data-marked-level={level.id}
-        className="space-y-1.5 rounded-xl border border-zinc-800 bg-zinc-900/50 px-2.5 py-1.5"
+        data-level-resolution={level.resolution ?? 'open'}
+        className={`space-y-1.5 rounded-xl border px-2.5 py-1.5 ${
+          isVoid
+            ? 'border-zinc-800/70 border-dashed bg-zinc-950/40 opacity-70'
+            : 'border-zinc-800 bg-zinc-900/50'
+        }`}
       >
         <div className="flex flex-wrap items-center gap-2">
           <span className="inline-flex items-center gap-1 rounded-lg border border-zinc-700 bg-zinc-800/80 px-1.5 py-0.5 text-[10px] font-mono uppercase font-bold text-zinc-300">
@@ -566,8 +597,75 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
               {level.label}
             </span>
           )}
+          {level.resolution === 'never-touched' && (
+            <span
+              id={`level-never-touched-${level.id}`}
+              className="rounded border border-amber-900/70 bg-amber-950/40 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300"
+              title="You closed this line out — price never reached it"
+            >
+              Never touched
+            </span>
+          )}
+          {isVoid && (
+            <span
+              id={`level-void-${level.id}`}
+              className="rounded border border-zinc-800 bg-zinc-900 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-500"
+              title="Set aside — left out of every rate the coach reads"
+            >
+              Void
+            </span>
+          )}
 
           <span className="ml-auto flex items-center gap-1.5">
+            {/*
+              Closing out an untested line.
+
+              Offered only before a touch links back to the line: once one does, the answer is
+              the touch's own outcome and this would contradict it. Both marks toggle, so a line
+              marked by mistake is one tap from being open again.
+            */}
+            {!latest && (
+              <>
+                <button
+                  type="button"
+                  id={`level-never-touched-btn-${level.id}`}
+                  aria-pressed={level.resolution === 'never-touched'}
+                  onClick={() => setResolution(level, 'never-touched')}
+                  title={
+                    level.resolution === 'never-touched'
+                      ? 'Reopen this line — it is no longer closed out'
+                      : 'Price never reached this line — close it out as never touched'
+                  }
+                  className={`flex items-center gap-1 rounded-lg border px-2 py-0.5 text-[10px] font-semibold transition-colors ${
+                    level.resolution === 'never-touched'
+                      ? 'border-amber-700/70 bg-amber-950/50 text-amber-200'
+                      : 'border-zinc-700/60 bg-zinc-950/40 text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200'
+                  }`}
+                >
+                  <Ban className="h-3 w-3" />
+                  Never touched
+                </button>
+                <button
+                  type="button"
+                  id={`level-void-btn-${level.id}`}
+                  aria-pressed={isVoid}
+                  onClick={() => setResolution(level, 'void')}
+                  title={
+                    isVoid
+                      ? 'Reopen this line — it counts in the record again'
+                      : 'Set this line aside — it is left out of every rate'
+                  }
+                  className={`flex items-center gap-1 rounded-lg border px-2 py-0.5 text-[10px] font-semibold transition-colors ${
+                    isVoid
+                      ? 'border-zinc-600 bg-zinc-800 text-zinc-300'
+                      : 'border-zinc-700/60 bg-zinc-950/40 text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200'
+                  }`}
+                >
+                  <EyeOff className="h-3 w-3" />
+                  Void
+                </button>
+              </>
+            )}
             {!latest ? (
               <button
                 type="button"
@@ -1029,6 +1127,7 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
           </span>
           <span className="text-[10px] font-mono text-zinc-500">
             {view.length} marked · {testedInView} touched
+            {neverTouchedInView > 0 ? ` · ${neverTouchedInView} never touched` : ''}
             {earlierCount > 0 ? ` · ${earlierCount} on earlier days` : ''}
           </span>
         </div>

@@ -123,6 +123,8 @@ export interface LevelOddsRow {
   daysMarked: number;
   /** Distinct of those days price reached the line. */
   daysReached: number;
+  /** Lines here the trader closed out as never reached, so the tally is not merely unlogged. */
+  neverTouched: number;
   /** `daysReached / daysMarked` as a percentage, or null when nothing was marked. */
   reachRate: number | null;
   /** True once `daysMarked` clears {@link MIN_DAYS_FOR_RATE}, so the rate may be read. */
@@ -231,6 +233,9 @@ export function summarizeLevelOdds(
     (level) =>
       level.instrumentId === instrumentId &&
       !!level.timeframe &&
+      // A line the trader set aside is not evidence about reaching anything, so it is dropped
+      // from the read the same way a voided touch is.
+      level.resolution !== 'void' &&
       dayMatches(level.tradeDate) &&
       (wantSession === null || level.session === wantSession)
   );
@@ -257,6 +262,7 @@ export function summarizeLevelOdds(
   const reachedDays = new Map<string, Set<string>>();
   const markedCount = new Map<string, number>();
   const reachedCount = new Map<string, number>();
+  const neverTouchedCount = new Map<string, number>();
   const bucketTouches = new Map<string, LevelTouch[]>();
 
   const instrumentDays = new Set<string>();
@@ -265,6 +271,9 @@ export function summarizeLevelOdds(
     const key = bucketOfLevel(level);
     instrumentDays.add(level.tradeDate);
     markedCount.set(key, (markedCount.get(key) ?? 0) + 1);
+    if (level.resolution === 'never-touched') {
+      neverTouchedCount.set(key, (neverTouchedCount.get(key) ?? 0) + 1);
+    }
     let days = markedDays.get(key);
     if (!days) {
       days = new Set();
@@ -312,6 +321,7 @@ export function summarizeLevelOdds(
       kind,
       daysMarked: dayCount,
       daysReached: reachedDayCount,
+      neverTouched: neverTouchedCount.get(key) ?? 0,
       reachRate: dayCount > 0 ? round((reachedDayCount / dayCount) * 100, 1) : null,
       enoughDays: dayCount >= minDaysForRate,
       marked: markedCount.get(key) ?? 0,

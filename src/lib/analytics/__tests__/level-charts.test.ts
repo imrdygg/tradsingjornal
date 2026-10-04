@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { Instrument, LevelTouch, MarkedLevel } from '../../../types';
 import {
   buildEdgeCurve,
+  buildLevelFixup,
   buildSessionCoverage,
   buildSymbolCoverage,
   buildTouchTimeline,
@@ -79,6 +80,49 @@ describe('buildSymbolCoverage', () => {
       INSTRUMENTS
     );
     expect(rows[0].marked).toBe(1);
+  });
+});
+
+describe('buildLevelFixup', () => {
+  it('names the timeframe line the trader keeps marking but price never reaches', () => {
+    const levels = Array.from({ length: 5 }, (_, i) =>
+      marked({ id: `l${i}`, timeframe: '5m', kind: 'resistance' })
+    );
+    const touches = [touch({ id: 't1', levelId: 'l0', outcome: 'never-returned' })];
+
+    const fixup = buildLevelFixup(levels, touches, INSTRUMENTS);
+    expect(fixup).toMatchObject({
+      scope: 'timeframe',
+      label: 'MES 5 min resistance',
+      marked: 5,
+      tested: 1,
+      untested: 4,
+      testRate: 20,
+    });
+  });
+
+  it('falls back to the whole contract when no single timeframe bucket clears the floor', () => {
+    // Six untested lines with no timeframe, split across the two sides: neither bucket has the
+    // five marked lines a timeframe finding needs, but the contract as a whole does.
+    const levels = [
+      ...Array.from({ length: 3 }, (_, i) => marked({ id: `r${i}`, kind: 'resistance' })),
+      ...Array.from({ length: 3 }, (_, i) => marked({ id: `s${i}`, kind: 'support' })),
+    ];
+
+    const fixup = buildLevelFixup(levels, [], INSTRUMENTS);
+    expect(fixup).toMatchObject({
+      scope: 'symbol',
+      label: 'MES',
+      marked: 6,
+      tested: 0,
+      untested: 6,
+      testRate: 0,
+    });
+  });
+
+  it('leaves a thin sample as a tally rather than a finding', () => {
+    const levels = [marked({ id: 'a', timeframe: '5m' }), marked({ id: 'b', timeframe: '5m' })];
+    expect(buildLevelFixup(levels, [], INSTRUMENTS)).toBeNull();
   });
 });
 

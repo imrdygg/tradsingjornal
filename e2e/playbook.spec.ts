@@ -540,6 +540,11 @@ test.describe('Level charts', () => {
           level('l1', 7760, '2026-09-28'),
           level('l2', 7775, '2026-09-28', 'never-touched'),
           level('l3', 7790, '2026-09-29'),
+          // Enough MES 5 min resistance lines never reached for the "what to fix" callout to
+          // clear its count floors and name this line rather than staying a tally.
+          level('l4', 7805, '2026-09-30'),
+          level('l5', 7820, '2026-10-01'),
+          level('l6', 7835, '2026-10-02'),
         ])
       );
       localStorage.setItem(
@@ -556,6 +561,9 @@ test.describe('Level charts', () => {
     // The card opens on coverage.
     await expect(page.locator('#playbook-level-charts')).toBeVisible();
     await expect(page.locator('#level-chart-coverage svg[role="application"]')).toBeVisible();
+
+    // The record names the line the trader keeps marking that price never reaches.
+    await expect(page.locator('#level-chart-what-to-fix')).toContainText('MES 5 min resistance');
 
     await page.locator('#level-chart-tab-edge').click();
     await expect(page.locator('#level-chart-edge svg[role="application"]')).toBeVisible();

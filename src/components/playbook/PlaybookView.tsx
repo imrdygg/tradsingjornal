@@ -47,10 +47,20 @@ import { EdgeFinderCard } from './EdgeFinderCard';
 import { CoachSetupsCard } from './CoachSetupsCard';
 import { MarkedLevelsCard } from './MarkedLevelsCard';
 import { LevelOddsCard } from './LevelOddsCard';
-import { LevelChartCard } from './LevelChartCard';
 import { isFocusSetup, splitFocusSetups } from '../../lib/playbook/focus-setups';
 import { PATTERNS } from '../../lib/playbook/patterns';
 import { isVideoUrl } from '../../lib/media/media-utils';
+
+/**
+ * The one card on this tab that draws with recharts.
+ *
+ * Loaded on demand so the charting library stays out of the Playbook entry chunk: the tab
+ * itself is all lists and guides, and only the level charts need axes. The card still renders
+ * in its place, just a beat later than the cards above it.
+ */
+const LevelChartCard = React.lazy(() =>
+  import('./LevelChartCard').then((module) => ({ default: module.LevelChartCard }))
+);
 
 interface PlaybookViewProps {
   setups: Setup[];
@@ -578,15 +588,23 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
         instrument selection, so the three level cards read as one.
       */}
       {markedLevels && (
-        <LevelChartCard
-          levels={markedLevels.levels}
-          touches={markedLevels.touches}
-          instruments={markedLevels.instruments}
-          todayTradingDay={markedLevels.todayTradingDay}
-          timezone={markedLevels.timezone}
-          instrumentId={levelInstrumentId}
-          onInstrumentChange={setLevelInstrumentId}
-        />
+        <React.Suspense
+          fallback={
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-6 text-center text-[11px] text-zinc-500">
+              Loading your level charts…
+            </div>
+          }
+        >
+          <LevelChartCard
+            levels={markedLevels.levels}
+            touches={markedLevels.touches}
+            instruments={markedLevels.instruments}
+            todayTradingDay={markedLevels.todayTradingDay}
+            timezone={markedLevels.timezone}
+            instrumentId={levelInstrumentId}
+            onInstrumentChange={setLevelInstrumentId}
+          />
+        </React.Suspense>
       )}
 
       {/* The coach's own setups, learned from the trade history and its entry charts. */}

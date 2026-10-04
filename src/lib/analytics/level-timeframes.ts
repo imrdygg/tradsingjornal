@@ -139,10 +139,10 @@ export function summarizeTimeframeEdges(
 const MIN_REACHED = 3;
 
 /** The fewest lines marked before a low test rate says anything about attention. */
-const MIN_MARKED_FOR_IGNORE = 5;
+export const MIN_MARKED_FOR_IGNORE = 5;
 
 /** The fewest untouched lines before a bucket counts as a real blind spot. */
-const MIN_UNTESTED_FOR_IGNORE = 3;
+export const MIN_UNTESTED_FOR_IGNORE = 3;
 
 /**
  * The three things the timeframe record can say outright, pulled out of the bucket list.

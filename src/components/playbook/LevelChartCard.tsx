@@ -15,13 +15,20 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { Activity, BarChart3, LineChart as LineChartIcon, ScatterChart as ScatterIcon } from 'lucide-react';
+import {
+  Activity,
+  BarChart3,
+  LineChart as LineChartIcon,
+  ScatterChart as ScatterIcon,
+  Wrench,
+} from 'lucide-react';
 import type { Instrument, LevelTouch, MarkedLevel, TradingDay } from '../../types';
 import { CoachCard } from '../coach/coach-ui';
 import { instrumentSymbol } from '../../lib/trading/instruments';
 import { MIN_DECIDED } from '../../lib/analytics/level-edge';
 import {
   buildEdgeCurve,
+  buildLevelFixup,
   buildSessionCoverage,
   buildSymbolCoverage,
   buildTouchTimeline,
@@ -151,6 +158,14 @@ export const LevelChartCard: React.FC<LevelChartCardProps> = ({
 
   const hasAnyLevel = symbolCoverage.length > 0;
 
+  // The one blind spot worth naming: the line the trader keeps marking and price keeps missing.
+  // Read over the whole record, not the selected contract, because that is the question the
+  // callout answers — where is the marking effort going that price never rewards.
+  const fixup = useMemo(
+    () => buildLevelFixup(levels, touches, instruments),
+    [levels, touches, instruments]
+  );
+
   /** The timeline's axes, padded so points on the edge are not clipped. */
   const timelineDomains = useMemo(() => {
     if (!timeline.length)
@@ -248,6 +263,38 @@ export const LevelChartCard: React.FC<LevelChartCardProps> = ({
           Nothing to chart yet. Mark some lines above and log what price did with them — these
           charts fill in as the record grows.
         </p>
+      )}
+
+      {/*
+        What to fix: the line the trader keeps marking that price never reaches. The same count
+        floors the edge finder uses hold here, so a thin sample leaves this as a tally rather
+        than a finding — which is why it simply does not appear until something qualifies.
+      */}
+      {fixup && (
+        <div
+          id="level-chart-what-to-fix"
+          className="flex items-start gap-2.5 rounded-xl border border-amber-900/60 bg-amber-950/20 p-3"
+        >
+          <Wrench className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-300" />
+          <div className="space-y-0.5">
+            <span className="block text-[10px] font-mono uppercase font-bold text-amber-300/90">
+              What to fix
+            </span>
+            <p className="text-[11px] leading-relaxed text-zinc-300">
+              <span className="font-semibold text-amber-200">{fixup.label}</span> — you keep
+              marking here and price never reaches it:{' '}
+              {fixup.untested} of {fixup.marked} lines have not been tested
+              {fixup.neverTouched > 0
+                ? `, ${fixup.neverTouched} of them closed out as never touched`
+                : ''}
+              {fixup.testRate === null ? '' : ` (${fixup.tested} of ${fixup.marked} reached)`}.
+            </p>
+            <p className="text-[10px] leading-relaxed text-zinc-500">
+              Named only because enough of these lines have accumulated for the count to mean
+              something. A thinner sample would stay a tally, not a callout.
+            </p>
+          </div>
+        </div>
       )}
 
       {hasAnyLevel && view === 'coverage' && (

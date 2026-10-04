@@ -2,6 +2,13 @@ import type { Instrument, LevelTouch, MarkedLevel } from '../../types';
 import { instrumentSymbol } from '../trading/instruments';
 import { formatTradingDate, timeInTimezone } from '../storage/date-utils';
 import { summarizeMarkedLevels } from './level-edge';
+import {
+  MIN_MARKED_FOR_IGNORE,
+  MIN_UNTESTED_FOR_IGNORE,
+  summarizeTimeframeEdges,
+  timeframeBucketLabel,
+  timeframeHighlights,
+} from './level-timeframes';
 
 /**
  * The level record, shaped for the charts.
@@ -23,6 +30,10 @@ import { summarizeMarkedLevels } from './level-edge';
  *    what price did afterwards.
  * 4. **Coverage by session** — per trading day, how many lines were marked and how many of them
  *    were reached, so a day of many lines and no touches reads plainly.
+ *
+ * The one finding pulled out of these series is {@link buildLevelFixup}: the line the trader keeps
+ * marking while price never reaches it. It is a blind spot in their attention, not a prediction,
+ * and it is stated only once the counts clear the same floors the rest of the record uses.
  */
 
 /** One contract's mark-and-touch record, as a bar. */
@@ -74,6 +85,79 @@ export function buildSymbolCoverage(
       };
     })
     .sort((a, b) => b.marked - a.marked || a.symbol.localeCompare(b.symbol));
+}
+
+/** The one line worth fixing, read from the whole marked record. */
+export interface LevelFixup {
+  /**
+   * Whether the finding is about one instrument/timeframe/side bucket or, when the lines carry
+   * no timeframe, about a whole contract.
+   */
+  scope: 'timeframe' | 'symbol';
+  /** A readable target, e.g. `MES 5 min resistance` or `MNQ`. */
+  label: string;
+  /** Active lines marked here: voided lines are not counted. */
+  marked: number;
+  /** Lines price reached and the trader logged a touch against. */
+  tested: number;
+  /** Lines nothing has been logged against yet. */
+  untested: number;
+  /** Untested lines the trader closed out as never reached, a subset of `untested`. */
+  neverTouched: number;
+  /** Tested / marked as a percentage, or null while nothing was marked. */
+  testRate: number | null;
+}
+
+/**
+ * The line the trader keeps marking that price never reaches.
+ *
+ * Reads the same two records the charts plot and picks the one blind spot worth naming. It
+ * prefers a timeframe bucket — "MES 5 min resistance" is actionable where "MES" is not — and
+ * only falls back to a whole contract when the lines were marked before timeframes existed.
+ * Both routes apply the same count floors the edge finder uses, so a thin sample leaves this as
+ * a tally rather than a finding: a bucket needs {@link MIN_MARKED_FOR_IGNORE} marked lines and
+ * {@link MIN_UNTESTED_FOR_IGNORE} never reached before it qualifies, and a contract honours the
+ * same floors. Returns null when nothing clears them.
+ */
+export function buildLevelFixup(
+  levels: MarkedLevel[],
+  touches: LevelTouch[],
+  instruments: Instrument[]
+): LevelFixup | null {
+  const buckets = summarizeTimeframeEdges(levels, touches);
+  const { mostIgnored } = timeframeHighlights(buckets);
+  if (mostIgnored) {
+    return {
+      scope: 'timeframe',
+      label: timeframeBucketLabel(mostIgnored, instrumentSymbol(instruments, mostIgnored.instrumentId)),
+      marked: mostIgnored.marked,
+      tested: mostIgnored.tested,
+      untested: mostIgnored.untested,
+      neverTouched: mostIgnored.neverTouched,
+      testRate: mostIgnored.testRate,
+    };
+  }
+
+  const row = buildSymbolCoverage(levels, touches, instruments)
+    .filter(
+      (entry) =>
+        entry.marked >= MIN_MARKED_FOR_IGNORE &&
+        entry.open + entry.neverTouched >= MIN_UNTESTED_FOR_IGNORE &&
+        entry.testRate !== null &&
+        entry.testRate < 100
+    )
+    .sort((a, b) => (a.testRate ?? 0) - (b.testRate ?? 0) || b.marked - a.marked)[0];
+
+  if (!row) return null;
+  return {
+    scope: 'symbol',
+    label: row.symbol,
+    marked: row.marked,
+    tested: row.tested,
+    untested: row.open + row.neverTouched,
+    neverTouched: row.neverTouched,
+    testRate: row.testRate,
+  };
 }
 
 /** One step on the accumulating hold-rate line. */

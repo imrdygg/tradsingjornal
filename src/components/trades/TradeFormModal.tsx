@@ -130,7 +130,11 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
    * that show by default. Instrument, contracts-by-plan, sessions, setups, the risk ladder,
    * times, the target and the charts are real features, but none of them is needed to write
    * down a trade, so they are folded away rather than deleted and stay one click from the
-   * form. Reset to closed on every open so a trader is never met by a form they left long.
+   * form. Reset on every open so a trader is never met by a form they left long.
+   *
+   * Editing is the one exception: an edit opens expanded. The entry date/time lives in here,
+   * and it is the field that moves a trade logged under the wrong session — folding it away
+   * would hide the one correction the trader came back to make.
    */
   const [moreOptions, setMoreOptions] = useState(false);
   /**
@@ -289,8 +293,9 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
     }
     setPreviewIndex(null);
     setError('');
-    // Every open starts from the five fields, whatever was expanded last time.
-    setMoreOptions(false);
+    // A new trade opens on the five fields; an edit opens expanded, so the date/time it may
+    // need to correct is in view rather than behind another click.
+    setMoreOptions(!!editingTrade);
     // Only a fresh, hand-entered trade has its size derived from its slot. An edit keeps
     // the size that was actually filled, and a scale-in keeps the calculator's size.
     autoSizeRef.current = !editingTrade && !prefill;

@@ -182,6 +182,26 @@ test.describe('Editing a trade keeps its day and its provenance', () => {
     );
   });
 
+  test('opens an edit with the optional fields showing, so the date is findable', async ({
+    page,
+  }) => {
+    await gotoTab(page, 'trades', /Trade Log/i);
+
+    const cardEdit = page.locator('[title="Edit Trade"]:visible');
+    const tableEdit = page.locator('button:visible', { hasText: /^Edit$/ });
+    const button = (await cardEdit.count()) > 0 ? cardEdit.first() : tableEdit.first();
+    await button.click();
+
+    await expect(page.getByRole('button', { name: /Update Trade/i })).toBeVisible();
+    // The entry date/time sits in the optional half of the form; on an edit it opens already
+    // unfolded, because correcting the date is a reason the trader opened the form at all.
+    await expect(page.locator('#trade-more-options-toggle')).toHaveAttribute(
+      'aria-expanded',
+      'true'
+    );
+    await expect(page.locator('#trade-entry-time')).toBeVisible();
+  });
+
   test('changing the entry date re-files the trade on the session it was moved to', async ({
     page,
   }) => {

@@ -24,7 +24,11 @@ import {
   TradingSession,
 } from '../../types';
 import { CoachCard } from '../coach/coach-ui';
-import { formatTimestamp, formatTradingDate } from '../../lib/storage/date-utils';
+import {
+  formatTimestamp,
+  formatTradingDate,
+  tradingDateOf,
+} from '../../lib/storage/date-utils';
 import {
   defaultLevelZonePoints,
   formatPoints,
@@ -79,6 +83,13 @@ export interface MarkedLevelsCardProps {
   onSaveLevels: (levels: MarkedLevel[]) => void;
   /** Rewrites one level in place — used to close it out as never touched or void. */
   onUpdateLevel: (level: MarkedLevel) => void;
+  /**
+   * Finds the trading day for a date, creating an empty one if it is not on the record.
+   *
+   * Needed when a line is moved to another day: the record has to belong to a session that
+   * exists, or it would point at a day History never shows.
+   */
+  onResolveDay: (date: string) => TradingDay;
   onDeleteLevel: (levelId: string) => void;
   /** Logs the touch a marked level produced. The same write the touch log uses. */
   onSaveTouch: (touch: LevelTouch) => void;
@@ -161,6 +172,7 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
   timezone,
   onSaveLevels,
   onUpdateLevel,
+  onResolveDay,
   onDeleteLevel,
   onSaveTouch,
   onDeleteTouch,
@@ -225,6 +237,7 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
     label: string;
     session: TradingSession;
     timeframe: LevelTimeframe;
+    date: string;
   } | null>(null);
   /**
    * Whether the list reaches back past today.
@@ -374,6 +387,7 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
       // A line marked before timeframes existed shows under the default chart; opening the
       // editor and saving is how it gets a real one.
       timeframe: level.timeframe ?? DEFAULT_TIMEFRAME,
+      date: level.tradeDate,
     });
     // An edit and a touch form are two answers to the same row; only one may be open.
     setTouchFormLevelId(null);
@@ -396,18 +410,46 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
     if (!editDraft) return;
     const price = Number(editDraft.price);
     if (!Number.isFinite(price) || price <= 0) return;
+    if (!editDraft.date) return;
 
     const timeframe = editDraft.timeframe;
+    const dateChanged = editDraft.date !== level.tradeDate;
+    // Re-home to the session for the new date, creating it if the trader never opened that day.
+    const day = dateChanged ? onResolveDay(editDraft.date) : null;
     onUpdateLevel({
       ...level,
       price,
       label: editDraft.label.trim() || undefined,
       session: editDraft.session,
       timeframe,
+      ...(day ? { tradeDate: editDraft.date, tradingDayId: day.id } : {}),
     });
-    if (timeframe !== level.timeframe) {
-      for (const touch of touches.filter((entry) => entry.levelId === level.id)) {
-        onSaveTouch({ ...touch, timeframe });
+
+    // A line's answer lives on its touches, and a touch is dated and timed too, so any change
+    // to the line has to be carried across or the record would disagree with itself.
+    const linked = touches.filter((entry) => entry.levelId === level.id);
+    if (timeframe !== level.timeframe || day) {
+      const daysMoved = day
+        ? Math.round(
+            (Date.parse(`${editDraft.date}T00:00:00Z`) -
+              Date.parse(`${level.tradeDate}T00:00:00Z`)) /
+              86_400_000
+          )
+        : 0;
+      for (const touch of linked) {
+        const patch: Partial<LevelTouch> = { timeframe };
+        if (day) {
+          // Move the touch's own date and time by the same number of days the line moved.
+          const stamp = touch.touchedAt ?? touch.createdAt;
+          const moved = new Date(stamp);
+          if (!Number.isNaN(moved.getTime())) {
+            moved.setUTCDate(moved.getUTCDate() + daysMoved);
+            patch.touchedAt = moved.toISOString();
+          }
+          patch.tradeDate = editDraft.date;
+          patch.tradingDayId = day.id;
+        }
+        onSaveTouch({ ...touch, ...patch });
       }
     }
     closeEdit();
@@ -623,11 +665,16 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
   /** Writes one touch from a marked level, at the moment given. Shared by both paths below. */
   const logTouch = (level: MarkedLevel, touchedAt: string, notes?: string) => {
     const now = new Date().toISOString();
+    // The date follows the touch time the trader set, not the day the tab happens to be on — a
+    // touch written down after the fact belongs to the session it actually printed in.
+    const touchDate = tradingDateOf(touchedAt, timezone) || todayTradingDay.tradeDate;
+    const day =
+      touchDate === todayTradingDay.tradeDate ? todayTradingDay : onResolveDay(touchDate);
     onSaveTouch({
       id: `touch-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       userId: level.userId,
-      tradingDayId: todayTradingDay.id,
-      tradeDate: todayTradingDay.tradeDate,
+      tradingDayId: day.id,
+      tradeDate: touchDate,
       instrumentId: level.instrumentId,
       kind: level.kind,
       price: level.price,
@@ -939,6 +986,21 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
                   </option>
                 ))}
               </select>
+            </label>
+            <label
+              className="flex items-center gap-1.5 text-[10px] font-mono uppercase text-zinc-400"
+              htmlFor={`level-edit-date-${level.id}`}
+            >
+              Date
+              <input
+                id={`level-edit-date-${level.id}`}
+                type="date"
+                value={editDraft.date}
+                onChange={(event) =>
+                  setEditDraft({ ...editDraft, date: event.target.value })
+                }
+                className="rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1 text-[11px] font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none"
+              />
             </label>
             <label
               className="flex items-center gap-1.5 text-[10px] font-mono uppercase text-zinc-400"

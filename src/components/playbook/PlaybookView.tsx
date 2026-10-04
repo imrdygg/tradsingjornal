@@ -134,6 +134,8 @@ interface PlaybookViewProps {
     onSaveLevels: (levels: MarkedLevel[]) => void;
     /** Rewrites one level in place, used to close it out as never touched or void. */
     onUpdateLevel: (level: MarkedLevel) => void;
+    /** Finds or creates the trading day for a date, so a re-dated line has a session. */
+    onResolveDay: (date: string) => TradingDay;
     onDeleteLevel: (levelId: string) => void;
     onSaveTouch: (touch: LevelTouch) => void;
     /** Removes a touch logged against a level by mistake. */

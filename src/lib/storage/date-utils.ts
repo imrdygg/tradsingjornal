@@ -52,6 +52,28 @@ export function getCurrentTradingSessionDate(timezone = 'America/New_York'): str
   return weekdayOfTradingDate(today) === 6 ? shiftTradingDate(today, -1) : today;
 }
 
+/**
+ * The `YYYY-MM-DD` trading date an instant falls on in the trader's own timezone.
+ *
+ * Used to derive a record's date from its own timestamp — the touch time the trader sets, a
+ * trade's entry time — so the two can never disagree about which day it was. An unreadable
+ * instant returns an empty string so a caller can refuse to write a date it could not read.
+ */
+export function tradingDateOf(at: Date | string, timezone = 'America/New_York'): string {
+  const date = typeof at === 'string' ? new Date(at) : at;
+  if (Number.isNaN(date.getTime())) return '';
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(date);
+  } catch {
+    return date.toISOString().slice(0, 10);
+  }
+}
+
 export function getCurrentTradingTime(timezone = 'America/New_York'): string {
   try {
     const formatter = new Intl.DateTimeFormat('en-US', {

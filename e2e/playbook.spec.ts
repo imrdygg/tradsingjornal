@@ -296,6 +296,28 @@ test.describe('Marked levels — never touched and void', () => {
     ).toBeVisible();
   });
 
+  test('re-dates a line to the session it belongs to, and it survives a reload', async ({ page }) => {
+    await gotoPlaybook(page);
+    await markResistance(page, '7791');
+
+    const row = page.locator('[data-marked-level]').first();
+    await row.locator('button[id^="level-edit-"]').first().click();
+    // A line written down under the wrong day is moved to the one it was really read on.
+    await row.locator('input[id^="level-edit-date-"]').fill('2026-09-24');
+    await row.locator('button[id^="level-edit-save-"]').click();
+
+    // It is no longer today's line, but the card offers the earlier session it moved to.
+    await expect(page.locator('[data-marked-level]')).toHaveCount(0);
+    await expect(page.locator('#level-show-earlier')).toBeVisible();
+
+    await page.reload();
+    await gotoPlaybook(page);
+    await page.locator('#level-show-earlier').click();
+    const moved = page.locator('[data-marked-level]').first();
+    await expect(moved.getByText('7791', { exact: true })).toBeVisible();
+    await expect(moved).toContainText('Sep 24');
+  });
+
   test('moves a line to another chart and carries its touch with it', async ({ page }) => {
     await gotoPlaybook(page);
     await markResistance(page, '7760');

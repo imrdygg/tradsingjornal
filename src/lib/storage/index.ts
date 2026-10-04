@@ -739,21 +739,24 @@ export const storage = {
     return this.getTradingDays().find((d) => d.tradeDate === dateStr);
   },
 
-  getOrCreateToday(): TradingDay {
+  /**
+   * Finds the trading day for a date, creating an empty one if it does not exist.
+   *
+   * Used when a record is moved to another day — a line, a touch or a print written down on the
+   * wrong date — so the record has a session to belong to instead of pointing at a day that was
+   * never created and so never shows in History.
+   */
+  getOrCreateDay(dateStr: string): TradingDay {
     const profile = this.getProfile();
-    // The session date, not the calendar date: a Saturday rolls back to Friday so the app never
-    // opens a day the market cannot trade on.
-    const todayStr = getCurrentTradingSessionDate(profile.timezone);
-    const existing = this.getTradingDayByDate(todayStr);
-
+    const existing = this.getTradingDayByDate(dateStr);
     if (existing) {
       return existing;
     }
 
     const newDay: TradingDay = {
-      id: `day-${todayStr}`,
+      id: `day-${dateStr}`,
       userId: profile.id,
-      tradeDate: todayStr,
+      tradeDate: dateStr,
       status: 'planning',
       riskMode: 'normal',
       normalLossLimit: profile.defaultDailyLossLimit || 100,
@@ -781,6 +784,13 @@ export const storage = {
     const updated = [newDay, ...days];
     setItem(STORAGE_KEYS.DAYS, updated);
     return newDay;
+  },
+
+  getOrCreateToday(): TradingDay {
+    const profile = this.getProfile();
+    // The session date, not the calendar date: a Saturday rolls back to Friday so the app never
+    // opens a day the market cannot trade on.
+    return this.getOrCreateDay(getCurrentTradingSessionDate(profile.timezone));
   },
 
   deleteTradingDay(dayId: string): void {

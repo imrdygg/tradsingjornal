@@ -1100,6 +1100,18 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     setMarkedLevels(storage.saveMarkedLevel(level));
   };
 
+  /**
+   * Finds or creates the trading day for a date.
+   *
+   * Called when a record is moved to another day, so the record belongs to a session that exists
+   * rather than pointing at one History never shows.
+   */
+  const handleResolveTradingDay = (date: string): TradingDay => {
+    const day = storage.getOrCreateDay(date);
+    setTradingDays(storage.getTradingDays());
+    return day;
+  };
+
   const handleDeleteMarkedLevel = (levelId: string) => {
     setMarkedLevels(storage.deleteMarkedLevel(levelId));
   };
@@ -2086,6 +2098,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               timezone: profile.timezone,
               onSaveLevels: handleSaveMarkedLevels,
               onUpdateLevel: handleUpdateMarkedLevel,
+              onResolveDay: handleResolveTradingDay,
               onDeleteLevel: handleDeleteMarkedLevel,
               onSaveTouch: handleSaveLevelTouch,
               onDeleteTouch: handleDeleteLevelTouch,

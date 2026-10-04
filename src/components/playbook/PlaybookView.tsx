@@ -25,6 +25,7 @@ import {
   Instrument,
   Lesson,
   LevelOutlook,
+  LevelTimeframe,
   LevelTouch,
   MarkedLevel,
   PatternStudy,
@@ -45,6 +46,7 @@ import { CoachLessonsCard } from './CoachLessonsCard';
 import { EdgeFinderCard } from './EdgeFinderCard';
 import { CoachSetupsCard } from './CoachSetupsCard';
 import { MarkedLevelsCard } from './MarkedLevelsCard';
+import { LevelOddsCard } from './LevelOddsCard';
 import { isFocusSetup, splitFocusSetups } from '../../lib/playbook/focus-setups';
 import { PATTERNS } from '../../lib/playbook/patterns';
 import { isVideoUrl } from '../../lib/media/media-utils';
@@ -224,6 +226,16 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
   // The catalog is trimmed to the trader's two set-ups by default; this reveals the rest.
   // See the focus bar below for why the rest are hidden rather than removed.
   const [showAllSetups, setShowAllSetups] = useState(false);
+
+  /**
+   * The instrument and chart the two levels cards share.
+   *
+   * Held here so Today's levels and What usually happens stay on the same instrument and
+   * timeframe as the trader moves between them. Undefined until they touch either one, at
+   * which point both cards start on their own default — the same primary instrument.
+   */
+  const [levelInstrumentId, setLevelInstrumentId] = useState<string | undefined>(undefined);
+  const [levelTimeframe, setLevelTimeframe] = useState<LevelTimeframe | undefined>(undefined);
 
   // The pair, and the rest of the catalog. A deep link or a watched setup outside the pair
   // has to open the full list, or the card it points at would not exist; and a journal
@@ -525,7 +537,33 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
       )}
 
       {/* The levels themselves, written down before any of them is touched. */}
-      {markedLevels && <MarkedLevelsCard {...markedLevels} />}
+      {markedLevels && (
+        <MarkedLevelsCard
+          {...markedLevels}
+          instrumentId={levelInstrumentId}
+          onInstrumentChange={setLevelInstrumentId}
+          timeframe={levelTimeframe}
+          onTimeframeChange={setLevelTimeframe}
+        />
+      )}
+
+      {/*
+        What the trader's own record says usually happens at each line. Fed by the same levels
+        and touches the card above writes, and driven by the same instrument and chart, so the
+        two read as one selection rather than two independent ones.
+      */}
+      {markedLevels && (
+        <LevelOddsCard
+          levels={markedLevels.levels}
+          touches={markedLevels.touches}
+          instruments={markedLevels.instruments}
+          todayTradingDay={markedLevels.todayTradingDay}
+          timezone={markedLevels.timezone}
+          instrumentId={levelInstrumentId}
+          onInstrumentChange={setLevelInstrumentId}
+          timeframe={levelTimeframe}
+        />
+      )}
 
       {/* The coach's own setups, learned from the trade history and its entry charts. */}
       {coachSetups && (

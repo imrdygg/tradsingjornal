@@ -62,6 +62,17 @@ export interface MarkedLevelsCardProps {
   onDeleteLevel: (levelId: string) => void;
   /** Logs the touch a marked level produced. The same write the touch log uses. */
   onSaveTouch: (touch: LevelTouch) => void;
+  /**
+   * The instrument and timeframe currently open, when a parent owns them.
+   *
+   * Left undefined the card keeps its own selection, which is how it works on its own. When a
+   * parent owns them — so a sibling card stays in step — it passes the current value and hears
+   * every change through the handlers beside it, and the card no longer keeps its own copy.
+   */
+  instrumentId?: string;
+  onInstrumentChange?: (instrumentId: string) => void;
+  timeframe?: LevelTimeframe;
+  onTimeframeChange?: (timeframe: LevelTimeframe) => void;
 }
 
 /** The sessions a level can be marked for, in the order they happen. */
@@ -124,13 +135,20 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
   onSaveLevels,
   onDeleteLevel,
   onSaveTouch,
+  instrumentId: controlledInstrumentId,
+  onInstrumentChange,
+  timeframe: controlledTimeframe,
+  onTimeframeChange,
 }) => {
-  const [instrumentId, setInstrumentId] = useState(() => {
+  const [ownInstrumentId, setOwnInstrumentId] = useState(() => {
     const wanted = (todayTradingDay.primaryInstrument ?? '').trim().toLowerCase();
     const primary = instruments.find((inst) => inst.symbol.toLowerCase() === wanted);
     return primary?.id ?? instruments[0]?.id ?? 'mes';
   });
-  const [timeframe, setTimeframe] = useState<LevelTimeframe>(DEFAULT_TIMEFRAME);
+  const [ownTimeframe, setOwnTimeframe] = useState<LevelTimeframe>(DEFAULT_TIMEFRAME);
+  // Controlled by a parent when it passes a value, so a sibling card can share the selection.
+  const instrumentId = controlledInstrumentId ?? ownInstrumentId;
+  const timeframe = controlledTimeframe ?? ownTimeframe;
   const [session, setSession] = useState<TradingSession>(
     SESSIONS.find((value) => todayTradingDay.allowedSessions?.includes(value)) ?? 'Regular Session'
   );
@@ -192,12 +210,14 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
   // Switching instrument or chart is switching which record is on screen, so the previous
   // chart's confirmation must not sit under the new one looking like it belongs to it.
   const chooseInstrument = (id: string) => {
-    setInstrumentId(id);
+    if (controlledInstrumentId === undefined) setOwnInstrumentId(id);
+    onInstrumentChange?.(id);
     setError('');
     setAdded(null);
   };
   const chooseTimeframe = (frame: LevelTimeframe) => {
-    setTimeframe(frame);
+    if (controlledTimeframe === undefined) setOwnTimeframe(frame);
+    onTimeframeChange?.(frame);
     setError('');
     setAdded(null);
   };

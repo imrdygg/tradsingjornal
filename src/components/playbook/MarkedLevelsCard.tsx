@@ -3,11 +3,9 @@ import { ArrowDown, ArrowUp, Check, Crosshair, Layers, ListPlus, Trash2 } from '
 import {
   Instrument,
   LevelKind,
-  LevelOutlook,
   LevelTimeframe,
   LevelTouch,
   MarkedLevel,
-  MarketOutlookBias,
   TouchOutcome,
   TradingDay,
   TradingSession,
@@ -57,8 +55,6 @@ export interface MarkedLevelsCardProps {
   todayTradingDay: TradingDay;
   /** The instruments to offer — the trader's tracked four, including any levels-only symbol. */
   instruments: Instrument[];
-  /** What the trader expects each instrument to do today, written beside its levels. */
-  outlooks: LevelOutlook[];
   /** The trader's own timezone, so a repeated touch is stamped on their clock. */
   timezone: string;
   /** Adds a batch of levels, skipping any already marked for the same day, instrument and price. */
@@ -66,8 +62,6 @@ export interface MarkedLevelsCardProps {
   onDeleteLevel: (levelId: string) => void;
   /** Logs the touch a marked level produced. The same write the touch log uses. */
   onSaveTouch: (touch: LevelTouch) => void;
-  /** Writes or edits today's outlook for one instrument. */
-  onSaveOutlook: (outlook: LevelOutlook) => void;
 }
 
 /** The sessions a level can be marked for, in the order they happen. */
@@ -113,31 +107,6 @@ const OUTCOME_SHORT: Record<TouchOutcome, string> = {
   invalid: 'void',
 };
 
-/**
- * The colour each outlook reads as.
- *
- * Green up, red down, grey flat — spent on the bias and nothing else, so the three states are
- * told apart at a glance beside the levels. The dot is used wherever the outlook is only
- * mentioned in passing, so a bias stays visible without a second full control.
- */
-const BIAS_STYLE: Record<MarketOutlookBias, { active: string; dot: string; text: string }> = {
-  bullish: {
-    active: 'border-emerald-700 bg-emerald-950/70 text-emerald-300',
-    dot: 'bg-emerald-400',
-    text: 'text-emerald-300',
-  },
-  bearish: {
-    active: 'border-rose-800 bg-rose-950/70 text-rose-300',
-    dot: 'bg-rose-400',
-    text: 'text-rose-300',
-  },
-  neutral: {
-    active: 'border-zinc-600 bg-zinc-800 text-zinc-200',
-    dot: 'bg-zinc-400',
-    text: 'text-zinc-300',
-  },
-};
-
 /** Re-exported so the card's public surface is unchanged; the parser lives in a lib so it can be tested on its own. */
 export { parsePastedPrices } from '../../lib/trading/level-paste';
 
@@ -151,12 +120,10 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
   touches,
   todayTradingDay,
   instruments,
-  outlooks,
   timezone,
   onSaveLevels,
   onDeleteLevel,
   onSaveTouch,
-  onSaveOutlook,
 }) => {
   const [instrumentId, setInstrumentId] = useState(() => {
     const wanted = (todayTradingDay.primaryInstrument ?? '').trim().toLowerCase();
@@ -167,14 +134,6 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
   const [session, setSession] = useState<TradingSession>(
     SESSIONS.find((value) => todayTradingDay.allowedSessions?.includes(value)) ?? 'Regular Session'
   );
-  /**
-   * The level width, kept per instrument rather than shared.
-   *
-   * The width has a sensible default that differs by contract — 4 points is sixteen ticks of
-   * MES but $400 of crude — so carrying one instrument's custom width onto another would be
-   * wrong in both directions. Each instrument holds its own, defaulted from its tick size.
-   */
-  const [zoneByInstrument, setZoneByInstrument] = useState<Record<string, string>>({});
   const [label, setLabel] = useState('');
   /**
    * The two paste boxes, kept per instrument and timeframe rather than shared.
@@ -207,10 +166,8 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
   const [bulkDefaultSide, setBulkDefaultSide] = useState<LevelKind>('support');
 
   const currentInstrument = instruments.find((inst) => inst.id === instrumentId);
+  // The level width is the instrument's own default; it decides how a touch is graded later.
   const defaultZone = defaultLevelZonePoints(currentInstrument);
-  const zone = zoneByInstrument[instrumentId] ?? String(defaultZone);
-  const setZone = (value: string) =>
-    setZoneByInstrument((prev) => ({ ...prev, [instrumentId]: value }));
 
   // The draft on screen belongs to exactly this instrument and timeframe.
   const draftKey = `${instrumentId}|${timeframe}`;
@@ -296,35 +253,6 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
       .sort((a, b) => (which === 'support' ? a.price - b.price : b.price - a.price));
 
   const testedInView = view.filter((level) => touchesByLevel.has(level.id)).length;
-
-  // Today's outlook for the instrument on screen, and the last one written before today, so a
-  // changed read is visible without leaving the card.
-  const outlook = outlooks.find(
-    (entry) => entry.tradingDayId === todayTradingDay.id && entry.instrumentId === instrumentId
-  );
-  const previousOutlook = useMemo(() => {
-    const earlier = outlooks
-      .filter(
-        (entry) => entry.instrumentId === instrumentId && entry.tradeDate < todayTradingDay.tradeDate
-      )
-      .sort((a, b) => b.tradeDate.localeCompare(a.tradeDate));
-    return earlier[0];
-  }, [outlooks, instrumentId, todayTradingDay.tradeDate]);
-
-  const saveOutlook = (bias: MarketOutlookBias, notes?: string) => {
-    const now = new Date().toISOString();
-    onSaveOutlook({
-      id: outlook?.id ?? `outlook-${todayTradingDay.tradeDate}-${instrumentId}`,
-      userId: todayTradingDay.userId,
-      tradingDayId: todayTradingDay.id,
-      tradeDate: todayTradingDay.tradeDate,
-      instrumentId,
-      bias,
-      notes: notes !== undefined ? notes.trim() || undefined : outlook?.notes,
-      createdAt: outlook?.createdAt ?? now,
-      updatedAt: now,
-    });
-  };
 
   // Yesterday's same instrument and timeframe, so what moved is visible beside today's entry.
   const yesterdayDate = useMemo(
@@ -432,11 +360,7 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
       return;
     }
 
-    const width = zone.trim() === '' ? defaultZone : parseFloat(zone);
-    if (!Number.isFinite(width) || width < 0) {
-      setError('The level width has to be zero or more points.');
-      return;
-    }
+    const width = defaultZone;
 
     const now = new Date().toISOString();
     const stamp = Date.now();
@@ -497,11 +421,7 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
       return;
     }
 
-    const width = zone.trim() === '' ? defaultZone : parseFloat(zone);
-    if (!Number.isFinite(width) || width < 0) {
-      setError('The level width has to be zero or more points.');
-      return;
-    }
+    const width = defaultZone;
 
     const now = new Date().toISOString();
     const stamp = Date.now();
@@ -786,79 +706,12 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
         </div>
       </div>
 
-      {/*
-        Today's outlook for the instrument on screen.
-
-        Written beside the levels it goes with, because the read and the lines are one decision:
-        MES can lean up while MCL leans down, so the outlook is per instrument. Three states —
-        up, down, or no lean at all — and the colour is spent on nothing else on this card.
-      */}
-      <div
-        id="level-outlook"
-        className="space-y-2 rounded-xl border border-zinc-800 bg-zinc-900/50 p-3"
-      >
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
-            {symbol} · today's outlook
-          </span>
-          {previousOutlook && (
-            <span className="flex items-center gap-1 text-[10px] text-zinc-500">
-              {previousOutlook.tradeDate}:{' '}
-              <span className={`inline-flex items-center gap-1 font-semibold capitalize ${BIAS_STYLE[previousOutlook.bias].text}`}>
-                <span className={`h-1.5 w-1.5 rounded-full ${BIAS_STYLE[previousOutlook.bias].dot}`} />
-                {previousOutlook.bias}
-              </span>
-            </span>
-          )}
-        </div>
-
-        <div className="grid grid-cols-3 gap-1.5">
-          {(['bullish', 'bearish', 'neutral'] as MarketOutlookBias[]).map((bias) => {
-            const active = outlook?.bias === bias;
-            return (
-              <button
-                key={bias}
-                type="button"
-                id={`level-outlook-${bias}`}
-                aria-pressed={active}
-                onClick={() => saveOutlook(bias)}
-                className={`flex items-center justify-center gap-1.5 rounded-lg border px-2 py-1.5 text-[11px] font-semibold capitalize transition-colors ${
-                  active
-                    ? BIAS_STYLE[bias].active
-                    : 'border-zinc-800 bg-zinc-950/40 text-zinc-400 hover:text-zinc-200'
-                }`}
-              >
-                <span className={`h-2 w-2 rounded-full ${BIAS_STYLE[bias].dot}`} />
-                {bias}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Remounted per instrument, so switching instruments swaps the note with it. */}
-        <input
-          key={instrumentId}
-          id="level-outlook-note"
-          type="text"
-          defaultValue={outlook?.notes ?? ''}
-          disabled={!outlook}
-          placeholder={outlook ? 'Why — one line, in your own words' : 'Pick a lean above first'}
-          onBlur={(event) => {
-            if (outlook) saveOutlook(outlook.bias, event.target.value);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') (event.target as HTMLInputElement).blur();
-          }}
-          className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-2 text-xs text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none disabled:opacity-50"
-        />
-      </div>
-
       <form
         onSubmit={(event) => event.preventDefault()}
         className="space-y-3"
       >
         {/* ---- Instrument + timeframe ---- */}
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           <div>
             <label htmlFor="level-instrument" className="mb-1 block text-xs font-medium text-zinc-300">
               Instrument
@@ -899,36 +752,7 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
             </div>
           </div>
 
-          <div>
-            <label htmlFor="level-zone" className="mb-1 block text-xs font-medium text-zinc-300">
-              Width ± pts
-            </label>
-            <input
-              id="level-zone"
-              type="number"
-              min="0"
-              step="0.25"
-              value={zone}
-              onChange={(event) => setZone(event.target.value)}
-              title={`How wide the level is. Default for ${symbol}: ${defaultZone} pts.`}
-              className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none"
-            />
-          </div>
         </div>
-
-        {/*
-          What the width actually does, said where the setting is.
-
-          The number is load-bearing — it decides whether a touch gets graded as a break or as
-          still inside the level — so it cannot be left as an unexplained field a trader has to
-          guess at, and it cannot be removed without silently changing every hold rate.
-        */}
-        <p className="text-[10px] leading-relaxed text-zinc-500">
-          <span className="font-semibold text-zinc-400">Width</span> is how thick each line is. A
-          touch only counts as a break once price leaves this band, and a step back inside it
-          counts as the level failing — so a width of 0 makes almost every touch look like a clean
-          break. {symbol} starts at {defaultZone} pts.
-        </p>
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <div className="col-span-2">
@@ -1206,12 +1030,6 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <span className="flex items-center gap-1.5 text-[10px] font-mono uppercase font-bold text-zinc-400">
             {symbol} · today by timeframe
-            {outlook && (
-              <span className={`inline-flex items-center gap-1 normal-case ${BIAS_STYLE[outlook.bias].text}`}>
-                <span className={`h-1.5 w-1.5 rounded-full ${BIAS_STYLE[outlook.bias].dot}`} />
-                {outlook.bias}
-              </span>
-            )}
           </span>
           {/* How much of the daily sweep is done, at a glance — amber until all six are in. */}
           <span

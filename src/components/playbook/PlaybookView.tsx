@@ -45,7 +45,6 @@ import { CoachLessonsCard } from './CoachLessonsCard';
 import { EdgeFinderCard } from './EdgeFinderCard';
 import { CoachSetupsCard } from './CoachSetupsCard';
 import { MarkedLevelsCard } from './MarkedLevelsCard';
-import { LevelTouchLog } from './LevelTouchLog';
 import { isFocusSetup, splitFocusSetups } from '../../lib/playbook/focus-setups';
 import { PATTERNS } from '../../lib/playbook/patterns';
 import { isVideoUrl } from '../../lib/media/media-utils';
@@ -120,27 +119,11 @@ interface PlaybookViewProps {
     coachPlans?: CoachPlan[];
   };
   /**
-   * Where a level touch is written down. This is the input side of the edge finder: without
-   * it the card above has nothing to read but whatever the journal already held. Omitted
-   * hides the log, the same way `edgeFinder` does.
-   */
-  levelTouchLog?: {
-    touches: LevelTouch[];
-    todayTradingDay: TradingDay;
-    instruments: Instrument[];
-    timezone: string;
-    onSave: (touch: LevelTouch) => void;
-    onDelete: (touchId: string) => void;
-  };
-  /**
-   * The levels the trader marked before any of them was touched. Sits above the touch log, so
-   * the flow reads in the order it happens: write the lines down, tap the one price reached,
-   * then decide it. Omitted hides the card.
+   * The levels the trader marked before any of them was touched. Omitted hides the card.
    */
   markedLevels?: {
     levels: MarkedLevel[];
     touches: LevelTouch[];
-    outlooks: LevelOutlook[];
     todayTradingDay: TradingDay;
     /** The tracked level instruments, including any levels-only symbol like VIX. */
     instruments: Instrument[];
@@ -149,7 +132,6 @@ interface PlaybookViewProps {
     onSaveLevels: (levels: MarkedLevel[]) => void;
     onDeleteLevel: (levelId: string) => void;
     onSaveTouch: (touch: LevelTouch) => void;
-    onSaveOutlook: (outlook: LevelOutlook) => void;
   };
   /** The account a lesson written from this tab belongs to. */
   userId?: string;
@@ -223,7 +205,6 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
   onOpenPattern,
   edgeFinder,
   coachSetups,
-  levelTouchLog,
   markedLevels,
   userId,
   lessons = [],
@@ -543,16 +524,8 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
         />
       )}
 
-      {/*
-        The levels themselves, written down before any of them is touched.
-
-        Placed above the touch log so the two read in the order they happen: mark the lines,
-        tap the one price reached, then decide the touch below.
-      */}
+      {/* The levels themselves, written down before any of them is touched. */}
       {markedLevels && <MarkedLevelsCard {...markedLevels} />}
-
-      {/* Where the touches the edge finder reads are logged, and how they ended. */}
-      {levelTouchLog && <LevelTouchLog {...levelTouchLog} />}
 
       {/* The coach's own setups, learned from the trade history and its entry charts. */}
       {coachSetups && (

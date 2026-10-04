@@ -2066,27 +2066,17 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               levelOutlooks,
               coachPlans,
             }}
-            levelTouchLog={{
-              touches: levelTouches,
-              todayTradingDay,
-              instruments,
-              timezone: profile.timezone,
-              onSave: handleSaveLevelTouch,
-              onDelete: handleDeleteLevelTouch,
-            }}
-            // The levels are marked before the touches exist: the card above the log writes
-            // the indicator's lines down, and tapping one logs the touch it produces.
+            // The levels the trader marks before any of them is touched. Tapping one logs
+            // the touch it produces.
             markedLevels={{
               levels: markedLevels,
               touches: levelTouches,
-              outlooks: levelOutlooks,
               todayTradingDay,
               instruments: levelInstruments,
               timezone: profile.timezone,
               onSaveLevels: handleSaveMarkedLevels,
               onDeleteLevel: handleDeleteMarkedLevel,
               onSaveTouch: handleSaveLevelTouch,
-              onSaveOutlook: handleSaveLevelOutlook,
             }}
             userId={userId}
             lessons={lessons}

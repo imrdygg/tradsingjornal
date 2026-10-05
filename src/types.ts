@@ -765,6 +765,57 @@ export interface Lesson {
 }
 
 // ---------------------------------------------------------------------------
+// Mindset notes — how the trader felt and what they were thinking
+//
+// The journal already records what the trader DID: their trades, plans, reviews and levels.
+// This is the other half — what was going on in their head while they did it, written in their
+// own words through the day. It is deliberately free-form: the point is to catch the thought
+// or the feeling as it happens, not to score it. The coach may read the notes on request and
+// look for what keeps coming back, and it is the one place a link between a recorded feeling
+// and the trader's own results can be shown, because the notes and the trades share a date.
+// ---------------------------------------------------------------------------
+
+/**
+ * How the trader felt when they wrote a note, from a small fixed set.
+ *
+ * Fixed rather than free text so the notes can be counted — "five of your last eight notes
+ * were written frustrated" is only sayable if the feeling is a value, not a sentence. It is
+ * optional: a note is still a note without one, and nothing is inferred when it is absent.
+ */
+export type MindsetMood =
+  | 'calm'
+  | 'confident'
+  | 'focused'
+  | 'neutral'
+  | 'anxious'
+  | 'frustrated'
+  | 'fearful'
+  | 'tilted';
+
+/**
+ * One thing the trader wrote down about their own head, at a moment in the day.
+ *
+ * Kept newest first and never capped: these are the trader's own words and the history is the
+ * whole point of the read, so the oldest note is not dropped to make room. Several notes a day
+ * are expected — one at the open, one after a loss — which is why this is one note at a time
+ * rather than one per day.
+ */
+export interface MindsetNote {
+  id: string;
+  userId: string;
+  /** The trading date the note belongs to, YYYY-MM-DD, so it lines up with the day's results. */
+  tradeDate: string;
+  /** The trading day, so the note can be read beside the session it was written in. */
+  tradingDayId?: string;
+  /** How the trader felt, when they said. Absent is "not recorded", never a neutral reading. */
+  mood?: MindsetMood;
+  /** What they wrote, in their own words. */
+  text: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ---------------------------------------------------------------------------
 // Level Watch — the break-and-run journal
 //
 // The whole app is organised around two set-ups, and both are the same idea read

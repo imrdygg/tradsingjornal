@@ -19,6 +19,7 @@ import type {
   LearnedSetup,
   LessonsResponse,
   MatchResponse,
+  MindsetResponse,
   SelfPlanResponse,
 } from '../coach-types';
 import { buildJournalDigest } from '../journal-digest';
@@ -29,6 +30,7 @@ import {
   DailyReviewQuestions,
   LevelTouch,
   MarkedLevel,
+  MindsetNote,
   SessionExtreme,
   Trade,
   TradingDay,
@@ -2358,5 +2360,72 @@ describe('the chart read drafts today’s plan', () => {
     expect(parsed.waitingFor).toBe('');
     expect(parsed.stayOutIf).toBe('');
     expect(parsed.setups).toEqual([]);
+  });
+});
+
+/**
+ * The mindset mode: the one place the coach reads the trader's own notes on what they were
+ * thinking and feeling. What is asserted is the scaffolding that keeps it a reflection rather
+ * than a diagnosis or a signal: the notes only reach that one mode, the rules ride along with
+ * them, and a feeling is reported with the counts the digest handed over.
+ */
+describe('mindset mode', () => {
+  const note: MindsetNote = {
+    id: 'm1',
+    userId: 'u1',
+    tradeDate: '2026-09-18',
+    tradingDayId: 'd1',
+    mood: 'frustrated',
+    text: 'Chased the open and then doubled down to get it back.',
+    createdAt: '2026-09-18T14:30:00.000Z',
+    updatedAt: '2026-09-18T14:30:00.000Z',
+  };
+
+  it('renders the trader\u2019s own words, feeling and day link for the reflection only', () => {
+    const digest = digestFor({ mindsetNotes: [note] });
+    const text = formatDigestForPrompt(digest, 'mindset');
+
+    expect(text).toContain('THEIR OWN MINDSET NOTES');
+    expect(text).toContain('Chased the open and then doubled down to get it back.');
+    expect(text).toContain('"frustrated": written in 1 note(s)');
+    // The section is kept out of every other read.
+    expect(formatDigestForPrompt(digest)).not.toContain('MINDSET NOTES');
+  });
+
+  it('adds the no-diagnosis rules to the guardrails with the notes', () => {
+    const { systemInstruction } = buildCoachPrompt('mindset', digestFor({ mindsetNotes: [note] }));
+    expect(systemInstruction).toContain('NO MARKET DATA');
+    expect(systemInstruction).toContain('YOU ARE NOT THEIR THERAPIST');
+    expect(systemInstruction).toContain('NEVER TURN A NOTE INTO A TRADE TO TAKE');
+  });
+
+  it('parses the reflection and drops a pattern with no evidence', () => {
+    const parsed = parseCoachResponse('mindset', {
+      headline: 'Your notes keep returning to chasing.',
+      moodRead: 'Most of your notes are written after chasing a move.',
+      patterns: [
+        {
+          pattern: 'Chasing the open',
+          evidence: '2 notes, 2026-09-17 and 2026-09-18',
+          withTheirTrading: 'Both days closed red.',
+        },
+        // No evidence: an impression, not a finding, so it is dropped rather than shown.
+        { pattern: 'No evidence given' },
+      ],
+      tradingLink: 'Frustrated days average -$200 across 1 day, too few to read.',
+      notEnoughYet: 'Only a few notes so far.',
+      nextStep: 'Write a note before the entry, not after it.',
+      motivation: 'm',
+    }) as MindsetResponse;
+
+    expect(parsed.patterns).toHaveLength(1);
+    expect(parsed.patterns[0].pattern).toBe('Chasing the open');
+    expect(parsed.tradingLink).toContain('-$200');
+  });
+
+  it('refuses a reflection with no headline', () => {
+    expect(() =>
+      parseCoachResponse('mindset', { moodRead: 'x', nextStep: 'y', motivation: 'm' })
+    ).toThrow(/headline/);
   });
 });

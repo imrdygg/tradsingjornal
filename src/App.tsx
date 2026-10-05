@@ -100,6 +100,7 @@ import {
   SessionExtreme,
   ChartSearch,
   Lesson,
+  MindsetNote,
   CoachPlan,
   ImportantLevel,
   FeedbackNote,
@@ -245,6 +246,9 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   // The lessons the trader wrote for themselves: their own notes, tags and media, held with
   // the rest of the state so they are saved and synced by the same debounced write.
   const [lessons, setLessons] = useState<Lesson[]>(() => storage.getLessons());
+  // What the trader was thinking and feeling through the day, in their own words. Held with
+  // the journal so a note is saved and carried between devices by the same debounced write.
+  const [mindsetNotes, setMindsetNotes] = useState<MindsetNote[]>(() => storage.getMindsetNotes());
   // The plans the coach made on its own, with the trader's grades and feedback. Held with
   // the journal so a plan and its grade are saved and carried between devices by the same
   // debounced write.
@@ -1176,6 +1180,18 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   };
 
   /**
+   * Records one mindset note, new or edited. Storage upserts by id, so fixing a typo rewrites
+   * the note rather than adding a second copy of it.
+   */
+  const handleSaveMindsetNote = (note: MindsetNote) => {
+    setMindsetNotes(storage.saveMindsetNote(note));
+  };
+
+  const handleDeleteMindsetNote = (noteId: string) => {
+    setMindsetNotes(storage.deleteMindsetNote(noteId));
+  };
+
+  /**
    * Marks the lessons the coach just read, so the library can show what is new since then.
    *
    * Written straight to storage rather than through a full lesson save: this only touches
@@ -1993,7 +2009,11 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             markedLevels={markedLevels}
             levelOutlooks={levelOutlooks}
             sessionExtremes={sessionExtremes}
-            // A trade the picture search matches opens from here like it does from the log.
+            // What the trader was thinking and feeling, written in their own words.
+            mindsetNotes={mindsetNotes}
+            onSaveMindsetNote={handleSaveMindsetNote}
+            onDeleteMindsetNote={handleDeleteMindsetNote}
+            // A trade the picture search matches opens here like it does from the log.
             onViewTrade={(t) => setViewingTradeId(t.id)}
             chartSearches={chartSearches}
             onSaveChartSearch={handleSaveChartSearch}

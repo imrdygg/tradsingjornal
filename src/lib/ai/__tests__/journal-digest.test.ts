@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { CoachPlan, DailyReview, DailyReviewQuestions, Lesson, LevelTouch, MarkedLevel, Setup, Trade, TradingDay } from '../../../types';
+import { CoachPlan, DailyReview, DailyReviewQuestions, Lesson, LevelTouch, MarkedLevel, MindsetNote, Setup, Trade, TradingDay } from '../../../types';
 import { buildJournalDigest, FULL_HISTORY_TRADE_SAMPLES } from '../journal-digest';
 import { DEFAULT_INSTRUMENTS } from '../../trading/instruments';
 
@@ -1238,5 +1238,103 @@ describe('todayLevels', () => {
 
     expect(read.levels[0].breakDirection).toBe('up');
     expect(read.levels[0].touches[0].breakDirection).toBe('up');
+  });
+});
+
+/**
+ * The trader's own mindset notes: what they were thinking and feeling through the day. The
+ * feeling tally and the day link are computed here before the model sees anything, so what is
+ * asserted is that the counts travel with the finding and that a thin sample cannot read as one.
+ */
+describe("the trader's own mindset notes", () => {
+  const note = (overrides: Partial<MindsetNote> = {}): MindsetNote => ({
+    id: 'm1',
+    userId: 'u1',
+    tradeDate: '2026-09-18',
+    tradingDayId: 'd1',
+    mood: 'frustrated',
+    text: 'Chased the open and gave it back.',
+    createdAt: '2026-09-18T14:30:00.000Z',
+    updatedAt: '2026-09-18T14:30:00.000Z',
+    ...overrides,
+  });
+
+  it('reads as empty, not as a zero finding, when nothing has been written', () => {
+    const read = build().mindsetRead;
+    expect(read.total).toBe(0);
+    expect(read.notes).toEqual([]);
+    expect(read.moods).toEqual([]);
+  });
+
+  it('carries the notes newest first, with the feeling and the trader\u2019s own clock time', () => {
+    const read = build({
+      mindsetNotes: [
+        note({ id: 'older', createdAt: '2026-09-17T13:00:00.000Z', tradeDate: '2026-09-17' }),
+        note({ id: 'newer', createdAt: '2026-09-18T18:30:00.000Z', mood: 'calm' }),
+      ],
+    }).mindsetRead;
+
+    expect(read.total).toBe(2);
+    expect(read.notes[0].text).toBe('Chased the open and gave it back.');
+    expect(read.notes[0].mood).toBe('calm');
+    // 18:30 UTC is 14:30 in New York (EDT).
+    expect(read.notes[0].time).toBe('14:30');
+    expect(read.daysWithNotes).toBe(2);
+    expect(read.withMood).toBe(2);
+  });
+
+  it('counts each feeling and pairs it with what those days did', () => {
+    const read = build({
+      tradingDays: [
+        makeDay({ id: 'd1', tradeDate: '2026-09-18' }),
+        makeDay({ id: 'd2', tradeDate: '2026-09-17' }),
+      ],
+      trades: [
+        makeTrade({ id: 't1', tradingDayId: 'd1', netPnL: -200, rMultiple: -2 }),
+        makeTrade({ id: 't2', tradingDayId: 'd2', netPnL: 100, rMultiple: 1 }),
+      ],
+      mindsetNotes: [
+        note({ id: 'a', tradeDate: '2026-09-18', mood: 'frustrated' }),
+        note({ id: 'b', tradeDate: '2026-09-17', mood: 'calm' }),
+      ],
+    }).mindsetRead;
+
+    expect(read.moods.find((m) => m.mood === 'frustrated')?.avgDayPnL).toBe(-200);
+    expect(read.moods.find((m) => m.mood === 'calm')?.avgDayPnL).toBe(100);
+  });
+
+  it('averages a feeling once per day, not once per note', () => {
+    const read = build({
+      tradingDays: [makeDay({ id: 'd1', tradeDate: '2026-09-18' })],
+      trades: [makeTrade({ id: 't1', tradingDayId: 'd1', netPnL: -200, rMultiple: -2 })],
+      mindsetNotes: [
+        note({ id: 'a', mood: 'tilted', createdAt: '2026-09-18T14:00:00.000Z' }),
+        note({ id: 'b', mood: 'tilted', createdAt: '2026-09-18T16:00:00.000Z' }),
+      ],
+    }).mindsetRead;
+
+    const tilted = read.moods.find((m) => m.mood === 'tilted');
+    expect(tilted?.notes).toBe(2);
+    expect(tilted?.days).toBe(1);
+    // One day\u2019s result, not the same day averaged twice.
+    expect(tilted?.avgDayPnL).toBe(-200);
+  });
+
+  it('withholds the day average when no day with that feeling closed a trade', () => {
+    const read = build({ mindsetNotes: [note({ id: 'a', mood: 'anxious' })] }).mindsetRead;
+    expect(read.moods[0].avgDayPnL).toBeNull();
+  });
+
+  it('bounds the list and reports what was left out', () => {
+    const notes = Array.from({ length: 45 }, (_, i) =>
+      note({
+        id: `m${i}`,
+        createdAt: `2026-08-${String((i % 28) + 1).padStart(2, '0')}T12:00:00.000Z`,
+      })
+    );
+    const read = build({ mindsetNotes: notes }).mindsetRead;
+    expect(read.total).toBe(45);
+    expect(read.notes).toHaveLength(40);
+    expect(read.omitted).toBe(5);
   });
 });

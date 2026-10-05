@@ -16,6 +16,7 @@ import {
   LevelOutlook,
   LevelTouch,
   MarkedLevel,
+  MindsetNote,
   SessionExtreme,
   Setup,
   Trade,
@@ -29,6 +30,7 @@ import type {
   ExtremeCallResponse,
   ExtremeResponse,
   FormResponse,
+  MindsetResponse,
   SetupsResponse,
   WeeklyResponse,
 } from '../../lib/ai/coach-types';
@@ -47,6 +49,7 @@ import {
 } from './coach-ui';
 import { AskCoachCard } from './AskCoachCard';
 import { ApproachAlertCard } from './ApproachAlertCard';
+import { MindsetNoteCard } from './MindsetNoteCard';
 import { COACH_WAIT_STEPS } from '../common/AiThinking';
 import { BehaviorCard } from './BehaviorCard';
 import { RecentFormCard } from './RecentFormCard';
@@ -80,6 +83,17 @@ interface CoachViewProps {
   levelOutlooks?: LevelOutlook[];
   /** The session-extreme log, so the coach can read where the highs and lows printed. */
   sessionExtremes: SessionExtreme[];
+  /**
+   * The trader's own mindset notes: what they were thinking and feeling through the day.
+   *
+   * Read only by the mindset reflection; omitted is read as "nothing written yet", never as an
+   * empty finding.
+   */
+  mindsetNotes?: MindsetNote[];
+  /** Writes one mindset note. Omitted hides the check-in card's save action. */
+  onSaveMindsetNote?: (note: MindsetNote) => void;
+  /** Removes one mindset note. Omitted hides the card's delete action. */
+  onDeleteMindsetNote?: (id: string) => void;
   /**
    * Opens the detail view for a trade the picture search matched. Omitted leaves the matches
    * readable but not clickable, which is what a caller with no detail view wants.
@@ -155,6 +169,9 @@ export const CoachView: React.FC<CoachViewProps> = ({
   markedLevels,
   levelOutlooks,
   sessionExtremes,
+  mindsetNotes,
+  onSaveMindsetNote,
+  onDeleteMindsetNote,
   onViewTrade,
   chartSearches,
   onSaveChartSearch,
@@ -181,6 +198,9 @@ export const CoachView: React.FC<CoachViewProps> = ({
         markedLevels,
         levelOutlooks,
         sessionExtremes,
+        // The trader's own mindset notes travel with the digest so the one reflection that
+        // reads them has something to read; no other mode shows them.
+        mindsetNotes,
         // The trader's grades of the coach's own plans travel with these reads too, so the
         // feedback shapes the brief and the reviews, not only the next self-plan.
         coachPlans,
@@ -198,6 +218,7 @@ export const CoachView: React.FC<CoachViewProps> = ({
       markedLevels,
       levelOutlooks,
       sessionExtremes,
+      mindsetNotes,
       coachPlans,
     ]
   );
@@ -208,6 +229,7 @@ export const CoachView: React.FC<CoachViewProps> = ({
   const [setupsState, setSetupsState] = useState<RequestState>(IDLE);
   const [extremesState, setExtremesState] = useState<RequestState>(IDLE);
   const [callState, setCallState] = useState<RequestState>(IDLE);
+  const [mindsetState, setMindsetState] = useState<RequestState>(IDLE);
 
   /**
    * Runs one of the reads this tab keeps.
@@ -253,6 +275,9 @@ export const CoachView: React.FC<CoachViewProps> = ({
     extremesState.result?.ok ? (extremesState.result.data as ExtremeResponse) : null;
   /** The call, once one has come back. */
   const extremeCall = callState.result?.ok ? (callState.result.data as ExtremeCallResponse) : null;
+  /** The mindset reflection, once one has come back. */
+  const mindsetAnswer =
+    mindsetState.result?.ok ? (mindsetState.result.data as MindsetResponse) : null;
 
   /**
    * The instrument the call is about.
@@ -291,6 +316,29 @@ export const CoachView: React.FC<CoachViewProps> = ({
         symbol={instrumentSymbol(instruments, todayTradingDay.primaryInstrument)}
         timezone={timezone}
       />
+
+      {/*
+        The trader's own mindset journal: the one card here they write into.
+
+        Placed first because it is the input rather than a read of one — everything below is
+        the coach looking at what they did, and this is where they say what was going on while
+        they did it.
+      */}
+      {mindsetNotes && onSaveMindsetNote && onDeleteMindsetNote && (
+        <MindsetNoteCard
+          notes={mindsetNotes}
+          todayTradingDay={todayTradingDay}
+          timezone={timezone}
+          userId={userId}
+          onSaveNote={onSaveMindsetNote}
+          onDeleteNote={onDeleteMindsetNote}
+          loading={mindsetState.loading}
+          failure={mindsetState.failure}
+          answer={mindsetAnswer}
+          writtenAt={mindsetState.writtenAt}
+          onRun={() => run('mindset', setMindsetState)}
+        />
+      )}
 
       {/*
         The week, one setup at a time, before any writing about it.

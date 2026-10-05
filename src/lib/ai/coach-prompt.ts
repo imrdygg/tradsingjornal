@@ -14,6 +14,7 @@ import type {
   LevelRecurrenceRead,
   LevelOutlookRead,
   LevelTimeframesRead,
+  MindsetRead,
   TodayLevelsRead,
 } from './journal-digest';
 import { hourLabel } from '../analytics/session-extremes';
@@ -31,6 +32,8 @@ import type {
   LessonTheme,
   LessonThemeLesson,
   MatchItem,
+  MindsetPattern,
+  MindsetResponse,
   SelfPlanResponse,
   PlannedLevel,
   PlanFieldName,
@@ -121,6 +124,12 @@ export const COACH_MODES: readonly CoachMode[] = [
    * material only, and no market opinion.
    */
   'lessons',
+  /**
+   * The mindset read: the trader's own notes on what they were thinking and feeling while
+   * they traded, read back on request. Their own words, counted and reflected — no market
+   * opinion, and never a diagnosis.
+   */
+  'mindset',
 ];
 
 /**
@@ -194,7 +203,8 @@ export function coachGuardrails(
   withLessons = false,
   withSelfPlan = false,
   withPlanGrades = false,
-  withEntryEdge = false
+  withEntryEdge = false,
+  withMindset = false
 ): string {
   let text = COACH_GUARDRAILS;
   if (withLearn) text += LEARN_GUARDRAILS_SUFFIX;
@@ -205,6 +215,10 @@ export function coachGuardrails(
   // Appended for the entry-edge read only: it is the one mode that talks about a specific
   // entry against specific lines, so it needs rules about not turning that into a signal.
   if (withEntryEdge) text += ENTRY_EDGE_GUARDRAILS_SUFFIX;
+  // Appended for the mindset read only: it is the one mode that reads the trader's own report
+  // of how they felt, so it is the one place the rules about not diagnosing and not turning a
+  // feeling into a trade have to ride along.
+  if (withMindset) text += MINDSET_GUARDRAILS_SUFFIX;
   if (withLevelEdge) text += LEVEL_EDGE_GUARDRAILS_SUFFIX;
   if (withExtremes) text += EXTREMES_GUARDRAILS_SUFFIX;
   if (withMarketData) text += MARKET_GUARDRAILS_SUFFIX;
@@ -549,6 +563,38 @@ L7. THE REPEATS ARE COUNTED FOR YOU. When the lessons that keep repeating are li
     finding written down three times matters more than one written once. When a theme is one of
     those repeats, its lessons list is those members, named and dated. Never recount, merge or
     split those groups yourself, and never claim a repeat the digest does not list.`;
+
+/**
+ * The rules for reading the trader's own mindset notes honestly.
+ *
+ * The danger here is different from every other mode: the material is the trader's own report
+ * of their own head, so the easy failures are diagnosing them, treating a feeling as a fact
+ * about the market, or overreading a two-note sample. The rules make "thin is an answer" and
+ * "a feeling is their report, not a signal" explicit, and require the counts and averages the
+ * digest handed over to be quoted rather than recomputed.
+ */
+const MINDSET_GUARDRAILS_SUFFIX = `\n\nTHE TRADER'S OWN MINDSET NOTES — SPECIAL RULES FOR THIS REQUEST ONLY.
+You have been asked to reflect on notes this trader wrote about what they were thinking and
+feeling while they traded. This is their own report of their own head, and the reflection is
+a summary of it — never a market opinion and never a clinical judgement.
+
+N1. READ ONLY WHAT THEY WROTE. Every pattern must come from the notes in the digest. Quote
+    their own words, the date and the feeling they recorded, and give the count behind each
+    pattern. Never invent a note, a date, a feeling or a thought they did not write down.
+N2. YOU ARE NOT THEIR THERAPIST AND NOT A DIAGNOSIS. Do not name a condition, use clinical
+    language, or tell them who they are. Describe what the notes say they felt and thought,
+    and hand the observation back to them.
+N3. A FEELING IS THEIR OWN REPORT, NOT A FACT ABOUT THE MARKET. Never turn a mood into a
+    reason price will or will not do something, and never tell them to trade or not trade
+    because of how they felt. You still have no market data.
+N4. THE COUNTS AND AVERAGES ARE GIVEN. When the digest pairs a feeling with days that closed
+    trades, those counts and the average day P&L were computed before you saw them. Quote
+    them as given, never do your own arithmetic on them, and treat a small sample as thin
+    rather than as a finding. When the average is withheld, say so instead of estimating one.
+N5. THIN IS AN ANSWER. A couple of notes is not a pattern. With only a few, say exactly that,
+    return few or no patterns, and make the step about writing more down. Never pad the list.
+N6. NEVER TURN A NOTE INTO A TRADE TO TAKE. The notes are a mirror, not a signal: point at
+    what keeps coming back and let the trader decide what to do with it.`;
 
 const SELFPLAN_GUARDRAILS_SUFFIX = `\n\nTHE COACH'S OWN PLAN — SPECIAL RULES FOR THIS REQUEST ONLY.
 The trader has asked you to make your OWN trade plan for one instrument. You have the live
@@ -1385,6 +1431,68 @@ export function formatLessonReadForPrompt(read: LessonRead | undefined): string[
 }
 
 /**
+ * The trader's own mindset notes, as the dedicated read may quote them.
+ *
+ * Rendered only for the `mindset` mode: the notes are the trader's own report of how they felt
+ * and what they were thinking, so they are kept out of every other answer. The feeling tally
+ * and the day link are already computed in the digest and are quoted as given.
+ */
+export function formatMindsetReadForPrompt(read: MindsetRead | undefined): string[] {
+  const lines: string[] = [];
+  if (!read || read.total === 0) return lines;
+
+  lines.push('');
+  lines.push(
+    '=== THEIR OWN MINDSET NOTES (what the trader was thinking and feeling while trading) ==='
+  );
+  lines.push(
+    'These are notes the trader wrote to themselves through the day about their own head: how ' +
+      'they felt and what they were thinking, sometimes with a feeling they picked. They are ' +
+      "the trader's own report, in their own words — not a market read, not a signal, and not " +
+      'something you may diagnose. Quote them back by their own words and date.'
+  );
+  lines.push(
+    `${read.total} note(s) written, ${read.notes.length} listed here, covering ` +
+      `${read.daysWithNotes} day(s)` +
+      (read.withMood ? `, ${read.withMood} with a feeling recorded` : '') +
+      '.'
+  );
+
+  if (read.moods.length) {
+    lines.push('');
+    lines.push(
+      'Feelings the trader recorded, and what those days did (counted from their own notes):'
+    );
+    for (const mood of read.moods) {
+      const money =
+        mood.avgDayPnL === null
+          ? 'no day with a closed trade to average, so no result can be read'
+          : `average day P&L on those days that closed a trade: ` +
+            `${mood.avgDayPnL < 0 ? '-' : ''}$${Math.abs(mood.avgDayPnL).toLocaleString('en-US')}`;
+      lines.push(
+        `- "${mood.mood}": written in ${mood.notes} note(s) across ${mood.days} day(s); ${money}`
+      );
+    }
+  }
+
+  for (const note of read.notes) {
+    const bits: string[] = [];
+    if (note.time) bits.push(note.time);
+    if (note.mood) bits.push(`felt ${note.mood}`);
+    lines.push(
+      `- ${note.date}${bits.length ? ` (${bits.join(', ')})` : ''}: "${note.text}"`
+    );
+  }
+  if (read.omitted > 0) {
+    lines.push(
+      `(${read.omitted} older note(s) omitted; only the latest ${read.notes.length} are listed.)`
+    );
+  }
+
+  return lines;
+}
+
+/**
  * The coach's own past plans and the trader's grades of them.
  *
  * Rendered only for the self-plan mode: this is the feedback loop that lets the coach learn
@@ -1473,6 +1581,11 @@ export function formatDigestForPrompt(digest: JournalDigest, mode?: CoachMode): 
   // one mode and never for any other answer.
   if (mode === 'lessons') {
     lines.push(...formatLessonReadForPrompt(digest.lessonRead));
+  }
+  // The trader's own mindset notes are read on request only, for the same reason: they are a
+  // report on their own head, and they belong to that one reflection rather than every answer.
+  if (mode === 'mindset') {
+    lines.push(...formatMindsetReadForPrompt(digest.mindsetRead));
   }
   // The trader's grades of the coach's own plans travel with every answer, not only the
   // next self-plan: the feedback is the one thing that tells the coach how the trader wants
@@ -2351,6 +2464,23 @@ Every price must be a number from the LIVE READ or the DAILY CHART DATA you were
   "motivation": "2 sentences. Specific to this trader and earned by their own notes. No slogans."
 }
 Return 1-4 themes. Name only themes their own notes support and quote the lessons by their own titles. For every theme, list under the lessons array the exact lessons behind it — each one's title and the day it was written, both copied from the digest — oldest first. Never invent a lesson, a title, a date or a finding, never turn a note into a trade or a forecast, and never describe a video clip you cannot watch. When the library is too thin for a theme, say exactly that and return few or no themes.`,
+  mindset: `Return exactly this JSON:
+{
+  "headline": "one sentence, under 16 words, on what their notes keep returning to",
+  "moodRead": "2-3 sentences on what the notes keep saying about how they felt and thought while trading, quoting their own words",
+  "patterns": [
+    {
+      "pattern": "a thought or feeling their notes keep returning to, in their own terms",
+      "evidence": "the notes behind it: how many, on which dates, and the feeling recorded, quoting their own words",
+      "withTheirTrading": "what it lines up with in their own record — the sessions, days or results it sits beside — or a plain statement that the record shows no link yet"
+    }
+  ],
+  "tradingLink": "whether a recorded feeling tends to sit beside their better or worse days, quoting the counts and the average day P&L the digest gave, or saying plainly that the sample is too thin to show one. Empty string when no feeling was recorded",
+  "notEnoughYet": "what the notes do not cover yet, or that there are too few to say anything. Empty string when the notes are enough",
+  "nextStep": "one concrete, checkable thing to write down or try next",
+  "motivation": "2 sentences. Specific to this trader and earned by their own words. No slogans."
+}
+Return 1-4 patterns. Name only thoughts and feelings their own notes support and quote the notes by their own words. Use only the counts and the average day P&L the digest gave — never do your own arithmetic and never estimate a missing one. Never diagnose or label the trader, never turn a feeling into a market call or a reason to trade, and never predict how they will feel. When the notes are too few, say exactly that and return few or no patterns.`,
   trade: `Return exactly this JSON:
 {
   "verdict": "2 sentences judging the decision and the execution separately",
@@ -2680,6 +2810,16 @@ export function buildCoachPrompt(
         `or a trade to take. Where a lesson carries a video clip, say only that the clip ` +
         `exists and that you cannot watch it. When the library is nearly empty, say exactly ` +
         `that and make nextStep about writing more down.`
+      : mode === 'mindset'
+      ? `Reflect on the mindset notes this trader wrote while they traded, under THEIR OWN ` +
+        `MINDSET NOTES. Name the thoughts and feelings their own notes keep returning to, ` +
+        `quoting their words, the dates and the counts behind each one, and say plainly what ` +
+        `their notes say about how they feel when trading. Where the digest pairs a recorded ` +
+        `feeling with days that closed trades, report whether it tends to sit beside their ` +
+        `better or worse days, quoting the counts and the average it gave, and say when the ` +
+        `sample is too small to read. Say what their notes do not cover yet, and give one ` +
+        `concrete thing to write down next. Never diagnose or label them, never turn a feeling ` +
+        `into a market call or a trade, and make the step about the notes themselves.`
       : mode === 'selfplan'
       ? `Make your OWN trade plan for the instrument under LIVE READ, from its live quote and ` +
         `the recent daily bars you were handed — and none of the trader's own levels, which ` +
@@ -2822,7 +2962,10 @@ export function buildCoachPrompt(
       (digest.coachPlanRead?.total ?? 0) > 0,
       // And the entry-edge rules, gated on the one mode that talks about a specific entry
       // against specific lines and could otherwise become a machine for justifying it.
-      mode === 'entryedge'
+      mode === 'entryedge',
+      // And the mindset rules, gated on the one mode that reads the trader's own report of
+      // how they felt and could otherwise drift into diagnosing them or trading a mood.
+      mode === 'mindset'
     ),
     userPrompt,
   };
@@ -3259,6 +3402,34 @@ export function parseCoachResponse(
       contradictions: asTextList(obj.contradictions, 'contradictions'),
       gaps: asTextList(obj.gaps, 'gaps'),
       howToApply: asText(obj.howToApply, 'howToApply'),
+      nextStep: asText(obj.nextStep, 'nextStep'),
+      motivation: asText(obj.motivation, 'motivation'),
+    };
+    return response;
+  }
+
+  if (mode === 'mindset') {
+    const patternsRaw = Array.isArray(obj.patterns) ? obj.patterns : [];
+    const patterns: MindsetPattern[] = patternsRaw
+      .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+      .map((item) => ({
+        pattern: typeof item.pattern === 'string' ? item.pattern.trim() : '',
+        evidence: typeof item.evidence === 'string' ? item.evidence.trim() : '',
+        withTheirTrading:
+          typeof item.withTheirTrading === 'string' ? item.withTheirTrading.trim() : '',
+      }))
+      // A pattern with no name or no evidence is an impression, not a finding, so it is
+      // dropped rather than rendered as a card — the same rule the other list modes follow.
+      .filter((item) => item.pattern && item.evidence);
+
+    const response: MindsetResponse = {
+      headline: asText(obj.headline, 'headline'),
+      moodRead: asText(obj.moodRead, 'moodRead'),
+      patterns,
+      // All three may legitimately be brief: a thin set of notes has no link to show and
+      // nothing missing worth naming, and saying so is the answer.
+      tradingLink: asLooseText(obj.tradingLink),
+      notEnoughYet: asLooseText(obj.notEnoughYet),
       nextStep: asText(obj.nextStep, 'nextStep'),
       motivation: asText(obj.motivation, 'motivation'),
     };

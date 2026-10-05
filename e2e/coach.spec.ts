@@ -330,3 +330,47 @@ test.describe('The coach has no home on the Today tab', () => {
     await expect(page.locator('#section-today-advanced-body')).toHaveCount(0);
   });
 });
+
+/**
+ * The mindset check-in: the one card in the app the trader writes into rather than reads.
+ *
+ * What is asserted is that a note is theirs to write and delete, that a feeling is optional,
+ * and that the reflection is asked for rather than run by typing — the coach is never called
+ * just because a note was saved.
+ */
+test.describe('Mindset check-in', () => {
+  test('writes a note with a feeling, counts it, and deletes it', async ({ page }) => {
+    await gotoTab(page, 'coach', /Coach/i);
+
+    const card = page.locator('#coach-mindset-card');
+    await expect(card).toBeVisible();
+
+    // Nothing is written and nothing is requested on arrival.
+    await expect(page.locator('#mindset-note-input')).toBeVisible();
+    await expect(page.locator('#coach-mindset-generate')).toHaveCount(0);
+
+    await page.locator('#mindset-note-input').fill('Chased the open after it ran without me.');
+    await page.locator('#mindset-mood-frustrated').click();
+    await expect(page.locator('#mindset-mood-frustrated')).toHaveAttribute('aria-pressed', 'true');
+    await page.locator('#mindset-save').click();
+
+    // The note lands on the record, with the feeling it was given.
+    const note = page.locator('[data-mindset-note]').first();
+    await expect(note).toContainText('Chased the open after it ran without me.');
+    await expect(note).toContainText('Frustrated');
+    await expect(card).toContainText('1 note');
+    await expect(card).toContainText('Frustrated ×1');
+
+    // With a note on the record, the reflection is offered — but not run.
+    await expect(page.locator('#coach-mindset-generate')).toBeVisible();
+
+    // The input clears and the feeling resets, so the next note starts blank.
+    await expect(page.locator('#mindset-note-input')).toHaveValue('');
+    await expect(page.locator('#mindset-mood-frustrated')).toHaveAttribute('aria-pressed', 'false');
+
+    // Deleting takes it off the record and puts the reflection away again.
+    await page.locator('button[id^="mindset-delete-"]').first().click();
+    await expect(page.locator('[data-mindset-note]')).toHaveCount(0);
+    await expect(page.locator('#coach-mindset-generate')).toHaveCount(0);
+  });
+});

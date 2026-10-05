@@ -85,6 +85,13 @@ export type CoachMode =
    */
   | 'lessons'
   /**
+   * The mindset read: the trader's own notes on what they were thinking and feeling while
+   * they traded, asked for on its own. The feelings are counted and each one is shown beside
+   * what those days actually did, but it is their own words only — no market opinion, and
+   * never a diagnosis or a clinical reading of the trader.
+   */
+  | 'mindset'
+  /**
    * The coach's own trade plan for one instrument, made from the live market read alone.
    *
    * The trader does not set its levels: the coach commits to a direction, an entry, a stop
@@ -629,6 +636,46 @@ export interface LessonTheme {
  * predicts anything and never turns a note into advice about the market: the lessons are the
  * trader's findings, and the coach's job is to read them back and point at the gaps.
  */
+/** One thought or feeling the trader keeps writing down, as the mindset read reports it. */
+export interface MindsetPattern {
+  /** The thought or feeling that keeps coming back, in the trader's own terms. */
+  pattern: string;
+  /** How often it appears and in which notes, with the counts behind it. */
+  evidence: string;
+  /**
+   * What it lines up with in the trader's own record — the sessions, days or results it tends
+   * to sit beside — or a plain statement that the record does not show a link yet.
+   */
+  withTheirTrading: string;
+}
+
+/**
+ * The read of the trader's own mindset notes.
+ *
+ * A reflection on their OWN words, in their own terms: the thoughts and feelings their notes
+ * keep returning to, and whether a feeling tends to sit beside better or worse days. It is not
+ * a market opinion and not a clinical judgement — the notes are the trader's own report, and
+ * the fields are shaped so a feeling is only ever tied to counts the digest handed over.
+ */
+export interface MindsetResponse {
+  headline: string;
+  /** What the notes keep returning to, quoting the trader's own words. */
+  moodRead: string;
+  /** Repeating thoughts or feelings, best supported first. Empty when the notes are too thin. */
+  patterns: MindsetPattern[];
+  /**
+   * Whether a recorded feeling tends to sit beside the trader's own better or worse days,
+   * quoting the counts and averages from the digest, or saying plainly that the sample is too
+   * thin to show one. Never a market claim.
+   */
+  tradingLink: string;
+  /** What the notes do not cover, or that they are too few to say anything yet. */
+  notEnoughYet: string;
+  /** One concrete, checkable thing to write down or try next. */
+  nextStep: string;
+  motivation: string;
+}
+
 export interface LessonsResponse {
   headline: string;
   /** The themes that hold across several lessons. Empty when the library is too thin. */
@@ -785,6 +832,7 @@ export type CoachResponse =
   | EntryCallResponse
   | ChartReadResponse
   | LessonsResponse
+  | MindsetResponse
   | SelfPlanResponse
   | EntryEdgeResponse;
 

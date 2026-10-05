@@ -100,6 +100,7 @@ describe('mode coverage', () => {
         'chartread',
         'ask',
         'lessons',
+        'mindset',
         'selfplan',
         'entryedge',
       ].sort()

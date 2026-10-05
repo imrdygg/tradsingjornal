@@ -17,6 +17,7 @@ import {
   FeedbackNote,
   MarkedLevel,
   LevelOutlook,
+  MindsetNote,
 } from '../../types';
 import {
   DEFAULT_INSTRUMENTS,
@@ -123,6 +124,7 @@ const STORAGE_KEYS = {
   SESSION_EXTREMES: 'ptj_session_extremes_v1',
   CHART_SEARCHES: 'ptj_chart_searches_v1',
   LESSONS: 'ptj_lessons_v1',
+  MINDSET_NOTES: 'ptj_mindset_notes_v1',
   COACH_PLANS: 'ptj_coach_plans_v1',
   FEEDBACK: 'ptj_feedback_v1',
   SETUP_CATALOG: 'ptj_setup_catalog_v1',
@@ -253,6 +255,15 @@ export interface StorageState {
    * reset keeps it while a sign-out clears it with everything else on the device.
    */
   feedback?: FeedbackNote[];
+  /**
+   * What the trader was thinking and feeling through the day, in their own words.
+   *
+   * Journal material rather than playbook material: a note is tied to the session it was
+   * written in, so a reset clears it with the days it belongs to. Optional so a snapshot
+   * saved before the feature existed still loads, and every reader treats a missing list as
+   * empty rather than as an error.
+   */
+  mindsetNotes?: MindsetNote[];
   /**
    * The carried-forward lesson the trader has acknowledged, if any.
    *
@@ -1091,6 +1102,7 @@ export const storage = {
       sessionExtremes: this.getSessionExtremes(),
       chartSearches: this.getChartSearches(),
       lessons: this.getLessons(),
+      mindsetNotes: this.getMindsetNotes(),
       coachPlans: this.getCoachPlans(),
       feedback: this.getFeedback(),
       lessonAck: this.getLessonAck(),
@@ -1132,6 +1144,7 @@ export const storage = {
       if (parsed.sessionExtremes) setItem(STORAGE_KEYS.SESSION_EXTREMES, parsed.sessionExtremes);
       if (parsed.chartSearches) setItem(STORAGE_KEYS.CHART_SEARCHES, parsed.chartSearches);
       if (parsed.lessons) setItem(STORAGE_KEYS.LESSONS, parsed.lessons);
+      if (parsed.mindsetNotes) setItem(STORAGE_KEYS.MINDSET_NOTES, parsed.mindsetNotes);
       if (parsed.coachPlans) setItem(STORAGE_KEYS.COACH_PLANS, parsed.coachPlans);
       if (parsed.feedback) setItem(STORAGE_KEYS.FEEDBACK, parsed.feedback);
       // Written even when null (an explicit "nothing acknowledged"), so adopting a snapshot
@@ -1416,6 +1429,36 @@ export const storage = {
     return next;
   },
 
+  /** The trader's own mindset notes, newest first. */
+  getMindsetNotes(): MindsetNote[] {
+    return getItem<MindsetNote[]>(STORAGE_KEYS.MINDSET_NOTES, []);
+  },
+
+  /**
+   * Upserts one mindset note, newest first, keyed by id.
+   *
+   * The create path and the edit path are the same write, like every other record the trader
+   * owns: fixing a typo in a note should not turn it into a second note. Not capped — the
+   * history is what the read is built from, so the oldest note is never dropped to make room.
+   */
+  saveMindsetNote(note: MindsetNote): MindsetNote[] {
+    const notes = this.getMindsetNotes();
+    const index = notes.findIndex((existing) => existing.id === note.id);
+    const updated: MindsetNote = { ...note, updatedAt: new Date().toISOString() };
+    const next =
+      index >= 0
+        ? [...notes.slice(0, index), updated, ...notes.slice(index + 1)]
+        : [updated, ...notes];
+    setItem(STORAGE_KEYS.MINDSET_NOTES, next);
+    return next;
+  },
+
+  deleteMindsetNote(id: string): MindsetNote[] {
+    const next = this.getMindsetNotes().filter((note) => note.id !== id);
+    setItem(STORAGE_KEYS.MINDSET_NOTES, next);
+    return next;
+  },
+
   /**
    * Stamps the lessons the coach just read with the moment it happened.
    *
@@ -1524,6 +1567,8 @@ export const storage = {
       STORAGE_KEYS.CHART_SEARCHES,
       // A coach plan is tied to the day's market, so it goes with the days it was made for.
       STORAGE_KEYS.COACH_PLANS,
+      // Notes about a session go with the sessions they describe, like the reviews above.
+      STORAGE_KEYS.MINDSET_NOTES,
       STORAGE_KEYS.LESSON_ACK,
       // "Nothing can be undone" is the promise this reset makes, so the copy set aside
       // from before it goes too rather than becoming a way to undo it after all.
@@ -1559,6 +1604,7 @@ export const storage = {
       STORAGE_KEYS.CHART_SEARCHES,
       STORAGE_KEYS.LESSONS,
       STORAGE_KEYS.COACH_PLANS,
+      STORAGE_KEYS.MINDSET_NOTES,
       STORAGE_KEYS.FEEDBACK,
       STORAGE_KEYS.SETUP_CATALOG,
       STORAGE_KEYS.LESSON_ACK,

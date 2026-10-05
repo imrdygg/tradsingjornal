@@ -137,6 +137,7 @@ export function countLocalOnlyRecords(local: StorageState, remote: StorageState)
   compare(local.sessionExtremes, remote.sessionExtremes);
   compare(local.chartSearches, remote.chartSearches);
   compare(local.lessons, remote.lessons);
+  compare(local.mindsetNotes, remote.mindsetNotes);
   compare(local.coachPlans, remote.coachPlans);
   compare(local.feedback, remote.feedback);
 

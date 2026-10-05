@@ -9,6 +9,7 @@ import {
   LevelTouch,
   MarkedLevel,
   MarketOutlookBias,
+  MindsetNote,
   QuestionAnswer,
   SessionExtreme,
   Setup,
@@ -522,6 +523,58 @@ export interface LessonRead {
   repeats: DigestLessonRepeat[];
 }
 
+/** One mindset note, reduced to the facts the coach may quote. */
+export interface DigestMindsetNote {
+  /** The trading date it was written for, YYYY-MM-DD. */
+  date: string;
+  /** The trader's local clock time it was written, HH:MM, or null when it could not be read. */
+  time: string | null;
+  /** The feeling the trader recorded, or null when they did not name one. */
+  mood: string | null;
+  /** What they wrote, trimmed and bounded. */
+  text: string;
+}
+
+/**
+ * One feeling and what the days it was written on actually did.
+ *
+ * Counted here rather than left to the model so the counts behind any link travel with it: a
+ * feeling recorded twice is not a finding, and `avgDayPnL` is withheld (null) until at least
+ * one of its days closed a trade to average. The average is per DAY, not per note, so a single
+ * session written about four times cannot weigh four times.
+ */
+export interface MindsetMoodResult {
+  mood: string;
+  /** Notes written with this feeling among the listed notes. */
+  notes: number;
+  /** Distinct days those notes cover. */
+  days: number;
+  /** Mean net P&L across those days that closed a trade, or null when none did. */
+  avgDayPnL: number | null;
+}
+
+/**
+ * The trader's own mindset notes, as the one dedicated read may quote them.
+ *
+ * This is the only place the journal holds what the trader was thinking and feeling while they
+ * traded, so it is also the only place a recorded feeling can be checked against what those
+ * days actually did. It is read on request and never folded into the other answers.
+ */
+export interface MindsetRead {
+  /** The notes, newest first, bounded. */
+  notes: DigestMindsetNote[];
+  /** Total notes saved. */
+  total: number;
+  /** Notes left out of the bounded list above. */
+  omitted: number;
+  /** How many of the listed notes recorded a feeling. */
+  withMood: number;
+  /** How many distinct days the listed notes cover. */
+  daysWithNotes: number;
+  /** Each feeling the trader used, counted, most used first. */
+  moods: MindsetMoodResult[];
+}
+
 /** One coach plan the trader graded, reduced to what the coach may learn from. */
 export interface DigestCoachPlan {
   date: string;
@@ -754,6 +807,11 @@ export interface JournalDigest {
    * only by the dedicated lessons mode; other reads are not shown them.
    */
   lessonRead: LessonRead;
+  /**
+   * The trader's own mindset notes, with the feeling tally and the day link. Read only by the
+   * dedicated mindset mode; other reads are not shown them.
+   */
+  mindsetRead: MindsetRead;
   /**
    * The coach's own past plans, with the trader's grades and feedback. Read only by the
    * self-plan mode, so a plan the trader marked down shapes the next plan and nothing else.
@@ -1513,6 +1571,103 @@ function buildLessonRead(lessons: Lesson[], setups: Setup[]): LessonRead {
   };
 }
 
+/** Notes the mindset read is shown. Bounded so a long diary cannot fill the prompt. */
+const MAX_MINDSET_NOTES = 40;
+/** Longest note carried whole; longer ones are trimmed with an ellipsis. */
+const MAX_MINDSET_NOTE_CHARS = 600;
+
+/** The trader's local HH:MM for a timestamp, or null when it cannot be read. */
+function clockOf(iso: string, timezone: string): string | null {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  try {
+    return new Intl.DateTimeFormat('en-GB', {
+      timeZone: timezone,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(date);
+  } catch {
+    return date.toISOString().slice(11, 16);
+  }
+}
+
+/**
+ * Reads the trader's own mindset notes into the shape the one dedicated read may quote.
+ *
+ * `dayPnLByDate` is the trader's own net P&L per trading date, already computed for the rest
+ * of the digest, so the feeling tally can be shown beside what those days did. The mood tally
+ * and the average are computed here, before the model sees anything, so an impression cannot
+ * stand in for the count.
+ */
+function buildMindsetRead(
+  notes: MindsetNote[],
+  dayPnLByDate: Map<string, number>,
+  timezone: string
+): MindsetRead {
+  const newestFirst = [...notes]
+    .filter((note) => note && typeof note.text === 'string' && note.text.trim())
+    .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
+
+  const bounded = newestFirst.slice(0, MAX_MINDSET_NOTES);
+  const listed = bounded.map((note): DigestMindsetNote => {
+    const raw = note.text.trim();
+    const text =
+      raw.length > MAX_MINDSET_NOTE_CHARS
+        ? `${(trimWord(raw.slice(0, MAX_MINDSET_NOTE_CHARS)) ?? '').trimEnd()}…`
+        : raw;
+    return {
+      date: note.tradeDate || (note.createdAt ?? '').slice(0, 10),
+      time: note.createdAt ? clockOf(note.createdAt, timezone) : null,
+      mood: note.mood ?? null,
+      text,
+    };
+  });
+
+  // The feeling is only counted when the trader named one — an unlabelled note is left out of
+  // the tally rather than read as neutral. The day link is drawn from the listed notes, so it
+  // can never point at a note the prompt does not carry.
+  const byMood = new Map<
+    string,
+    { notes: number; days: Set<string>; pnlByDay: Map<string, number> }
+  >();
+  for (const note of listed) {
+    if (!note.mood) continue;
+    const entry =
+      byMood.get(note.mood) ?? { notes: 0, days: new Set<string>(), pnlByDay: new Map() };
+    entry.notes += 1;
+    entry.days.add(note.date);
+    const dayPnL = dayPnLByDate.get(note.date);
+    // One sample per DAY, not per note: a session written about four times must not weigh four
+    // times in the average, or one day would read as a mood result.
+    if (dayPnL !== undefined) entry.pnlByDay.set(note.date, dayPnL);
+    byMood.set(note.mood, entry);
+  }
+
+  const moods = [...byMood.entries()]
+    .map(([mood, entry]): MindsetMoodResult => {
+      const values = [...entry.pnlByDay.values()];
+      return {
+        mood,
+        notes: entry.notes,
+        days: entry.days.size,
+        avgDayPnL: values.length
+          ? round(values.reduce((a, b) => a + b, 0) / values.length)
+          : null,
+      };
+    })
+    .sort((a, b) => b.notes - a.notes || a.mood.localeCompare(b.mood));
+
+  return {
+    notes: listed,
+    total: newestFirst.length,
+    omitted: Math.max(0, newestFirst.length - listed.length),
+    withMood: listed.filter((note) => note.mood).length,
+    daysWithNotes: new Set(listed.map((note) => note.date)).size,
+    moods,
+  };
+}
+
 /**
  * Bounds the coach's own plan history so a long record cannot fill the prompt.
  *
@@ -1610,6 +1765,12 @@ export function buildJournalDigest(input: {
    * lessons mode; absent is read as "nothing written down", never as an empty finding.
    */
   lessons?: Lesson[];
+  /**
+   * The trader's own mindset notes: what they were thinking and feeling through the day. Read
+   * only by the dedicated mindset mode; absent is read as "nothing written yet", never as an
+   * empty finding.
+   */
+  mindsetNotes?: MindsetNote[];
   /**
    * The plans the coach made on its own, with the trader's grades and feedback. Read only by
    * the self-plan mode; absent is read as "no plans made yet".
@@ -1872,6 +2033,20 @@ export function buildJournalDigest(input: {
   // ---- The trader's own written lessons -----------------------------------
   const lessonRead = buildLessonRead(input.lessons ?? [], setups);
 
+  // ---- What the trader was thinking and feeling ---------------------------
+  // The day P&L is put on the same date key the notes carry, so a recorded feeling can be read
+  // beside what the day actually did without the model doing its own arithmetic.
+  const dayPnLByDate = new Map<string, number>();
+  for (const [dayId, pnl] of dayPnLById) {
+    const day = dayById.get(dayId);
+    if (day) dayPnLByDate.set(day.tradeDate, pnl);
+  }
+  const mindsetRead = buildMindsetRead(
+    input.mindsetNotes ?? [],
+    dayPnLByDate,
+    input.timezone
+  );
+
   // ---- The coach's own plans, and how the trader judged them ---------------
   const coachPlanRead = buildCoachPlanRead(input.coachPlans ?? []);
 
@@ -2030,6 +2205,7 @@ export function buildJournalDigest(input: {
     levelOutlooks,
     extremeRead,
     lessonRead,
+    mindsetRead,
     coachPlanRead,
     setupWeek,
     tradeSamples,

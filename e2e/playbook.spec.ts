@@ -468,6 +468,35 @@ test.describe('Marked levels — never touched and void', () => {
     await page.locator(`#touch-outcome-watching-${reloadedTouchId}`).click();
     await expect(reloaded.locator('[data-level-touch]').first()).toContainText('watching');
   });
+
+  test('a freshly marked line reads as not touched until you say so, then takes repeats', async ({
+    page,
+  }) => {
+    await gotoPlaybook(page);
+    await markResistance(page, '7760');
+
+    const row = page.locator('[data-marked-level]').first();
+
+    // Adding a price does not touch it: the line says so itself, so the action below it cannot
+    // be read as a status saying the level was already reached.
+    await expect(row).toHaveAttribute('data-level-touch-state', 'untouched');
+    await expect(row.locator('span[id^="level-untouched-"]')).toBeVisible();
+    await expect(row.getByRole('button', { name: 'Mark touched' })).toBeVisible();
+
+    // Marking it touched is the trader's own choice, and it asks for the time it happened.
+    await row.locator('button[id^="level-touch-first-"]').click();
+    await row.getByRole('button', { name: 'Log touch' }).click();
+
+    await expect(row).toHaveAttribute('data-level-touch-state', 'touched');
+    await expect(row.locator('[data-level-touch]')).toHaveCount(1);
+    await expect(row.locator('span[id^="level-untouched-"]')).toHaveCount(0);
+
+    // The same line can be reached again and again — each one is added, not replaced.
+    await row.locator('button[id^="level-touch-again-"]').click();
+    await row.getByRole('button', { name: 'Log touch' }).click();
+    await expect(row.locator('[data-level-touch]')).toHaveCount(2);
+    await expect(row.getByText('×2 touches')).toBeVisible();
+  });
 });
 
 /**

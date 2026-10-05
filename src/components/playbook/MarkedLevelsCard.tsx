@@ -736,6 +736,7 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
         key={level.id}
         data-marked-level={level.id}
         data-level-resolution={level.resolution ?? 'open'}
+        data-level-touch-state={latest ? 'touched' : 'untouched'}
         className={`space-y-1.5 rounded-xl border px-2.5 py-1.5 ${
           isVoid
             ? 'border-zinc-800/70 border-dashed bg-zinc-950/40 opacity-70'
@@ -780,6 +781,23 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
           {level.label && (
             <span className="truncate rounded border border-zinc-800 bg-zinc-950/60 px-1.5 py-0.5 text-[10px] text-zinc-400">
               {level.label}
+            </span>
+          )}
+          {/*
+            The default state, said out loud.
+
+            A freshly marked line used to show only the buttons below, and the bright "Touched"
+            button read as a status — as if the level had already been touched. So the line now
+            names its own state: nothing has reached it until the trader says so.
+          */}
+          {!latest && !isVoid && level.resolution !== 'never-touched' && (
+            <span
+              id={`level-untouched-${level.id}`}
+              className="inline-flex items-center gap-1 rounded border border-zinc-700 bg-zinc-900/60 px-1.5 py-0.5 text-[10px] font-mono text-zinc-400"
+              title="Price has not reached this line yet — mark it touched when it does"
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-zinc-500" />
+              Not touched yet
             </span>
           )}
           {level.resolution === 'never-touched' && (
@@ -861,7 +879,7 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
                 className="flex items-center gap-1 rounded-lg border border-sky-700/60 bg-sky-950/40 px-2 py-0.5 text-[10px] font-semibold text-sky-300 transition-colors hover:bg-sky-900/50 hover:text-sky-200"
               >
                 <Crosshair className="h-3 w-3" />
-                Touched
+                Mark touched
               </button>
             ) : (
               <button
@@ -873,7 +891,7 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
                 className="flex items-center gap-1 rounded-lg border border-emerald-700/60 bg-emerald-950/40 px-2 py-0.5 text-[10px] font-semibold text-emerald-300 transition-colors hover:bg-emerald-900/50 hover:text-emerald-200"
               >
                 <Crosshair className="h-3 w-3" />
-                Touched again
+                Touch again
               </button>
             )}
             <button
@@ -1186,8 +1204,9 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
           </h2>
           <p className="text-xs text-zinc-400 mt-0.5">
             Write the lines your indicator shows for each instrument and chart — 1m, 3m, 5m, 15m,
-            30m and 1h. Keep them all, even the ones price never reaches; when price reaches one,
-            tap Touched, set the time it happened, and it becomes a touch you decide below.
+            30m and 1h. Keep them all, even the ones price never reaches. A new line starts as{' '}
+            <span className="font-semibold text-zinc-300">Not touched yet</span>: you say what
+            happened to it, by tapping Mark touched or Never touched.
           </p>
         </div>
       </div>

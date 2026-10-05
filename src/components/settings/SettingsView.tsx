@@ -550,7 +550,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
           <div>
             <label className="text-xs font-medium text-zinc-400 block mb-1">
-              Default Instrument
+              Focus Instrument
             </label>
             <select
               value={profile.defaultInstrument}
@@ -568,6 +568,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </option>
               ))}
             </select>
+            <p className="mt-1 text-[10px] text-zinc-500 leading-relaxed">
+              The contract the journal centres on: new days, the levels you mark, the session
+              extremes and the Playbook edge finder all start here. The other instruments stay a
+              click away in each picker — this changes the default, not what you can record.
+            </p>
           </div>
 
           <div>

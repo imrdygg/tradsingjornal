@@ -2,7 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { LevelTouch, MarkedLevel } from '../../../types';
 import {
   diffLevelPrices,
+  findCarryoverLevels,
   previousLevelDate,
+  summarizeInstrumentEdges,
   summarizeTimeframeEdges,
   timeframeBucketLabel,
   timeframeHighlights,
@@ -120,6 +122,66 @@ describe('summarizeTimeframeEdges', () => {
   });
 });
 
+describe('summarizeInstrumentEdges', () => {
+  it('rolls each instrument up across its timeframes and sides', () => {
+    const levels = [
+      marked({ id: 'a', instrumentId: 'mes', timeframe: '5m', kind: 'resistance' }),
+      marked({ id: 'b', instrumentId: 'mes', timeframe: '5m', kind: 'support' }),
+      marked({ id: 'c', instrumentId: 'mes', timeframe: '30m', kind: 'resistance' }),
+      marked({ id: 'd', instrumentId: 'mnq', timeframe: '5m', kind: 'resistance' }),
+    ];
+    const touches = [
+      touch({ id: 't1', instrumentId: 'mes', levelId: 'a', outcome: 'never-returned' }),
+      touch({ id: 't2', instrumentId: 'mes', levelId: 'b', outcome: 'returned' }),
+      touch({ id: 't3', instrumentId: 'mnq', levelId: 'd', outcome: 'never-returned' }),
+      // No marked level behind it: it belongs to the older record, not here.
+      touch({ id: 't4', instrumentId: 'mes', outcome: 'never-returned' }),
+    ];
+
+    const buckets = summarizeInstrumentEdges(levels, touches);
+    const mes = buckets.find((b) => b.key === 'mes');
+    expect(mes?.marked).toBe(3);
+    expect(mes?.tested).toBe(2);
+    expect(mes?.untested).toBe(1);
+    expect(mes?.stats.decided).toBe(2);
+    expect(mes?.stats.holdRate).toBe(50);
+
+    const mnq = buckets.find((b) => b.key === 'mnq');
+    expect(mnq?.marked).toBe(1);
+    expect(mnq?.tested).toBe(1);
+    expect(mnq?.stats.holdRate).toBe(100);
+  });
+
+  it('leads with the instrument that has the most tested lines', () => {
+    const levels = [
+      marked({ id: 'a', instrumentId: 'mnq' }),
+      marked({ id: 'b', instrumentId: 'mcl' }),
+      marked({ id: 'c', instrumentId: 'mcl' }),
+    ];
+    const touches = [
+      touch({ id: 't1', instrumentId: 'mnq', levelId: 'a' }),
+      touch({ id: 't2', instrumentId: 'mcl', levelId: 'b' }),
+      touch({ id: 't3', instrumentId: 'mcl', levelId: 'c' }),
+    ];
+    const buckets = summarizeInstrumentEdges(levels, touches);
+    expect(buckets[0].key).toBe('mcl');
+    expect(buckets[0].tested).toBe(2);
+  });
+
+  it('drops a void line and breaks out the ones closed out as never touched', () => {
+    const levels = [
+      marked({ id: 'a', instrumentId: 'mes', resolution: 'void' }),
+      marked({ id: 'b', instrumentId: 'mes', resolution: 'never-touched' }),
+      marked({ id: 'c', instrumentId: 'mes' }),
+    ];
+    const buckets = summarizeInstrumentEdges(levels, []);
+    expect(buckets).toHaveLength(1);
+    expect(buckets[0].marked).toBe(2);
+    expect(buckets[0].untested).toBe(2);
+    expect(buckets[0].neverTouched).toBe(1);
+  });
+});
+
 describe('timeframeHighlights', () => {
   it('names the most-reached line only once enough of its lines were tested', () => {
     const levels = [
@@ -205,5 +267,60 @@ describe('previousLevelDate', () => {
     expect(previousLevelDate(levels, 'mes', '2026-09-28')).toBe('2026-09-25');
     expect(previousLevelDate(levels, 'mnq', '2026-09-28')).toBe('2026-09-27');
     expect(previousLevelDate(levels, 'mcl', '2026-09-28')).toBeNull();
+  });
+});
+
+describe('findCarryoverLevels', () => {
+  it('offers a price marked on another chart, naming the charts it is already on', () => {
+    const levels = [
+      marked({ id: 'a', timeframe: '15m', kind: 'resistance', price: 7760 }),
+      marked({ id: 'b', timeframe: '1h', kind: 'resistance', price: 7760 }),
+    ];
+    const carry = findCarryoverLevels(levels, { instrumentId: 'mes', timeframe: '5m' });
+    expect(carry).toHaveLength(1);
+    expect(carry[0].kind).toBe('resistance');
+    expect(carry[0].price).toBe(7760);
+    // Chart order, not insertion order: 15m comes before 1h.
+    expect(carry[0].timeframes).toEqual(['15m', '1h']);
+  });
+
+  it('leaves out a price already on the chart on screen with the same side', () => {
+    const levels = [
+      marked({ id: 'a', timeframe: '5m', kind: 'resistance', price: 7760 }),
+      marked({ id: 'b', timeframe: '15m', kind: 'resistance', price: 7760 }),
+    ];
+    expect(findCarryoverLevels(levels, { instrumentId: 'mes', timeframe: '5m' })).toEqual([]);
+  });
+
+  it('still offers a price leaning the other way on the chart on screen', () => {
+    const levels = [
+      marked({ id: 'a', timeframe: '5m', kind: 'support', price: 7700 }),
+      marked({ id: 'b', timeframe: '15m', kind: 'resistance', price: 7700 }),
+    ];
+    const carry = findCarryoverLevels(levels, { instrumentId: 'mes', timeframe: '5m' });
+    expect(carry).toEqual([{ kind: 'resistance', price: 7700, timeframes: ['15m'] }]);
+  });
+
+  it('ignores other instruments and reads resistance above support', () => {
+    const levels = [
+      marked({ id: 'a', timeframe: '15m', kind: 'support', price: 7700 }),
+      marked({ id: 'b', timeframe: '15m', kind: 'resistance', price: 7740 }),
+      marked({ id: 'c', instrumentId: 'mnq', timeframe: '15m', kind: 'resistance', price: 20500 }),
+    ];
+    const carry = findCarryoverLevels(levels, { instrumentId: 'mes', timeframe: '5m' });
+    expect(carry.map((level) => `${level.kind} ${level.price}`)).toEqual([
+      'resistance 7740',
+      'support 7700',
+    ]);
+  });
+
+  it('reads a level with no timeframe as the default chart, matching the marking card', () => {
+    const levels = [marked({ id: 'a', kind: 'resistance', price: 7760, timeframe: undefined })];
+    // Absent is treated as 5m, so nothing is carried while 5m is on screen...
+    expect(findCarryoverLevels(levels, { instrumentId: 'mes', timeframe: '5m' })).toEqual([]);
+    // ...and it is offered once another chart is open.
+    expect(findCarryoverLevels(levels, { instrumentId: 'mes', timeframe: '15m' })).toEqual([
+      { kind: 'resistance', price: 7760, timeframes: ['5m'] },
+    ]);
   });
 });

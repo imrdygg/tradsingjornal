@@ -25,7 +25,7 @@ import {
 } from 'lucide-react';
 import type { Instrument, LevelTouch, MarkedLevel, TradingDay } from '../../types';
 import { CoachCard } from '../coach/coach-ui';
-import { instrumentSymbol } from '../../lib/trading/instruments';
+import { formatLevelPrice, instrumentSymbol } from '../../lib/trading/instruments';
 import { MIN_DECIDED } from '../../lib/analytics/level-edge';
 import {
   buildEdgeCurve,
@@ -588,7 +588,7 @@ export const LevelChartCard: React.FC<LevelChartCardProps> = ({
                             <div className="text-zinc-300">
                               {point.date} · {point.time}
                             </div>
-                            <div className="text-zinc-100">{point.priceLabel}</div>
+                            <div className="text-zinc-100">{formatLevelPrice(point.priceLabel)}</div>
                             <div style={{ color: OUTCOME_FILL[point.outcome] }}>
                               {OUTCOME_WORD[point.outcome]}
                             </div>

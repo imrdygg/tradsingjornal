@@ -24,7 +24,11 @@ import {
 } from '../../types';
 import { CoachCard } from '../coach/coach-ui';
 import { formatTradingDate } from '../../lib/storage/date-utils';
-import { instrumentSymbol, trackedExtremeInstruments } from '../../lib/trading/instruments';
+import {
+  formatLevelPrice,
+  instrumentSymbol,
+  trackedExtremeInstruments,
+} from '../../lib/trading/instruments';
 import {
   buildExtremeDays,
   buildExtremeHourHistogram,
@@ -250,7 +254,7 @@ const ExtremeRow: React.FC<{
   const [editLevelType, setEditLevelType] = useState<ExtremeLevelType>(levelType);
   const [editTimeframe, setEditTimeframe] = useState<ExtremeTimeframe>(timeframe);
   const [editTime, setEditTime] = useState(extreme.time);
-  const [editPrice, setEditPrice] = useState(String(extreme.price));
+  const [editPrice, setEditPrice] = useState(formatLevelPrice(extreme.price));
   const [editNotes, setEditNotes] = useState(extreme.notes ?? '');
   const [editDate, setEditDate] = useState(extreme.tradeDate);
 
@@ -261,7 +265,7 @@ const ExtremeRow: React.FC<{
     setEditLevelType(levelType);
     setEditTimeframe(timeframe);
     setEditTime(extreme.time);
-    setEditPrice(String(extreme.price));
+    setEditPrice(formatLevelPrice(extreme.price));
     setEditNotes(extreme.notes ?? '');
     setEditDate(extreme.tradeDate);
     setEditError('');
@@ -463,7 +467,9 @@ const ExtremeRow: React.FC<{
           {timeframe}
         </span>
         <span className="font-mono text-[11px] text-zinc-300">{extreme.time}</span>
-        <span className="font-mono text-[11px] font-semibold text-zinc-100">{extreme.price}</span>
+        <span className="font-mono text-[11px] font-semibold text-zinc-100">
+          {formatLevelPrice(extreme.price)}
+        </span>
         <span className="font-mono text-[9px] uppercase text-zinc-600">
           {WINDOW_BADGE[extreme.window]}
         </span>

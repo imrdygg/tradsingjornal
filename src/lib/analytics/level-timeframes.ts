@@ -79,46 +79,67 @@ export interface TimeframeEdgeBucket {
  * Buckets are ordered so the busiest record leads: most tested first, then most marked, because
  * the question being asked is which lines price actually reaches.
  */
-export function summarizeTimeframeEdges(
+/** The counting every marked-level read shares: one rolled-up group, before its label is put on. */
+interface RolledLevelGroup {
+  key: string;
+  /** The first level in the group; its fields are the ones every level in the group shares. */
+  first: MarkedLevel;
+  marked: number;
+  tested: number;
+  untested: number;
+  neverTouched: number;
+  testRate: number | null;
+  stats: LevelEdgeStats;
+}
+
+/**
+ * Counts marked levels under a caller's own key — the whole job of the two reads below, which
+ * differ only in what a bucket is (a chart and a side, or an instrument).
+ *
+ * A level counts as tested when a touch links back to it, so a touch with no marked level behind
+ * it (the older, mark-as-you-go record) is left out of every count here — it belongs to
+ * `findLevelEdges`, not to these reads. A level the trader marked `void` is dropped entirely: a
+ * line set aside is not evidence about which resolutions price reaches. An untested level the
+ * trader closed out as `never-touched` stays in the marked and untested counts — it really was
+ * never reached — and is broken out so the record can say how much has been given an answer.
+ */
+function rollUpMarkedLevels(
   levels: MarkedLevel[],
   touches: LevelTouch[],
-  minDecided = 5
-): TimeframeEdgeBucket[] {
+  keyOf: (level: MarkedLevel) => string,
+  minDecided: number
+): RolledLevelGroup[] {
   const active = levels.filter((level) => level.resolution !== 'void');
   const levelIds = new Set(active.map((level) => level.id));
-  const linked = touches.filter((touch) => touch.levelId && levelIds.has(touch.levelId));
 
   const touchByLevel = new Map<string, LevelTouch>();
-  for (const touch of linked) {
-    if (touch.levelId) touchByLevel.set(touch.levelId, touch);
+  for (const touch of touches) {
+    if (touch.levelId && levelIds.has(touch.levelId)) touchByLevel.set(touch.levelId, touch);
   }
 
   const groups = new Map<string, MarkedLevel[]>();
   for (const level of active) {
-    const key = `${level.instrumentId}|${level.timeframe ?? 'none'}|${level.kind}`;
+    const key = keyOf(level);
     const list = groups.get(key);
     if (list) list.push(level);
     else groups.set(key, [level]);
   }
 
-  const buckets: TimeframeEdgeBucket[] = [];
+  const rolled: RolledLevelGroup[] = [];
   for (const [key, group] of groups) {
     const testedLevels = group.filter((level) => touchByLevel.has(level.id));
     const bucketTouches = testedLevels
       .map((level) => touchByLevel.get(level.id))
       .filter((touch): touch is LevelTouch => Boolean(touch));
-    const first = group[0];
     const marked = group.length;
     const tested = testedLevels.length;
     const neverTouched = group.filter(
       (level) => level.resolution === 'never-touched' && !touchByLevel.has(level.id)
     ).length;
 
-    buckets.push({
+    rolled.push({
       key,
-      instrumentId: first.instrumentId,
-      timeframe: first.timeframe ?? null,
-      kind: first.kind,
+      first: group[0],
       marked,
       tested,
       untested: marked - tested,
@@ -128,11 +149,84 @@ export function summarizeTimeframeEdges(
     });
   }
 
-  return buckets.sort((a, b) => {
+  return rolled;
+}
+
+/** Busiest record first, then most marked — the order both reads below share. */
+function busiestFirst<T extends { tested: number; marked: number; key: string }>(rows: T[]): T[] {
+  return rows.sort((a, b) => {
     if (a.tested !== b.tested) return b.tested - a.tested;
     if (a.marked !== b.marked) return b.marked - a.marked;
     return a.key.localeCompare(b.key);
   });
+}
+
+export function summarizeTimeframeEdges(
+  levels: MarkedLevel[],
+  touches: LevelTouch[],
+  minDecided = 5
+): TimeframeEdgeBucket[] {
+  const rows = rollUpMarkedLevels(
+    levels,
+    touches,
+    (level) => `${level.instrumentId}|${level.timeframe ?? 'none'}|${level.kind}`,
+    minDecided
+  ).map(({ key, first, ...counts }): TimeframeEdgeBucket => ({
+    key,
+    instrumentId: first.instrumentId,
+    timeframe: first.timeframe ?? null,
+    kind: first.kind,
+    ...counts,
+  }));
+
+  return busiestFirst(rows);
+}
+
+/** One instrument's marked-level record, rolled up across all of its timeframes and sides. */
+export interface InstrumentEdgeBucket {
+  /** Stable key: the instrument id, so a list can diff it. */
+  key: string;
+  instrumentId: string;
+  /** Levels marked for this instrument. */
+  marked: number;
+  /** Marked levels that were reached and logged as a touch. */
+  tested: number;
+  /** Marked levels nothing has been logged against yet. */
+  untested: number;
+  /** Untested levels the trader has explicitly closed out as never reached. */
+  neverTouched: number;
+  /** Tested / marked as a percentage, or null while nothing is marked here. */
+  testRate: number | null;
+  /** The instrument's touches, so its hold rate is read over the lines that were tested. */
+  stats: LevelEdgeStats;
+}
+
+/**
+ * The coarser read the trader asks first: their own record, one bucket per instrument.
+ *
+ * The timeframe read answers which chart a line came off. Before that question comes the one
+ * about where to spend attention at all, and this is that answer — how much of the marked-level
+ * record each instrument carries, and whether the lines marked on it get reached and then hold.
+ * It is the same counting as the timeframe read, keyed by instrument alone, so a trader weighing
+ * one contract against three can see what the others actually account for.
+ */
+export function summarizeInstrumentEdges(
+  levels: MarkedLevel[],
+  touches: LevelTouch[],
+  minDecided = 5
+): InstrumentEdgeBucket[] {
+  const rows = rollUpMarkedLevels(
+    levels,
+    touches,
+    (level) => level.instrumentId,
+    minDecided
+  ).map(({ key, first, ...counts }): InstrumentEdgeBucket => ({
+    key,
+    instrumentId: first.instrumentId,
+    ...counts,
+  }));
+
+  return busiestFirst(rows);
 }
 
 /** The fewest tested lines before "price reaches this" is said as a finding, not a one-off. */
@@ -254,4 +348,63 @@ export function previousLevelDate(
       .map((level) => level.tradeDate)
   );
   return [...dates].sort().pop() ?? null;
+}
+
+/**
+ * The chart a level with no recorded timeframe is read under, matching how the marking card
+ * buckets a legacy line rather than leaving it on a chart of its own.
+ */
+const FALLBACK_TIMEFRAME: LevelTimeframe = '5m';
+
+/** One price already marked elsewhere, ready to be carried onto the chart on screen. */
+export interface CarryoverLevel {
+  /** The side the price leans on the other charts. */
+  kind: LevelKind;
+  price: number;
+  /** The other charts already carrying this price, in chart order. */
+  timeframes: LevelTimeframe[];
+}
+
+/**
+ * The prices already marked on this instrument's OTHER charts, so they can be copied across.
+ *
+ * The indicator draws the same line on several timeframes, and re-keying it for each chart is
+ * the tedium this answers: a price marked on the 15m is offered while the 5m is on screen, so
+ * it can be carried over in one gesture instead of typed again. A price already on the chart on
+ * screen with the same side is left out — there is nothing to carry — but a price that leans
+ * the other way here still appears, because on this chart it is a different line. `levels` is
+ * expected to be the day's own lines; the caller decides the window, this only groups and
+ * filters what it is handed.
+ */
+export function findCarryoverLevels(
+  levels: MarkedLevel[],
+  current: { instrumentId: string; timeframe: LevelTimeframe }
+): CarryoverLevel[] {
+  const groups = new Map<
+    string,
+    { kind: LevelKind; price: number; frames: Set<LevelTimeframe> }
+  >();
+  for (const level of levels) {
+    if (level.instrumentId !== current.instrumentId) continue;
+    const key = `${level.kind}|${level.price}`;
+    const entry = groups.get(key) ?? { kind: level.kind, price: level.price, frames: new Set() };
+    entry.frames.add(level.timeframe ?? FALLBACK_TIMEFRAME);
+    groups.set(key, entry);
+  }
+
+  const carryover: CarryoverLevel[] = [];
+  for (const entry of groups.values()) {
+    // Already written here with this same side: carrying it would change nothing.
+    if (entry.frames.has(current.timeframe)) continue;
+    carryover.push({
+      kind: entry.kind,
+      price: entry.price,
+      timeframes: LEVEL_TIMEFRAMES.filter((frame) => entry.frames.has(frame)),
+    });
+  }
+
+  // Resistance above support, each high to low, so the chips read the way the lines sit.
+  return carryover.sort((a, b) =>
+    a.kind === b.kind ? b.price - a.price : a.kind === 'resistance' ? -1 : 1
+  );
 }

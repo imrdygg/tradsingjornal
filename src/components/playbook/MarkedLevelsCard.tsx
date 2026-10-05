@@ -5,6 +5,7 @@ import {
   Ban,
   Check,
   ChevronDown,
+  Copy,
   Crosshair,
   EyeOff,
   Layers,
@@ -33,6 +34,7 @@ import {
 } from '../../lib/storage/date-utils';
 import {
   defaultLevelZonePoints,
+  formatLevelPrice,
   formatPoints,
   instrumentSymbol,
 } from '../../lib/trading/instruments';
@@ -40,6 +42,7 @@ import {
   LEVEL_TIMEFRAMES,
   TIMEFRAME_LABEL,
   diffLevelPrices,
+  findCarryoverLevels,
   previousLevelDate,
   summarizeTimeframeEdges,
 } from '../../lib/analytics/level-timeframes';
@@ -282,6 +285,8 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
    * added should not mean hunting down a price-sorted list.
    */
   const [sortMode, setSortMode] = useState<'price' | 'newest'>('price');
+  /** The side box a carried price is currently hovering over, for the drop highlight. */
+  const [dropSide, setDropSide] = useState<LevelKind | null>(null);
 
   const currentInstrument = instruments.find((inst) => inst.id === instrumentId);
   // The level width is the instrument's own default; it decides how a touch is graded later.
@@ -357,6 +362,19 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
   );
 
   /**
+   * The prices today already marked on this instrument's other charts.
+   *
+   * The indicator draws the same line on more than one timeframe, and re-typing it for every
+   * chart is the tedium this removes: a price marked on the 15m is offered while the 5m is on
+   * screen, so it can be carried across in one gesture. Only prices not already on this chart
+   * with the same side appear — for those there would be nothing to add.
+   */
+  const carryover = useMemo(
+    () => findCarryoverLevels(todayLevels, { instrumentId, timeframe }),
+    [todayLevels, instrumentId, timeframe]
+  );
+
+  /**
    * The lines on screen: today's, or every day's when the trader reaches back.
    *
    * Filtered by the instrument and chart being looked at either way, so the record stays one
@@ -428,7 +446,7 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
   const openEdit = (level: MarkedLevel) => {
     setEditingLevelId(level.id);
     setEditDraft({
-      price: String(level.price),
+      price: formatLevelPrice(level.price),
       label: level.label ?? '',
       session: level.session,
       // A line marked before timeframes existed shows under the default chart; opening the
@@ -709,6 +727,59 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
     );
   };
 
+  /**
+   * Writes one carried price onto the chart on screen, in a single gesture.
+   *
+   * A drop lands the level straight away rather than parking it in a box: the price is already
+   * the trader's own line on another chart, so making them approve it again is exactly the
+   * typing this exists to remove. Storage skips a level already on that day, instrument, chart,
+   * side and price, so the same price can never be double-added. The copied line carries no
+   * label — a label belongs to the box it was typed into, not to this one.
+   */
+  const addCarriedLevel = (kind: LevelKind, price: number, from?: LevelTimeframe[]) => {
+    setError('');
+    setAdded(null);
+    const now = new Date().toISOString();
+    onSaveLevels([
+      {
+        id: `level-${Date.now()}-carry-${kind}`,
+        userId: todayTradingDay.userId,
+        tradingDayId: todayTradingDay.id,
+        tradeDate: todayTradingDay.tradeDate,
+        instrumentId,
+        kind,
+        timeframe,
+        price,
+        zonePoints: Math.round(defaultZone * 100) / 100,
+        session,
+        source: 'carried',
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]);
+    setAdded(
+      `Carried ${formatLevelPrice(price)} onto ${symbol} · ${TIMEFRAME_LABEL[timeframe]} as ${kind}` +
+        (from && from.length ? ` (already on ${from.map((frame) => TIMEFRAME_LABEL[frame]).join(', ')}).` : '.')
+    );
+  };
+
+  /**
+   * Accepts a carried price dropped on a side box.
+   *
+   * The box the chip lands on decides the side, so a line can be flipped on the way across by
+   * dropping it on the other box — but only a payload this card put on the clipboard is honoured,
+   * so a drop from somewhere else does nothing.
+   */
+  const handleCarryDrop = (event: React.DragEvent, side: LevelKind) => {
+    event.preventDefault();
+    setDropSide(null);
+    const [kind, priceText] = event.dataTransfer.getData('text/plain').split('|');
+    if (kind !== 'support' && kind !== 'resistance') return;
+    const price = Number(priceText);
+    if (!Number.isFinite(price) || price <= 0) return;
+    addCarriedLevel(side, price);
+  };
+
   /** Writes one touch from a marked level, at the moment given. Shared by both paths below. */
   const logTouch = (level: MarkedLevel, touchedAt: string, notes?: string) => {
     const now = new Date().toISOString();
@@ -803,7 +874,7 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
             data-level-price={level.price}
             className="font-mono text-sm font-semibold text-zinc-100"
           >
-            {level.price}
+            {formatLevelPrice(level.price)}
           </span>
           <span
             className="font-mono text-[10px] text-zinc-500"
@@ -1356,6 +1427,71 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
         </div>
 
         {/*
+          Prices the indicator is already showing on another chart today.
+
+          The same line prints on several timeframes, so this lists the ones already written
+          down elsewhere for the same instrument and lets them be carried onto the chart on
+          screen — dragged into a box, or tapped. It sits directly above those boxes so the
+          action and its target are one glance apart, and it stays out of the way entirely when
+          nothing elsewhere has been marked yet.
+        */}
+        {carryover.length > 0 && (
+          <div
+            id="level-carryover"
+            className="space-y-2 rounded-xl border border-indigo-900/50 bg-indigo-950/20 p-2.5"
+          >
+            <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+              <span className="flex items-center gap-1.5 text-[10px] font-mono uppercase font-bold text-indigo-300/90">
+                <Copy className="h-3.5 w-3.5" />
+                Already on your other charts today
+              </span>
+              <span className="text-[10px] text-zinc-500">
+                drag into a box below, or tap to copy
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {carryover.map((level) => (
+                <button
+                  key={`${level.kind}|${level.price}`}
+                  type="button"
+                  draggable
+                  data-carryover={`${level.kind}|${level.price}`}
+                  onClick={() => addCarriedLevel(level.kind, level.price, level.timeframes)}
+                  onDragStart={(event) => {
+                    event.dataTransfer.setData('text/plain', `${level.kind}|${level.price}`);
+                    event.dataTransfer.effectAllowed = 'copy';
+                  }}
+                  title={
+                    `${level.kind} ${formatLevelPrice(level.price)} is marked on ` +
+                    `${level.timeframes.map((frame) => TIMEFRAME_LABEL[frame]).join(', ')} — ` +
+                    `drag it into a box below, or tap to copy it onto ${TIMEFRAME_LABEL[timeframe]}`
+                  }
+                  className="flex cursor-grab items-center gap-1.5 rounded-lg border border-indigo-900/60 bg-indigo-950/40 px-2 py-1 text-[11px] text-zinc-200 transition-colors hover:border-indigo-700 hover:bg-indigo-950/60 active:cursor-grabbing"
+                >
+                  <span
+                    className={`rounded border px-1 font-mono text-[9px] font-bold uppercase ${
+                      level.kind === 'support'
+                        ? 'border-sky-800 bg-sky-950/60 text-sky-300'
+                        : 'border-amber-800 bg-amber-950/60 text-amber-300'
+                    }`}
+                  >
+                    {level.kind === 'support' ? 'S' : 'R'}
+                  </span>
+                  <span className="font-mono">{formatLevelPrice(level.price)}</span>
+                  <span className="font-mono text-[9px] text-zinc-500">
+                    {level.timeframes.join(' · ')}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <p className="text-[10px] leading-relaxed text-zinc-500">
+              These prices are already marked for {symbol} on another chart today. Copying one
+              onto {TIMEFRAME_LABEL[timeframe]} adds it here and leaves the original line alone.
+            </p>
+          </div>
+        )}
+
+        {/*
           Paste support and resistance lines for the chart on screen.
 
           The heading names the instrument and timeframe the prices will be tagged with, and
@@ -1379,7 +1515,23 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
           ).map(({ side, text, count }) => (
             <div
               key={side}
-              className="space-y-1.5 rounded-xl border border-zinc-800 bg-zinc-950/50 p-2.5"
+              data-carryover-drop={side}
+              onDragOver={(event) => {
+                // Accept the drop so it lands here rather than on the page; what the payload
+                // actually is is checked on drop, where a foreign drag is simply ignored.
+                event.preventDefault();
+                event.dataTransfer.dropEffect = 'copy';
+                setDropSide(side);
+              }}
+              onDragLeave={() =>
+                setDropSide((current) => (current === side ? null : current))
+              }
+              onDrop={(event) => handleCarryDrop(event, side)}
+              className={`space-y-1.5 rounded-xl border p-2.5 transition-colors ${
+                dropSide === side
+                  ? 'border-indigo-600 bg-indigo-950/40'
+                  : 'border-zinc-800 bg-zinc-950/50'
+              }`}
             >
               <label
                 htmlFor={`level-prices-${side}`}

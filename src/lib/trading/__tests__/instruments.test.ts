@@ -4,6 +4,7 @@ import {
   defaultLevelZonePoints,
   findInstrument,
   findInstrumentByContract,
+  formatLevelPrice,
   formatPoints,
   instrumentSymbol,
 } from '../instruments';
@@ -105,6 +106,24 @@ describe('formatPoints', () => {
   it('trims trailing zeros so a band reads as prices do', () => {
     expect(formatPoints(7702.5)).toBe('7702.5');
     expect(formatPoints(7702.0)).toBe('7702');
+  });
+});
+
+describe('formatLevelPrice', () => {
+  it('keeps the trailing zero a stored number drops', () => {
+    // Stored as numbers, a crude line entered at 80.80 and one at 89.30 come back as 80.8
+    // and 89.3; showing them that way reads as different prices. Two decimals restores them.
+    expect(formatLevelPrice(80.8)).toBe('80.80');
+    expect(formatLevelPrice(89.3)).toBe('89.30');
+    expect(formatLevelPrice(88.88)).toBe('88.88');
+  });
+
+  it('shows a whole number at two decimals rather than none', () => {
+    expect(formatLevelPrice(7700)).toBe('7700.00');
+  });
+
+  it('reports a dash for a price that is not a number', () => {
+    expect(formatLevelPrice(Number.NaN)).toBe('—');
   });
 });
 

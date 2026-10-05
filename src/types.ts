@@ -1023,12 +1023,13 @@ export interface MarkedLevel {
    */
   timeframe?: LevelTimeframe;
   /**
-   * Whether the trader typed this level by hand or pasted it from their indicator.
+   * Where the level came from: typed by hand, pasted from the indicator, or copied across from
+   * the same price already marked on another chart.
    *
-   * Kept so the record can tell the two apart later; both are the trader's own level and
-   * neither is treated as better than the other.
+   * Kept so the record can tell the three apart later; all are the trader's own level and none
+   * is treated as better than the others.
    */
-  source?: 'indicator' | 'manual';
+  source?: 'indicator' | 'manual' | 'carried';
   /**
    * How the trader closed this level out when price never reached it. Absent means still open.
    *

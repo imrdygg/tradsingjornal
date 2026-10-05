@@ -212,6 +212,20 @@ export function formatPoints(value: number): string {
   return String(Math.round(value * 1000) / 1000);
 }
 
+/**
+ * A price the trader recorded, shown at the two decimals the price fields are typed in.
+ *
+ * Prices are held as numbers, so a line marked at 80.80 comes back as 80.8 — printing the
+ * number straight silently drops the trailing zero and reads as a different price, which is
+ * exactly what a crude (MCL) line does because it trades in cents. The level editors, the
+ * marked-line list, the touch log and the session extremes all show two decimals; this is
+ * that convention in one place, so a line entered at 80.80 reads as 80.80 everywhere without
+ * changing what is stored.
+ */
+export function formatLevelPrice(value: number): string {
+  return Number.isFinite(value) ? value.toFixed(2) : '—';
+}
+
 export function findInstrument(instruments: Instrument[], symbolOrId: string): Instrument {
   const match = instruments.find(
     (i) =>

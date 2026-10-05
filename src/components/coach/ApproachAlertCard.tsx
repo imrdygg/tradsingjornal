@@ -3,6 +3,7 @@ import { BellRing, ArrowUp, ArrowDown, RefreshCw } from 'lucide-react';
 import type { ImportantLevel } from '../../types';
 import type { InstrumentQuote } from '../../lib/ai/market-data';
 import { fetchInstrumentQuote, formatQuotePrice } from '../../lib/ai/plan-coach';
+import { formatLevelPrice } from '../../lib/trading/instruments';
 import {
   findLevelApproaches,
   NEAR_LEVEL_POINTS,
@@ -120,7 +121,7 @@ export const ApproachAlertCard: React.FC<ApproachAlertCardProps> = ({
           {nearest && price !== null && (
             <p id="coach-approach-nearest" className="text-xs leading-relaxed text-zinc-300">
               Closest is{' '}
-              <span className="font-mono text-zinc-100">{nearest.price}</span>
+              <span className="font-mono text-zinc-100">{formatLevelPrice(nearest.price)}</span>
               {nearest.label ? ` (${nearest.label})` : ''} —{' '}
               <span className="font-mono">{nearest.distancePoints}</span> points{' '}
               {nearest.above ? 'above' : 'below'} {symbol} at{' '}
@@ -175,7 +176,7 @@ export const ApproachAlertCard: React.FC<ApproachAlertCardProps> = ({
                           {approach.label || 'Level'}
                         </span>
                         <span className="block font-mono text-[10px] text-zinc-500">
-                          level {approach.price} · {approach.distancePoints} pts{' '}
+                          level {formatLevelPrice(approach.price)} · {approach.distancePoints} pts{' '}
                           {approach.above ? 'above' : 'below'} price
                         </span>
                       </span>

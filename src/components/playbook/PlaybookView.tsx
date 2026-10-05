@@ -104,6 +104,11 @@ interface PlaybookViewProps {
     levelTouches: LevelTouch[];
     /** The marked levels, so the finder can report how many of them were tested. */
     markedLevels?: MarkedLevel[];
+    /**
+     * The instrument the journal works, so the finder reads that contract by default instead of
+     * averaging its counts with every other line on the record.
+     */
+    focusInstrumentId?: string;
     /** The day's per-instrument outlooks, read by the finder's entry-edge read. */
     levelOutlooks?: LevelOutlook[];
     /** The tracked level instruments, including any levels-only symbol like VIX. */

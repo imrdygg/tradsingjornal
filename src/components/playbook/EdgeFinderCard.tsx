@@ -17,6 +17,7 @@ import {
 import { summarizeMarkedLevels } from '../../lib/analytics/level-edge';
 import { summarizeLevelRecurrence } from '../../lib/analytics/level-recurrence';
 import {
+  summarizeInstrumentEdges,
   summarizeTimeframeEdges,
   timeframeBucketLabel,
   timeframeHighlights,
@@ -38,7 +39,7 @@ import {
 } from '../coach/coach-ui';
 import { COACH_WAIT_STEPS } from '../common/AiThinking';
 import { formatTimestamp } from '../../lib/storage/date-utils';
-import { instrumentSymbol } from '../../lib/trading/instruments';
+import { formatLevelPrice, instrumentSymbol } from '../../lib/trading/instruments';
 import { LESSON_KINDS, LESSON_KIND_LABEL } from '../../lib/playbook/lessons';
 
 /**
@@ -76,6 +77,16 @@ export interface EdgeFinderCardProps {
    * coverage block out, so a journal that only logs touches still reads as before.
    */
   markedLevels?: MarkedLevel[];
+  /**
+   * The instrument the journal works, taken from the day's primary instrument.
+   *
+   * When set, the card reads only this instrument's marked lines and touches by default, so its
+   * counts answer "does my edge work on the contract I actually trade" instead of averaging it
+   * with every other line on the record. The per-instrument comparison below and the "all
+   * instruments" toggle keep the rest visible — nothing is hidden, it just does not lead.
+   * Omitted leaves the card reading the whole record, exactly as before.
+   */
+  focusInstrumentId?: string;
   /**
    * The trader's per-instrument outlooks for the day.
    *
@@ -163,6 +174,7 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
   maxDrawdown,
   levelTouches,
   markedLevels,
+  focusInstrumentId,
   levelOutlooks,
   levelInstruments,
   coachPlans,
@@ -170,13 +182,35 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
   onSaveLesson,
 }) => {
   const labelInstruments = levelInstruments ?? instruments;
-  const coverage = useMemo(
-    () => summarizeMarkedLevels(markedLevels ?? [], levelTouches),
+  // Which instrument's record the deterministic numbers and the coach's read are about. Defaults
+  // to the journal's own instrument, so a trader who works one contract is not made to read
+  // their counts averaged across three; "all instruments" is always one click away.
+  const [scope, setScope] = useState<'focus' | 'all'>(() => (focusInstrumentId ? 'focus' : 'all'));
+  const focusFilter = scope === 'focus' && focusInstrumentId ? focusInstrumentId : null;
+  const scopedLevels = useMemo(() => {
+    const all = markedLevels ?? [];
+    return focusFilter ? all.filter((level) => level.instrumentId === focusFilter) : all;
+  }, [markedLevels, focusFilter]);
+  const scopedTouches = useMemo(
+    () =>
+      focusFilter
+        ? levelTouches.filter((touch) => touch.instrumentId === focusFilter)
+        : levelTouches,
+    [levelTouches, focusFilter]
+  );
+  // Every instrument's own rollup, always over the whole record so the comparison is not scoped
+  // away — it is the thing that shows what working one contract leaves on the table.
+  const instrumentComparison = useMemo(
+    () => summarizeInstrumentEdges(markedLevels ?? [], levelTouches),
     [markedLevels, levelTouches]
   );
+  const coverage = useMemo(
+    () => summarizeMarkedLevels(scopedLevels, scopedTouches),
+    [scopedLevels, scopedTouches]
+  );
   const timeframeBuckets = useMemo(
-    () => summarizeTimeframeEdges(markedLevels ?? [], levelTouches),
-    [markedLevels, levelTouches]
+    () => summarizeTimeframeEdges(scopedLevels, scopedTouches),
+    [scopedLevels, scopedTouches]
   );
   // The three headline findings, computed here rather than asked of the coach: they are
   // arithmetic over the trader's own counts, so they are shown before any button is pressed.
@@ -187,8 +221,8 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
   // over the trader's own timestamps — the thing the touch log is for now that a line can be
   // touched more than once.
   const recurrence = useMemo(
-    () => summarizeLevelRecurrence(levelTouches, timezone, labelInstruments),
-    [levelTouches, timezone, labelInstruments]
+    () => summarizeLevelRecurrence(scopedTouches, timezone, labelInstruments),
+    [scopedTouches, timezone, labelInstruments]
   );
   const recurrenceHasData =
     recurrence.repeatedLevels.length > 0 ||
@@ -207,10 +241,12 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
         todayTradeDate,
         timezone,
         maxDrawdown,
-        levelTouches,
+        // Scoped to the instrument the card is reading, so the coach's edge read is about the
+        // same record the counts above it are.
+        levelTouches: scopedTouches,
         // The marked lines and the day's outlooks travel with this digest too. The entry read
         // is built on them, and the edge read above was previously blind to them.
-        markedLevels,
+        markedLevels: scopedLevels,
         levelOutlooks,
         coachPlans,
       }),
@@ -223,8 +259,8 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
       todayTradeDate,
       timezone,
       maxDrawdown,
-      levelTouches,
-      markedLevels,
+      scopedTouches,
+      scopedLevels,
       levelOutlooks,
       coachPlans,
     ]
@@ -439,6 +475,115 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
       </div>
 
       {/*
+        Which instrument the rest of this card is about.
+
+        The journal's own contract leads by default so the counts are about the thing the trader
+        actually works, but "all instruments" is one click away and the comparison below always
+        shows the whole record — so this narrows the read rather than hiding what it leaves out.
+      */}
+      {focusInstrumentId && (
+        <div
+          id="playbook-edge-scope"
+          className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-zinc-800 bg-zinc-900/50 px-3 py-2"
+        >
+          <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
+            Reading{' '}
+            {focusFilter ? instrumentSymbol(labelInstruments, focusFilter) : 'every instrument'}
+          </span>
+          <div className="flex items-center gap-1" role="group" aria-label="Instrument scope">
+            <button
+              type="button"
+              id="edge-scope-focus"
+              aria-pressed={scope === 'focus'}
+              onClick={() => setScope('focus')}
+              className={`rounded-lg border px-2 py-1 text-[10px] font-semibold transition-colors ${
+                scope === 'focus'
+                  ? 'border-emerald-700 bg-emerald-900/40 text-emerald-200'
+                  : 'border-zinc-700 text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              Only {instrumentSymbol(labelInstruments, focusInstrumentId)}
+            </button>
+            <button
+              type="button"
+              id="edge-scope-all"
+              aria-pressed={scope === 'all'}
+              onClick={() => setScope('all')}
+              className={`rounded-lg border px-2 py-1 text-[10px] font-semibold transition-colors ${
+                scope === 'all'
+                  ? 'border-zinc-600 bg-zinc-800 text-zinc-100'
+                  : 'border-zinc-700 text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              All instruments
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/*
+        The whole record, one row per instrument.
+
+        This is the answer to the question the scope control raises: how much of the marked-level
+        record each contract actually carries, and whether the lines marked on it get reached and
+        then hold. Always counted over every instrument, so narrowing the card above cannot make
+        the others disappear from view.
+      */}
+      {instrumentComparison.length > 0 && (
+        <div
+          id="playbook-edge-instruments"
+          className="space-y-2 rounded-xl border border-zinc-800 bg-zinc-900/50 p-3"
+        >
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
+              By instrument
+            </span>
+            <span className="text-[10px] text-zinc-500">
+              where your marked lines actually get reached
+            </span>
+          </div>
+          <div className="space-y-1">
+            {instrumentComparison.map((bucket) => {
+              const symbol = instrumentSymbol(labelInstruments, bucket.instrumentId);
+              const isFocus = bucket.instrumentId === focusInstrumentId;
+              return (
+                <div
+                  key={bucket.key}
+                  data-instrument-bucket={bucket.key}
+                  className={`flex flex-wrap items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 ${
+                    isFocus
+                      ? 'border-emerald-900/60 bg-emerald-950/20'
+                      : 'border-zinc-800/80 bg-zinc-950/40'
+                  }`}
+                >
+                  <span className="flex items-center gap-2 truncate text-xs text-zinc-200">
+                    <span className="font-mono">{symbol}</span>
+                    {isFocus && (
+                      <span className="rounded border border-emerald-800 bg-emerald-950/60 px-1.5 py-0.5 text-[9px] font-mono uppercase text-emerald-300">
+                        focus
+                      </span>
+                    )}
+                  </span>
+                  <span className="shrink-0 font-mono text-[10px] text-zinc-500">
+                    {bucket.marked} marked · {bucket.tested} touched
+                    {bucket.stats.decided === 0
+                      ? ' · no decided touch yet'
+                      : bucket.stats.enoughData
+                      ? ` · held ${formatRate(bucket.stats.holdRate)} of ${bucket.stats.decided}`
+                      : ` · ${bucket.stats.decided} decided — too thin for a rate`}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          <p className="text-[10px] leading-relaxed text-zinc-500">
+            A hold rate only appears once an instrument has enough decided touches; below that
+            the counts are shown instead, because a handful of lines is a tally and not an edge.
+          </p>
+        </div>
+      )}
+
+      {/*
         How much of the marked-level record the touches actually cover.
 
         Shown before the touch count, because it is the thing the hold rate cannot say: a
@@ -613,7 +758,8 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
                   className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-800/80 bg-zinc-950/40 px-2.5 py-1.5"
                 >
                   <span className="truncate text-xs text-zinc-200">
-                    <span className="font-mono">{row.symbol}</span> {row.kind} {row.price}
+                    <span className="font-mono">{row.symbol}</span> {row.kind}{' '}
+                    {formatLevelPrice(row.price)}
                   </span>
                   <span className="shrink-0 font-mono text-[10px] text-zinc-500">
                     {row.days} day{row.days === 1 ? '' : 's'} · {row.touches} touch
@@ -854,7 +1000,7 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
                     {level.timeframe ?? '—'} · {level.kind}
                   </span>
                   <span className="font-mono text-xs font-semibold text-zinc-100">
-                    {level.price}
+                    {formatLevelPrice(level.price)}
                   </span>
                   <span
                     className={`rounded border px-1.5 py-0.5 font-mono text-[10px] uppercase font-bold ${
@@ -1144,8 +1290,14 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
 
       {edge.touches === 0 ? (
         <p className="text-xs text-zinc-500 italic">
-          No level touches logged yet. Mark today's levels, then tap Touched when price reaches
-          one — this will show which conditions hold.
+          {focusFilter
+            ? `No level touches logged for ${instrumentSymbol(
+                labelInstruments,
+                focusFilter
+              )} yet. Mark its levels, then tap Touched when price reaches one — this will show
+              which of its conditions hold. Switch to All instruments to read the others.`
+            : `No level touches logged yet. Mark today's levels, then tap Touched when price
+              reaches one — this will show which conditions hold.`}
         </p>
       ) : (
         <>

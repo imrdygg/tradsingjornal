@@ -314,7 +314,7 @@ test.describe('Marked levels — never touched and void', () => {
     await gotoPlaybook(page);
     await page.locator('#level-show-earlier').click();
     const moved = page.locator('[data-marked-level]').first();
-    await expect(moved.getByText('7791', { exact: true })).toBeVisible();
+    await expect(moved.getByText('7791.00', { exact: true })).toBeVisible();
     await expect(moved).toContainText('Sep 24');
   });
 
@@ -339,7 +339,7 @@ test.describe('Marked levels — never touched and void', () => {
     // ...and present on the 15m chart, with the touch that moved with it.
     await page.locator('#level-tf-15m').click();
     const moved = page.locator('[data-marked-level]').first();
-    await expect(moved.getByText('7760', { exact: true })).toBeVisible();
+    await expect(moved.getByText('7760.00', { exact: true })).toBeVisible();
     await expect(moved.locator('[data-level-touch]')).toHaveCount(1);
 
     await page.reload();
@@ -400,7 +400,7 @@ test.describe('Marked levels — never touched and void', () => {
     await page.locator('#level-show-earlier').click();
 
     const row = page.locator('[data-marked-level]').first();
-    await expect(row.getByText('7788', { exact: true })).toBeVisible();
+    await expect(row.getByText('7788.00', { exact: true })).toBeVisible();
     await expect(row).toHaveAttribute('data-level-resolution', 'open');
     // It is reachable rather than only counted: the pencil is there to correct it.
     await expect(row.locator('button[id^="level-edit-"]').first()).toBeVisible();
@@ -558,6 +558,104 @@ test.describe('Marked levels — never touched and void', () => {
 });
 
 /**
+ * How a marked line's price reads on screen.
+ *
+ * The price is stored as a number, so a crude line entered at 80.80 or 89.30 comes back as
+ * 80.8 and 89.3. Printing the number straight drops the trailing zero and reads as a
+ * different price; the list must show the two decimals the field is typed in, while the
+ * stored value — the number the sort tests read — is left alone.
+ */
+test.describe('Marked level prices', () => {
+  test('shows the trailing zero a stored number drops, without changing the stored value', async ({
+    page,
+  }) => {
+    await gotoPlaybook(page);
+    await page.locator('#level-prices-resistance').fill('7760.80');
+    await page.locator('#level-add-both').click();
+
+    const row = page.locator('[data-marked-level]').first();
+    await expect(row.getByText('7760.80', { exact: true })).toBeVisible();
+    // The bare number is gone from the screen, but it is still what is stored.
+    await expect(row.getByText('7760.8', { exact: true })).toHaveCount(0);
+    await expect(row.locator('[data-level-price]')).toHaveAttribute('data-level-price', '7760.8');
+  });
+});
+
+/**
+ * Carrying a price from one chart to another.
+ *
+ * The indicator draws the same line on more than one timeframe, so a price already marked on the
+ * 15m is offered while the 5m is open. Dragging it into a box, or tapping it, must add the level
+ * to the chart on screen — re-keying every shared line is the tedium this removes.
+ */
+test.describe('Carrying a level between timeframes', () => {
+  /** Marks one resistance line on the 15m chart and returns to the 5m. */
+  async function markFifteenThenOpenFive(page: Page) {
+    await page.locator('#level-tf-15m').click();
+    await page.locator('#level-prices-resistance').fill('7760');
+    await page.locator('#level-add-both').click();
+    await expect(page.locator('[data-marked-level]')).toHaveCount(1);
+    await page.locator('#level-tf-5m').click();
+  }
+
+  test('offers a price marked on another chart, and copies it on a tap', async ({ page }) => {
+    await gotoPlaybook(page);
+
+    // Nothing to carry while the 15m is the chart on screen — it is the only line there is.
+    await page.locator('#level-tf-15m').click();
+    await page.locator('#level-prices-resistance').fill('7760');
+    await page.locator('#level-add-both').click();
+    await expect(page.locator('#level-carryover')).toHaveCount(0);
+
+    // On the 5m the 15m line is offered, naming the chart it came from.
+    await page.locator('#level-tf-5m').click();
+    await expect(page.locator('#level-carryover')).toBeVisible();
+    const chip = page.locator('[data-carryover="resistance|7760"]');
+    await expect(chip).toBeVisible();
+    await expect(chip).toContainText('15m');
+    await expect(page.locator('[data-marked-level]')).toHaveCount(0);
+
+    // One tap adds it to the chart on screen.
+    await chip.click();
+    await expect(page.locator('[data-marked-level]')).toHaveCount(1);
+    await expect(
+      page.locator('[data-marked-level]').first().getByText('7760.00', { exact: true })
+    ).toBeVisible();
+    // The offer is gone: the price now sits on this chart too.
+    await expect(page.locator('#level-carryover')).toHaveCount(0);
+
+    // It is a real level on the 5m, not a lifted line — it survives a reload.
+    await page.reload();
+    await gotoPlaybook(page);
+    await expect(
+      page.locator('[data-marked-level]').first().getByText('7760.00', { exact: true })
+    ).toBeVisible();
+  });
+
+  test('takes the side of the box a carried price is dropped on', async ({ page }) => {
+    await gotoPlaybook(page);
+    await markFifteenThenOpenFive(page);
+
+    // The drag is driven through real HTML5 drag events: a synthetic mouse drag cannot carry
+    // the dataTransfer payload the drop reads, so the same three events the browser fires are
+    // dispatched in order instead. This exercises the component's own handlers end to end.
+    const chip = page.locator('[data-carryover="resistance|7760"]');
+    const target = page.locator('[data-carryover-drop="support"]');
+    const dataTransfer = await page.evaluateHandle(() => new DataTransfer());
+    await chip.dispatchEvent('dragstart', { dataTransfer });
+    await target.dispatchEvent('dragover', { dataTransfer });
+    await target.dispatchEvent('drop', { dataTransfer });
+
+    // The box it landed on decides the side, so the copied line reads as support here.
+    await expect(page.locator('[data-marked-level]')).toHaveCount(1);
+    await expect(page.getByText('Support (1)')).toBeVisible();
+    await expect(
+      page.locator('[data-marked-level]').first().getByText('7760.00', { exact: true })
+    ).toBeVisible();
+  });
+});
+
+/**
  * The weekday narrowing on the level-odds card.
  *
  * The market is closed on Saturday, so offering it in the picker could only ever return an
@@ -685,6 +783,91 @@ test.describe('Level charts', () => {
     await gotoPlaybook(page);
     await expect(page.locator('#playbook-level-charts')).toBeVisible();
     await expect(page.locator('#level-chart-coverage svg[role="application"]')).toBeVisible();
+  });
+});
+
+/**
+ * The edge finder reading one instrument at a time.
+ *
+ * A trader who works one contract should not have their counts averaged across every line on
+ * the record, so the finder leads with the day's own instrument — but the comparison and the
+ * "all instruments" toggle must keep the rest visible, because that is how the choice is made.
+ */
+test.describe('Edge finder instrument focus', () => {
+  test('reads the journal’s instrument by default and keeps the others a click away', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      const level = (id: string, price: number, instrumentId: string) => ({
+        id,
+        userId: 'solo-trader-01',
+        tradingDayId: 'day-2026-09-28',
+        tradeDate: '2026-09-28',
+        instrumentId,
+        kind: 'resistance',
+        price,
+        zonePoints: 2,
+        session: 'Overnight',
+        timeframe: '5m',
+        createdAt: '2026-09-28T02:00:00.000Z',
+        updatedAt: '2026-09-28T02:00:00.000Z',
+      });
+      const touch = (id: string, levelId: string, price: number, instrumentId: string) => ({
+        id,
+        userId: 'solo-trader-01',
+        tradingDayId: 'day-2026-09-28',
+        tradeDate: '2026-09-28',
+        instrumentId,
+        kind: 'resistance',
+        price,
+        zonePoints: 2,
+        touchedAt: '2026-09-28T02:00:00.000Z',
+        session: 'Overnight',
+        outcome: 'never-returned',
+        checks: 0,
+        levelId,
+        createdAt: '2026-09-28T02:00:00.000Z',
+        updatedAt: '2026-09-28T02:00:00.000Z',
+      });
+
+      localStorage.setItem(
+        'ptj_marked_levels_v1',
+        JSON.stringify([
+          level('m1', 7760, 'mes'),
+          level('m2', 7775, 'mes'),
+          level('q1', 20500, 'mnq'),
+        ])
+      );
+      localStorage.setItem(
+        'ptj_level_touches_v1',
+        JSON.stringify([
+          touch('t1', 'm1', 7760, 'mes'),
+          touch('t2', 'q1', 20500, 'mnq'),
+        ])
+      );
+    });
+    await page.reload();
+    await gotoPlaybook(page);
+
+    // The card opens on the journal's own contract, scoped to MES alone.
+    await expect(page.locator('#playbook-edge-scope')).toBeVisible();
+    await expect(page.locator('#edge-scope-focus')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('[data-timeframe-bucket="mes|5m|resistance"]')).toHaveCount(1);
+    await expect(page.locator('[data-timeframe-bucket="mnq|5m|resistance"]')).toHaveCount(0);
+
+    // The comparison still shows the whole record, MES badged as the focus.
+    await expect(page.locator('#playbook-edge-instruments')).toBeVisible();
+    await expect(
+      page.locator('#playbook-edge-instruments [data-instrument-bucket="mes"]')
+    ).toContainText('focus');
+    await expect(
+      page.locator('#playbook-edge-instruments [data-instrument-bucket="mnq"]')
+    ).toBeVisible();
+
+    // Widening to every instrument brings the other contract's lines back into the read.
+    await page.locator('#edge-scope-all').click();
+    await expect(page.locator('#edge-scope-all')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('[data-timeframe-bucket="mnq|5m|resistance"]')).toHaveCount(1);
   });
 });
 

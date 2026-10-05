@@ -2104,6 +2104,10 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               // the trader's own lines were ever tested, not only how the tested ones held,
               // and the level instruments label VIX and the rest in that breakdown.
               markedLevels,
+              // The contract the day is worked on, so the finder's counts lead with the
+              // instrument the trader actually trades rather than every line on the record.
+              focusInstrumentId: findInstrument(instruments, todayTradingDay.primaryInstrument)
+                .id,
               levelOutlooks,
               levelInstruments,
               coachPlans,

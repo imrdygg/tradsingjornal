@@ -157,6 +157,10 @@ interface PlaybookViewProps {
     onSaveTouch: (touch: LevelTouch) => void;
     /** Removes a touch logged against a level by mistake. */
     onDeleteTouch: (touchId: string) => void;
+    /** Takes back the last marked-level or touch change. */
+    onUndo: () => void;
+    /** What the undo would reverse, or null when there is nothing to take back. */
+    undoLabel: string | null;
   };
   /** The account a lesson written from this tab belongs to. */
   userId?: string;

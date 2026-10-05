@@ -582,6 +582,95 @@ test.describe('Marked level prices', () => {
 });
 
 /**
+ * Taking back the last marked-level action.
+ *
+ * Deleting a line is one tap and easy to mean nothing by, and re-keying it — with the touches it
+ * carries — is exactly what the trader should not have to do to recover. These drive the button
+ * through the real card, and check the record itself across a reload, so an undo that only
+ * repainted the screen would fail.
+ */
+test.describe('Undoing the last level action', () => {
+  async function markResistance(page: Page, price: string) {
+    await page.locator('#level-prices-resistance').fill(price);
+    await page.locator('#level-add-both').click();
+    await expect(page.locator('[data-marked-level]')).toHaveCount(1);
+  }
+
+  test('nothing to take back until something has changed', async ({ page }) => {
+    await gotoPlaybook(page);
+    await expect(page.locator('#level-undo')).toHaveCount(0);
+  });
+
+  test('puts a line deleted by mistake back, with its price, and it survives a reload', async ({
+    page,
+  }) => {
+    await gotoPlaybook(page);
+    await markResistance(page, '7760');
+
+    // Now there is something to take back, and it names what.
+    await expect(page.locator('#level-undo')).toBeVisible();
+    await expect(page.locator('#level-undo')).toHaveAttribute('title', 'Undo the line you just logged');
+
+    // One tap on the trash removes it — the accident this is here for.
+    await page
+      .locator('[data-marked-level]')
+      .first()
+      .locator('button[title="Remove this level from the record"]')
+      .click();
+    await expect(page.locator('[data-marked-level]')).toHaveCount(0);
+    await expect(page.locator('#level-undo')).toHaveAttribute('title', 'Undo the line you removed');
+
+    // The undo brings the line back exactly as it was, and then has nothing left to take back.
+    await page.locator('#level-undo').click();
+    await expect(page.locator('[data-marked-level]')).toHaveCount(1);
+    await expect(
+      page.locator('[data-marked-level]').first().getByText('7760.00', { exact: true })
+    ).toBeVisible();
+    await expect(page.locator('#level-undo')).toHaveCount(0);
+
+    // Written to the record, not just to the screen.
+    await page.reload();
+    await gotoPlaybook(page);
+    await expect(page.locator('[data-marked-level]')).toHaveCount(1);
+  });
+
+  test('takes a line that was just marked back off the chart', async ({ page }) => {
+    await gotoPlaybook(page);
+    await markResistance(page, '7760');
+
+    await page.locator('#level-undo').click();
+    await expect(page.locator('[data-marked-level]')).toHaveCount(0);
+    await expect(page.locator('#level-undo')).toHaveCount(0);
+
+    await page.reload();
+    await gotoPlaybook(page);
+    await expect(page.locator('[data-marked-level]')).toHaveCount(0);
+  });
+
+  test('brings back a touch removed by mistake, leaving the line in place', async ({ page }) => {
+    await gotoPlaybook(page);
+    await markResistance(page, '7760');
+
+    const row = page.locator('[data-marked-level]').first();
+    await row.locator('button[id^="level-touch-first-"]').click();
+    await row.getByRole('button', { name: 'Log touch' }).click();
+    await expect(row.locator('[data-level-touch]')).toHaveCount(1);
+
+    await row.locator('button[id^="level-touch-remove-"]').click();
+    await expect(row.locator('[data-level-touch]')).toHaveCount(0);
+    await expect(page.locator('#level-undo')).toHaveAttribute('title', 'Undo the touch you removed');
+
+    await page.locator('#level-undo').click();
+    await expect(page.locator('[data-marked-level]').first().locator('[data-level-touch]')).toHaveCount(1);
+
+    // The touch comes back on the record too.
+    await page.reload();
+    await gotoPlaybook(page);
+    await expect(page.locator('[data-marked-level]').first().locator('[data-level-touch]')).toHaveCount(1);
+  });
+});
+
+/**
  * Carrying a price from one chart to another.
  *
  * The indicator draws the same line on more than one timeframe, so a price already marked on the
@@ -596,6 +685,71 @@ test.describe('Carrying a level between timeframes', () => {
     await page.locator('#level-add-both').click();
     await expect(page.locator('[data-marked-level]')).toHaveCount(1);
     await page.locator('#level-tf-5m').click();
+  }
+
+  /**
+   * Drags a carried chip onto a drop box with the given kind of pointer.
+   *
+   * The component reads presses with Pointer Events, so a finger and a mouse take the very same
+   * path: `pointerdown` on the chip, then `pointermove` and `pointerup` anywhere in the window.
+   * The events are dispatched by hand with explicit coordinates because that is the one thing a
+   * synthetic gesture can control here, and because the drop is hit-tested against the release
+   * point — so those coordinates have to land inside the box for the drop to count.
+   */
+  async function dragCarryChip(
+    page: Page,
+    chipSelector: string,
+    dropSelector: string,
+    pointerType: 'mouse' | 'touch'
+  ) {
+    // The release is hit-tested with elementFromPoint, which only sees what is on screen, so the
+    // box has to be in the viewport before its coordinates are measured — especially on a phone.
+    await page.locator(dropSelector).scrollIntoViewIfNeeded();
+    const chipBox = await page.locator(chipSelector).boundingBox();
+    const dropBox = await page.locator(dropSelector).boundingBox();
+    if (!chipBox || !dropBox) throw new Error('carry chip or drop box is not measurable');
+    const start = { x: chipBox.x + chipBox.width / 2, y: chipBox.y + chipBox.height / 2 };
+    const end = { x: dropBox.x + dropBox.width / 2, y: dropBox.y + dropBox.height / 2 };
+
+    await page.evaluate(
+      ({ chipSelector, x, y, pointerType }) => {
+        const chip = document.querySelector(chipSelector);
+        if (!chip) throw new Error(`carry chip ${chipSelector} not found`);
+        chip.dispatchEvent(
+          new PointerEvent('pointerdown', {
+            bubbles: true,
+            cancelable: true,
+            pointerType,
+            pointerId: 1,
+            isPrimary: true,
+            button: 0,
+            buttons: 1,
+            clientX: x,
+            clientY: y,
+          })
+        );
+      },
+      { chipSelector, x: start.x, y: start.y, pointerType }
+    );
+
+    // One move past the drag threshold, then the release over the box, on the window: the same
+    // listener the component attaches at press time. The release point is what decides the side.
+    await page.evaluate(
+      ({ x, y, pointerType }) => {
+        const opts = {
+          bubbles: true,
+          cancelable: true,
+          pointerType,
+          pointerId: 1,
+          isPrimary: true,
+          clientX: x,
+          clientY: y,
+        };
+        window.dispatchEvent(new PointerEvent('pointermove', opts));
+        window.dispatchEvent(new PointerEvent('pointerup', opts));
+      },
+      { x: end.x, y: end.y, pointerType }
+    );
   }
 
   test('offers a price marked on another chart, and copies it on a tap', async ({ page }) => {
@@ -632,27 +786,30 @@ test.describe('Carrying a level between timeframes', () => {
     ).toBeVisible();
   });
 
-  test('takes the side of the box a carried price is dropped on', async ({ page }) => {
-    await gotoPlaybook(page);
-    await markFifteenThenOpenFive(page);
+  // A finger and a mouse both drive the same Pointer Event path, so both are exercised here:
+  // the touch case is what the phone sends, the mouse case is the desktop desk check.
+  for (const pointerType of ['touch', 'mouse'] as const) {
+    test(`takes the side of the box a carried price is dropped on with a ${pointerType}`, async ({
+      page,
+    }) => {
+      await gotoPlaybook(page);
+      await markFifteenThenOpenFive(page);
 
-    // The drag is driven through real HTML5 drag events: a synthetic mouse drag cannot carry
-    // the dataTransfer payload the drop reads, so the same three events the browser fires are
-    // dispatched in order instead. This exercises the component's own handlers end to end.
-    const chip = page.locator('[data-carryover="resistance|7760"]');
-    const target = page.locator('[data-carryover-drop="support"]');
-    const dataTransfer = await page.evaluateHandle(() => new DataTransfer());
-    await chip.dispatchEvent('dragstart', { dataTransfer });
-    await target.dispatchEvent('dragover', { dataTransfer });
-    await target.dispatchEvent('drop', { dataTransfer });
+      await dragCarryChip(
+        page,
+        '[data-carryover="resistance|7760"]',
+        '[data-carryover-drop="support"]',
+        pointerType
+      );
 
-    // The box it landed on decides the side, so the copied line reads as support here.
-    await expect(page.locator('[data-marked-level]')).toHaveCount(1);
-    await expect(page.getByText('Support (1)')).toBeVisible();
-    await expect(
-      page.locator('[data-marked-level]').first().getByText('7760.00', { exact: true })
-    ).toBeVisible();
-  });
+      // The box it landed on decides the side, so the copied line reads as support here.
+      await expect(page.locator('[data-marked-level]')).toHaveCount(1);
+      await expect(page.getByText('Support (1)')).toBeVisible();
+      await expect(
+        page.locator('[data-marked-level]').first().getByText('7760.00', { exact: true })
+      ).toBeVisible();
+    });
+  }
 });
 
 /**

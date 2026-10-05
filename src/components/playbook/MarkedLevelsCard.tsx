@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   ArrowDown,
   ArrowUp,
@@ -12,6 +12,7 @@ import {
   ListPlus,
   Pencil,
   Trash2,
+  Undo2,
   X,
 } from 'lucide-react';
 import {
@@ -45,6 +46,7 @@ import {
   findCarryoverLevels,
   previousLevelDate,
   summarizeTimeframeEdges,
+  type CarryoverLevel,
 } from '../../lib/analytics/level-timeframes';
 import {
   groupTaggedLevels,
@@ -111,6 +113,15 @@ export interface MarkedLevelsCardProps {
    */
   onDeleteTouch: (touchId: string) => void;
   /**
+   * Takes back the last marked-level or touch change, for a line or touch struck by mistake.
+   *
+   * The reverse is worked out and owned by the app, because that is where the record is written;
+   * this card only shows the button and calls it. Optional so the card still works on its own.
+   */
+  onUndo?: () => void;
+  /** What the undo would reverse, or null when there is nothing to take back. */
+  undoLabel?: string | null;
+  /**
    * The instrument and timeframe currently open, when a parent owns them.
    *
    * Left undefined the card keeps its own selection, which is how it works on its own. When a
@@ -137,6 +148,14 @@ const EMPTY_DRAFT = { support: '', resistance: '' };
  * card never rewrites a record to invent one.
  */
 const DEFAULT_TIMEFRAME: LevelTimeframe = '5m';
+
+/**
+ * How far a press must travel before it is read as a drag rather than a tap.
+ *
+ * A finger is never perfectly still, so without a threshold every tap would look like a tiny
+ * drag and the tap-to-copy would never fire.
+ */
+const DRAG_THRESHOLD = 8;
 
 /** A `datetime-local` value for right now, in the browser's own zone. */
 function localDateTimeInput(): string {
@@ -198,6 +217,8 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
   onDeleteLevel,
   onSaveTouch,
   onDeleteTouch,
+  onUndo,
+  undoLabel,
   instrumentId: controlledInstrumentId,
   onInstrumentChange,
   timeframe: controlledTimeframe,
@@ -287,6 +308,17 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
   const [sortMode, setSortMode] = useState<'price' | 'newest'>('price');
   /** The side box a carried price is currently hovering over, for the drop highlight. */
   const [dropSide, setDropSide] = useState<LevelKind | null>(null);
+  /** The chip being dragged, once the press has travelled far enough to be a drag. */
+  const [dragging, setDragging] = useState<CarryoverLevel | null>(null);
+  /** Where the dragged chip is, so the ghost can follow the pointer. */
+  const [dragPoint, setDragPoint] = useState<{ x: number; y: number } | null>(null);
+  /**
+   * Whether the current press became a drag.
+   *
+   * Kept in a ref, not state: it is read in the click that follows the release to decide whether
+   * the gesture was a copy-tap, and it must be current at that instant rather than a render later.
+   */
+  const draggedRef = useRef(false);
 
   const currentInstrument = instruments.find((inst) => inst.id === instrumentId);
   // The level width is the instrument's own default; it decides how a touch is graded later.
@@ -764,20 +796,73 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
   };
 
   /**
-   * Accepts a carried price dropped on a side box.
+   * Which side box is under a point, if any.
    *
-   * The box the chip lands on decides the side, so a line can be flipped on the way across by
-   * dropping it on the other box — but only a payload this card put on the clipboard is honoured,
-   * so a drop from somewhere else does nothing.
+   * Hit-tested against the coordinates rather than tracked through drag events, because a finger
+   * and a mouse have to behave the same way here and the pointer position is the one thing both
+   * give us. The ghost that follows the pointer is click-through, so it never shadows the box it
+   * is hovering over.
    */
-  const handleCarryDrop = (event: React.DragEvent, side: LevelKind) => {
-    event.preventDefault();
-    setDropSide(null);
-    const [kind, priceText] = event.dataTransfer.getData('text/plain').split('|');
-    if (kind !== 'support' && kind !== 'resistance') return;
-    const price = Number(priceText);
-    if (!Number.isFinite(price) || price <= 0) return;
-    addCarriedLevel(side, price);
+  const sideAtPoint = (x: number, y: number): LevelKind | null => {
+    const element = document.elementFromPoint(x, y);
+    const side =
+      element instanceof Element
+        ? element.closest('[data-carryover-drop]')?.getAttribute('data-carryover-drop')
+        : null;
+    return side === 'support' || side === 'resistance' ? side : null;
+  };
+
+  /**
+   * Drags a carried price with the pointer, which is what makes it work under a finger.
+   *
+   * The HTML5 drag-and-drop this used first never fires for touch, so on a phone a chip could be
+   * tapped but not dragged. Pointer events are the same three events for mouse, finger and pen,
+   * and the move and release are listened for on the window so the gesture keeps being tracked
+   * once the finger travels off the chip and over a box. They are attached here, at the instant
+   * of the press, rather than from an effect a render later — a quick flick would otherwise land
+   * its release before the effect ran and the drop would be silently lost. A press that never
+   * travels far enough to be a drag is left alone, so tap-to-copy still runs from the click that
+   * follows it.
+   */
+  const beginCarryDrag = (carry: CarryoverLevel, event: React.PointerEvent<HTMLButtonElement>) => {
+    // Only the primary button starts a drag; a right-click is a context menu.
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    const startX = event.clientX;
+    const startY = event.clientY;
+
+    function detach() {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', release);
+      window.removeEventListener('pointercancel', release);
+    }
+    function move(moveEvent: PointerEvent) {
+      if (
+        !draggedRef.current &&
+        Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < DRAG_THRESHOLD
+      ) {
+        return;
+      }
+      draggedRef.current = true;
+      setDragging(carry);
+      setDragPoint({ x: moveEvent.clientX, y: moveEvent.clientY });
+      setDropSide(sideAtPoint(moveEvent.clientX, moveEvent.clientY));
+    }
+    function release(releaseEvent: PointerEvent) {
+      if (draggedRef.current) {
+        // Let go over a box: that box sets the side. Anywhere else: nothing happens.
+        const side = sideAtPoint(releaseEvent.clientX, releaseEvent.clientY);
+        if (side) addCarriedLevel(side, carry.price);
+      }
+      detach();
+      setDragging(null);
+      setDragPoint(null);
+      setDropSide(null);
+    }
+
+    draggedRef.current = false;
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', release);
+    window.addEventListener('pointercancel', release);
   };
 
   /** Writes one touch from a marked level, at the moment given. Shared by both paths below. */
@@ -1331,7 +1416,7 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
         <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-indigo-500/20 text-indigo-300">
           <ListPlus className="h-3.5 w-3.5" />
         </div>
-        <div>
+        <div className="min-w-0 flex-1">
           <h2 className="text-sm font-bold text-zinc-100 tracking-tight">
             Today's levels by timeframe
           </h2>
@@ -1342,6 +1427,26 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
             happened to it, by tapping Mark touched or Never touched.
           </p>
         </div>
+        {/*
+          The way back from a mistake. It appears only once there is something to take back, and
+          it names what it will reverse, so a deleted line is one tap from returning rather than
+          a re-key — with its touches still attached, because the record comes back with its own id.
+        */}
+        {onUndo && undoLabel && (
+          <div className="flex shrink-0 items-center gap-1.5">
+            <span className="hidden text-[10px] text-zinc-500 sm:inline">{undoLabel}</span>
+            <button
+              type="button"
+              id="level-undo"
+              onClick={onUndo}
+              title={`Undo ${undoLabel}`}
+              className="flex items-center gap-1.5 rounded-lg border border-indigo-900/60 bg-indigo-950/40 px-2 py-1 text-[11px] font-medium text-indigo-200 transition-colors hover:border-indigo-700 hover:bg-indigo-950/70"
+            >
+              <Undo2 className="h-3.5 w-3.5" />
+              Undo
+            </button>
+          </div>
+        )}
       </div>
 
       <form
@@ -1454,19 +1559,21 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
                 <button
                   key={`${level.kind}|${level.price}`}
                   type="button"
-                  draggable
                   data-carryover={`${level.kind}|${level.price}`}
-                  onClick={() => addCarriedLevel(level.kind, level.price, level.timeframes)}
-                  onDragStart={(event) => {
-                    event.dataTransfer.setData('text/plain', `${level.kind}|${level.price}`);
-                    event.dataTransfer.effectAllowed = 'copy';
+                  onPointerDown={(event) => beginCarryDrag(level, event)}
+                  onClick={() => {
+                    // The click that follows a drag is not a copy — the drop already did that.
+                    if (draggedRef.current) return;
+                    addCarriedLevel(level.kind, level.price, level.timeframes);
                   }}
                   title={
                     `${level.kind} ${formatLevelPrice(level.price)} is marked on ` +
                     `${level.timeframes.map((frame) => TIMEFRAME_LABEL[frame]).join(', ')} — ` +
                     `drag it into a box below, or tap to copy it onto ${TIMEFRAME_LABEL[timeframe]}`
                   }
-                  className="flex cursor-grab items-center gap-1.5 rounded-lg border border-indigo-900/60 bg-indigo-950/40 px-2 py-1 text-[11px] text-zinc-200 transition-colors hover:border-indigo-700 hover:bg-indigo-950/60 active:cursor-grabbing"
+                  className={`flex touch-none select-none items-center gap-1.5 rounded-lg border border-indigo-900/60 bg-indigo-950/40 px-2 py-1 text-[11px] text-zinc-200 transition-colors hover:border-indigo-700 hover:bg-indigo-950/60 ${
+                    dragging === level ? 'opacity-50' : 'active:cursor-grabbing'
+                  }`}
                 >
                   <span
                     className={`rounded border px-1 font-mono text-[9px] font-bold uppercase ${
@@ -1488,6 +1595,20 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
               These prices are already marked for {symbol} on another chart today. Copying one
               onto {TIMEFRAME_LABEL[timeframe]} adds it here and leaves the original line alone.
             </p>
+          </div>
+        )}
+
+        {/*
+          The chip under the finger. Fixed to the pointer rather than nested in the strip, and
+          click-through so the box it is hovering over is still the thing found beneath it.
+        */}
+        {dragging && dragPoint && (
+          <div
+            data-carryover-ghost
+            style={{ left: dragPoint.x, top: dragPoint.y }}
+            className="pointer-events-none fixed z-50 -translate-x-1/2 -translate-y-1/2 rounded-lg border border-indigo-600 bg-indigo-950/90 px-2 py-1 font-mono text-[11px] text-zinc-100 shadow-lg"
+          >
+            {dragging.kind === 'support' ? 'S' : 'R'} {formatLevelPrice(dragging.price)}
           </div>
         )}
 
@@ -1516,17 +1637,7 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
             <div
               key={side}
               data-carryover-drop={side}
-              onDragOver={(event) => {
-                // Accept the drop so it lands here rather than on the page; what the payload
-                // actually is is checked on drop, where a foreign drag is simply ignored.
-                event.preventDefault();
-                event.dataTransfer.dropEffect = 'copy';
-                setDropSide(side);
-              }}
-              onDragLeave={() =>
-                setDropSide((current) => (current === side ? null : current))
-              }
-              onDrop={(event) => handleCarryDrop(event, side)}
+              data-carryover-drop-active={dropSide === side ? 'true' : 'false'}
               className={`space-y-1.5 rounded-xl border p-2.5 transition-colors ${
                 dropSide === side
                   ? 'border-indigo-600 bg-indigo-950/40'

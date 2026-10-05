@@ -123,6 +123,7 @@ import { buildPositionGroups, findPositionGroup } from './lib/trading/position-g
 import { findAssumedRiskTrades, RiskFixItem } from './lib/trading/risk-fixup';
 import { instrumentSymbol } from './lib/trading/instruments';
 import { riskTierAmounts, tierCapStatuses } from './lib/trading/risk-tiers';
+import { applyUndo, describeUndo, type UndoWrite } from './lib/trading/level-undo';
 import { acknowledgementFor, isLessonAcknowledged } from './lib/storage/lesson-ack';
 import { tradingDateOf } from './lib/storage/date-utils';
 import {
@@ -228,6 +229,16 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   const [markedLevels, setMarkedLevels] = useState<MarkedLevel[]>(() =>
     storage.getMarkedLevels()
   );
+  /**
+   * The most recent change to the marked-level record, and how to take it back.
+   *
+   * A line is easy to delete by mistake and re-keying it — with its touches still on the
+   * record — is the tedium this removes. Only the last change is kept, which is what a quick
+   * undo after an accident needs; the reverse is worked out from the list either side of that
+   * one write (see level-undo.ts) rather than by snapshotting the whole journal, so the plan is
+   * exact and memory-cheap. Kept at the app level because that is where the record is written.
+   */
+  const [levelUndo, setLevelUndo] = useState<{ label: string; run: () => void } | null>(null);
   // What the trader expects each instrument to do today, written beside the levels. Held with
   // the journal so a written lean is saved and carried between devices by the same write.
   const [levelOutlooks, setLevelOutlooks] = useState<LevelOutlook[]>(() =>
@@ -1088,14 +1099,60 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
    * "never came back" a week later is the same call that created it, and the touch keeps its
    * place in the list instead of jumping to the front as if it were fresh.
    */
-  const handleSaveLevelTouch = (touch: LevelTouch) => {
-    storage.saveLevelTouch(touch);
+  /**
+   * Reverses one plan against the marked-level record and re-reads the state it lands in.
+   *
+   * The writes go through storage rather than straight into React state on purpose: storage is
+   * the record, so an undo that only moved the screen would be gone at the next reload.
+   */
+  const undoMarkedLevels = (writes: UndoWrite<MarkedLevel>[]) => {
+    applyUndo(writes, {
+      restore: (level) => storage.saveMarkedLevel(level),
+      remove: (id) => storage.deleteMarkedLevel(id),
+    });
+    setMarkedLevels(storage.getMarkedLevels());
+  };
+
+  const undoLevelTouches = (writes: UndoWrite<LevelTouch>[]) => {
+    applyUndo(writes, {
+      restore: (touch) => storage.saveLevelTouch(touch),
+      remove: (id) => storage.deleteLevelTouch(id),
+    });
     setLevelTouches(storage.getLevelTouches());
   };
 
+  /** Arms the undo button with the reverse of one marked-level write, when it changed anything. */
+  const armLevelUndo = (before: MarkedLevel[], after: MarkedLevel[]) => {
+    const { writes, label } = describeUndo(before, after, 'line');
+    setLevelUndo(writes.length ? { label, run: () => undoMarkedLevels(writes) } : null);
+  };
+
+  /** Arms the undo button with the reverse of one touch write, when it changed anything. */
+  const armTouchUndo = (before: LevelTouch[], after: LevelTouch[]) => {
+    const { writes, label } = describeUndo(before, after, 'touch');
+    setLevelUndo(writes.length ? { label, run: () => undoLevelTouches(writes) } : null);
+  };
+
+  /** Takes back the last marked-level or touch change, then clears the button. */
+  const handleUndoLevelAction = () => {
+    levelUndo?.run();
+    setLevelUndo(null);
+  };
+
+  const handleSaveLevelTouch = (touch: LevelTouch) => {
+    const before = storage.getLevelTouches();
+    storage.saveLevelTouch(touch);
+    const after = storage.getLevelTouches();
+    setLevelTouches(after);
+    armTouchUndo(before, after);
+  };
+
   const handleDeleteLevelTouch = (touchId: string) => {
+    const before = storage.getLevelTouches();
     storage.deleteLevelTouch(touchId);
-    setLevelTouches(storage.getLevelTouches());
+    const after = storage.getLevelTouches();
+    setLevelTouches(after);
+    armTouchUndo(before, after);
   };
 
   /**
@@ -1106,7 +1163,10 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
    * read back rather than appended here, so the card and the record cannot disagree.
    */
   const handleSaveMarkedLevels = (batch: MarkedLevel[]) => {
-    setMarkedLevels(storage.saveMarkedLevels(batch));
+    const before = storage.getMarkedLevels();
+    const after = storage.saveMarkedLevels(batch);
+    setMarkedLevels(after);
+    armLevelUndo(before, after);
   };
 
   /**
@@ -1116,7 +1176,10 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
    * by id, so this is the same write path a corrected price would take.
    */
   const handleUpdateMarkedLevel = (level: MarkedLevel) => {
-    setMarkedLevels(storage.saveMarkedLevel(level));
+    const before = storage.getMarkedLevels();
+    const after = storage.saveMarkedLevel(level);
+    setMarkedLevels(after);
+    armLevelUndo(before, after);
   };
 
   /**
@@ -1132,7 +1195,10 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   };
 
   const handleDeleteMarkedLevel = (levelId: string) => {
-    setMarkedLevels(storage.deleteMarkedLevel(levelId));
+    const before = storage.getMarkedLevels();
+    const after = storage.deleteMarkedLevel(levelId);
+    setMarkedLevels(after);
+    armLevelUndo(before, after);
   };
 
   /** Writes or edits today's outlook for one instrument. */
@@ -1463,6 +1529,9 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
 
     setTrades([]);
     setReviews([]);
+    // An armed undo points at records the reset just deleted; taking it back would resurrect
+    // them, so the button is cleared rather than left holding a plan against an empty journal.
+    setLevelUndo(null);
     // The reset clears these two in storage as well, so the screen has to follow: a list
     // still on screen after "start fresh" would look like it had survived the reset.
     setLevelTouches([]);
@@ -2141,6 +2210,8 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               onDeleteLevel: handleDeleteMarkedLevel,
               onSaveTouch: handleSaveLevelTouch,
               onDeleteTouch: handleDeleteLevelTouch,
+              onUndo: handleUndoLevelAction,
+              undoLabel: levelUndo?.label ?? null,
             }}
             userId={userId}
             lessons={lessons}

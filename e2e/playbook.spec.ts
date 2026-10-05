@@ -492,7 +492,7 @@ test.describe('Level odds — weekday narrowing', () => {
  * per-session coverage. One marked line and one decided touch is enough for every view to draw.
  */
 test.describe('Level charts', () => {
-  test('draws each of the four views from the marked lines and touches', async ({ page }) => {
+  test('draws each view from the marked lines and touches', async ({ page }) => {
     // A marked-line record with decided touches, so every view has data to draw. Seeded
     // rather than tapped in, because the outcome of a touch is not set from the card.
     await page.addInitScript(() => {
@@ -500,13 +500,14 @@ test.describe('Level charts', () => {
         id: string,
         price: number,
         tradeDate: string,
-        resolution?: 'never-touched' | 'void'
+        resolution?: 'never-touched' | 'void',
+        instrumentId = 'mes'
       ) => ({
         id,
         userId: 'solo-trader-01',
         tradingDayId: `day-${tradeDate}`,
         tradeDate,
-        instrumentId: 'mes',
+        instrumentId,
         kind: 'resistance',
         price,
         zonePoints: 2,
@@ -516,12 +517,19 @@ test.describe('Level charts', () => {
         createdAt: `${tradeDate}T02:00:00.000Z`,
         updatedAt: `${tradeDate}T02:00:00.000Z`,
       });
-      const touch = (id: string, levelId: string, tradeDate: string, outcome: string, price: number) => ({
+      const touch = (
+        id: string,
+        levelId: string,
+        tradeDate: string,
+        outcome: string,
+        price: number,
+        instrumentId = 'mes'
+      ) => ({
         id,
         userId: 'solo-trader-01',
         tradingDayId: `day-${tradeDate}`,
         tradeDate,
-        instrumentId: 'mes',
+        instrumentId,
         kind: 'resistance',
         price,
         zonePoints: 2,
@@ -545,6 +553,10 @@ test.describe('Level charts', () => {
           level('l4', 7805, '2026-09-30'),
           level('l5', 7820, '2026-10-01'),
           level('l6', 7835, '2026-10-02'),
+          // A second contract, so the compare view has two sides. Kept under the fixup floors
+          // so it does not displace the MES finding asserted below.
+          level('n1', 20500, '2026-09-28', undefined, 'mnq'),
+          level('n2', 20520, '2026-09-29', undefined, 'mnq'),
         ])
       );
       localStorage.setItem(
@@ -552,6 +564,7 @@ test.describe('Level charts', () => {
         JSON.stringify([
           touch('t1', 'l1', '2026-09-28', 'never-returned', 7760),
           touch('t2', 'l3', '2026-09-29', 'returned', 7790),
+          touch('t3', 'n1', '2026-09-28', 'returned', 20500, 'mnq'),
         ])
       );
     });
@@ -573,6 +586,12 @@ test.describe('Level charts', () => {
 
     await page.locator('#level-chart-tab-sessions').click();
     await expect(page.locator('#level-chart-sessions svg[role="application"]')).toBeVisible();
+
+    // Two contracts side by side, with the second selector defaulting to the other contract.
+    await page.locator('#level-chart-tab-compare').click();
+    await expect(page.locator('#level-chart-compare svg[role="application"]')).toBeVisible();
+    await expect(page.locator('#level-chart-compare')).toContainText('MNQ');
+    await expect(page.locator('#level-chart-compare')).toContainText('MES');
 
     // And it survives a reload, because it is drawn from the journal, not from React state.
     await page.reload();

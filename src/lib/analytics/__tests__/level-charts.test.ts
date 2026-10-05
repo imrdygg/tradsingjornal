@@ -4,6 +4,7 @@ import {
   buildEdgeCurve,
   buildLevelFixup,
   buildSessionCoverage,
+  buildSymbolComparison,
   buildSymbolCoverage,
   buildTouchTimeline,
 } from '../level-charts';
@@ -80,6 +81,66 @@ describe('buildSymbolCoverage', () => {
       INSTRUMENTS
     );
     expect(rows[0].marked).toBe(1);
+  });
+});
+
+describe('buildSymbolComparison', () => {
+  it('reads two contracts side by side on one scale, including their hold rates', () => {
+    const levels = [
+      marked({ id: 'm1', instrumentId: 'mes' }),
+      marked({ id: 'm2', instrumentId: 'mes' }),
+      marked({ id: 'n1', instrumentId: 'mnq' }),
+      marked({ id: 'n2', instrumentId: 'mnq' }),
+    ];
+    const touches = [
+      touch({ id: 't1', instrumentId: 'mes', levelId: 'm1', outcome: 'never-returned' }),
+      touch({ id: 't2', instrumentId: 'mnq', levelId: 'n1', outcome: 'returned' }),
+    ];
+
+    const comparison = buildSymbolComparison(levels, touches, INSTRUMENTS, 'mes', 'mnq');
+    expect(comparison.left).toMatchObject({
+      symbol: 'MES',
+      marked: 2,
+      tested: 1,
+      open: 1,
+      neverTouched: 0,
+      testRate: 50,
+      decided: 1,
+      neverReturned: 1,
+      holdRate: 100,
+      enoughData: false,
+    });
+    expect(comparison.right).toMatchObject({
+      symbol: 'MNQ',
+      marked: 2,
+      tested: 1,
+      open: 1,
+      testRate: 50,
+      decided: 1,
+      neverReturned: 0,
+      holdRate: 0,
+    });
+    expect(comparison.rows).toEqual([
+      { metric: 'Reached', left: 1, right: 1 },
+      { metric: 'Still open', left: 1, right: 1 },
+      { metric: 'Never touched', left: 0, right: 0 },
+    ]);
+  });
+
+  it('returns a zeroed side for a contract with nothing marked rather than omitting it', () => {
+    const comparison = buildSymbolComparison([marked({ id: 'm1' })], [], INSTRUMENTS, 'mes', 'mnq');
+    expect(comparison.left).toMatchObject({ symbol: 'MES', marked: 1, tested: 0, testRate: 0 });
+    expect(comparison.right).toMatchObject({
+      symbol: 'MNQ',
+      marked: 0,
+      tested: 0,
+      open: 0,
+      neverTouched: 0,
+      testRate: null,
+      decided: 0,
+      holdRate: null,
+      enoughData: false,
+    });
   });
 });
 

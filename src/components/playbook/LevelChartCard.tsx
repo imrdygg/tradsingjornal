@@ -17,6 +17,7 @@ import {
 } from 'recharts';
 import {
   Activity,
+  ArrowLeftRight,
   BarChart3,
   LineChart as LineChartIcon,
   ScatterChart as ScatterIcon,
@@ -30,6 +31,7 @@ import {
   buildEdgeCurve,
   buildLevelFixup,
   buildSessionCoverage,
+  buildSymbolComparison,
   buildSymbolCoverage,
   buildTouchTimeline,
 } from '../../lib/analytics/level-charts';
@@ -50,6 +52,8 @@ import {
  *    did afterwards: green held, red came back, grey still being watched.
  * 4. **Coverage by session** — per day, how many lines were marked and how many were reached, so
  *    a run of sessions with many lines and no touches stands out.
+ * 5. **Two contracts side by side** — the same counts opposite each other on one shared scale,
+ *    with the hold rate both contracts are judged by, so the comparison needs no selector swap.
  *
  * Every number is the trader's own record. Nothing here is fetched and nothing is predicted, and
  * the thin-sample rules the rest of the app follows still hold: the hold-rate line is drawn as a
@@ -72,10 +76,11 @@ export interface LevelChartCardProps {
   onInstrumentChange?: (instrumentId: string) => void;
 }
 
-type ChartView = 'coverage' | 'edge' | 'timeline' | 'sessions';
+type ChartView = 'coverage' | 'compare' | 'edge' | 'timeline' | 'sessions';
 
 const VIEWS: Array<{ id: ChartView; label: string; icon: React.ReactNode }> = [
   { id: 'coverage', label: 'Reach by symbol', icon: <BarChart3 className="h-3.5 w-3.5" /> },
+  { id: 'compare', label: 'Compare symbols', icon: <ArrowLeftRight className="h-3.5 w-3.5" /> },
   { id: 'edge', label: 'Edge over time', icon: <LineChartIcon className="h-3.5 w-3.5" /> },
   { id: 'timeline', label: 'Touch timeline', icon: <ScatterIcon className="h-3.5 w-3.5" /> },
   { id: 'sessions', label: 'Coverage by session', icon: <Activity className="h-3.5 w-3.5" /> },
@@ -131,6 +136,15 @@ export const LevelChartCard: React.FC<LevelChartCardProps> = ({
 
   const [view, setView] = useState<ChartView>('coverage');
 
+  /** The contract the compare view measures the selected one against. */
+  const [ownCompareId, setOwnCompareId] = useState<string | undefined>(undefined);
+  // A symbol is never compared with itself: fall back to the first other contract until the
+  // trader picks one, and again if the selected contract changes to the one being compared.
+  const compareInstrumentId =
+    ownCompareId && ownCompareId !== instrumentId
+      ? ownCompareId
+      : (instruments.find((inst) => inst.id !== instrumentId)?.id ?? instruments[0]?.id ?? 'mnq');
+
   // Every series is derived from the same two records. The symbol coverage is deliberately over
   // the WHOLE record — it is the one view that compares contracts — while the other three are
   // scoped to the contract on screen.
@@ -155,8 +169,13 @@ export const LevelChartCard: React.FC<LevelChartCardProps> = ({
     () => buildSessionCoverage(scopedLevels, scopedTouches, 14),
     [scopedLevels, scopedTouches]
   );
+  const comparison = useMemo(
+    () => buildSymbolComparison(levels, touches, instruments, instrumentId, compareInstrumentId),
+    [levels, touches, instruments, instrumentId, compareInstrumentId]
+  );
 
   const hasAnyLevel = symbolCoverage.length > 0;
+  const canCompare = symbolCoverage.length > 1;
 
   // The one blind spot worth naming: the line the trader keeps marking and price keeps missing.
   // Read over the whole record, not the selected contract, because that is the question the
@@ -236,7 +255,7 @@ export const LevelChartCard: React.FC<LevelChartCardProps> = ({
       <div
         role="tablist"
         aria-label="Level chart views"
-        className="grid grid-cols-2 gap-1.5 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-1.5 sm:grid-cols-4"
+        className="grid grid-cols-2 gap-1.5 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-1.5 sm:grid-cols-5"
       >
         {VIEWS.map((entry) => (
           <button
@@ -348,6 +367,121 @@ export const LevelChartCard: React.FC<LevelChartCardProps> = ({
             reached and you logged a touch against; amber is a line you closed out as never reached;
             grey is a line still waiting on an answer.
           </p>
+        </div>
+      )}
+
+      {/*
+        Two contracts against each other. The coverage view already puts every contract on one
+        axis, but only as totals; this pairs two chosen ones so their counts sit next to each
+        other and their hold rates read without swapping the selector between them.
+      */}
+      {hasAnyLevel && view === 'compare' && (
+        <div id="level-chart-compare" className="space-y-2">
+          {!canCompare ? (
+            empty(
+              'Mark lines for a second contract and both sides appear here, measured on the same scale.'
+            )
+          ) : (
+            <>
+              <div>
+                <label
+                  htmlFor="level-chart-compare-instrument"
+                  className="mb-1 block text-xs font-medium text-zinc-300"
+                >
+                  Compare {symbol} with
+                </label>
+                <select
+                  id="level-chart-compare-instrument"
+                  value={compareInstrumentId}
+                  onChange={(event) => setOwnCompareId(event.target.value)}
+                  className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none"
+                >
+                  {instruments
+                    .filter((instrument) => instrument.id !== instrumentId)
+                    .map((instrument) => (
+                      <option key={instrument.id} value={instrument.id}>
+                        {instrument.symbol}
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              <div className="h-56 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={comparison.rows} margin={{ top: 8, right: 8, bottom: 0, left: -18 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+                    <XAxis dataKey="metric" stroke="#71717a" fontSize={10} tickLine={false} />
+                    <YAxis
+                      allowDecimals={false}
+                      stroke="#71717a"
+                      fontSize={10}
+                      tickLine={false}
+                      width={28}
+                    />
+                    <Legend wrapperStyle={{ fontSize: 10 }} />
+                    <Tooltip
+                      cursor={{ fill: '#27272a55' }}
+                      content={({ active, payload }) => {
+                        if (!active || !payload?.length) return null;
+                        const row = payload[0].payload as (typeof comparison.rows)[number];
+                        return (
+                          <TooltipShell>
+                            <div className="text-zinc-300">{row.metric}</div>
+                            <div style={{ color: '#818cf8' }}>
+                              {comparison.left.symbol} {row.left}
+                            </div>
+                            <div style={{ color: '#34d399' }}>
+                              {comparison.right.symbol} {row.right}
+                            </div>
+                          </TooltipShell>
+                        );
+                      }}
+                    />
+                    <Bar
+                      dataKey="left"
+                      name={comparison.left.symbol}
+                      fill="#818cf8"
+                      radius={[3, 3, 0, 0]}
+                    />
+                    <Bar
+                      dataKey="right"
+                      name={comparison.right.symbol}
+                      fill="#34d399"
+                      radius={[3, 3, 0, 0]}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                {[comparison.left, comparison.right].map((side) => (
+                  <div
+                    key={side.instrumentId}
+                    className="rounded-xl border border-zinc-800 bg-zinc-950/50 px-3 py-2"
+                  >
+                    <p className="font-mono text-[11px] font-bold text-zinc-200">{side.symbol}</p>
+                    <p className="mt-0.5 text-[10px] leading-relaxed text-zinc-400">
+                      {side.tested} of {side.marked} lines reached
+                      {side.testRate === null ? '' : ` (${side.testRate}%)`}
+                    </p>
+                    <p className="mt-0.5 text-[10px] leading-relaxed text-zinc-400">
+                      {side.decided === 0
+                        ? 'No decided touches yet.'
+                        : side.enoughData
+                          ? `Hold rate ${side.holdRate}% over ${side.decided} decided touches`
+                          : `Tally: ${side.neverReturned} held of ${side.decided} decided — under ${MIN_DECIDED}, so read the count, not a rate.`}
+                    </p>
+                  </div>
+                ))}
+              </div>
+
+              <p className="text-[10px] leading-relaxed text-zinc-500">
+                Both contracts on one scale, so the taller bar is genuinely more. The counts are
+                the same ones drawn above; the hold rate is decided touches where price never came
+                back, and it stays a tally until the sample clears {MIN_DECIDED}.
+              </p>
+            </>
+          )}
         </div>
       )}
 

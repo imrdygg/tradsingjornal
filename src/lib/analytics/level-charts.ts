@@ -1,7 +1,7 @@
 import type { Instrument, LevelTouch, MarkedLevel } from '../../types';
 import { instrumentSymbol } from '../trading/instruments';
 import { formatTradingDate, timeInTimezone } from '../storage/date-utils';
-import { summarizeMarkedLevels } from './level-edge';
+import { summarizeMarkedLevels, summarizeTouches } from './level-edge';
 import {
   MIN_MARKED_FOR_IGNORE,
   MIN_UNTESTED_FOR_IGNORE,
@@ -30,6 +30,8 @@ import {
  *    what price did afterwards.
  * 4. **Coverage by session** — per trading day, how many lines were marked and how many of them
  *    were reached, so a day of many lines and no touches reads plainly.
+ * 5. **Two contracts side by side** — the same coverage counts, plus the hold rate, for the two
+ *    contracts the trader picks, on one shared axis so the comparison is direct.
  *
  * The one finding pulled out of these series is {@link buildLevelFixup}: the line the trader keeps
  * marking while price never reaches it. It is a blind spot in their attention, not a prediction,
@@ -85,6 +87,94 @@ export function buildSymbolCoverage(
       };
     })
     .sort((a, b) => b.marked - a.marked || a.symbol.localeCompare(b.symbol));
+}
+
+/** One contract's side of a comparison. */
+export interface SymbolComparisonSide {
+  instrumentId: string;
+  symbol: string;
+  /** Active lines marked for this contract: voided lines are excluded. */
+  marked: number;
+  /** Marked lines price reached and the trader logged a touch against. */
+  tested: number;
+  /** Untested lines closed out as never reached. */
+  neverTouched: number;
+  /** Untested lines with no answer yet. */
+  open: number;
+  /** Tested / marked as a percentage, or null while nothing was marked. */
+  testRate: number | null;
+  /** Decided touches logged for this contract (never-returned plus returned). */
+  decided: number;
+  /** Decided touches where price never came back. */
+  neverReturned: number;
+  /** Share of decided touches that held, or null until a touch is decided. */
+  holdRate: number | null;
+  /** True when `decided` clears the sample floor, so the hold rate may be read as a rate. */
+  enoughData: boolean;
+}
+
+/** One grouped pair of bars, sharing a metric on the axis. */
+export interface SymbolComparisonRow {
+  /** The metric, in the trader's words, e.g. `Reached`. */
+  metric: string;
+  left: number;
+  right: number;
+}
+
+/** Two contracts read side by side on one shared axis. */
+export interface SymbolComparison {
+  left: SymbolComparisonSide;
+  right: SymbolComparisonSide;
+  /** The coverage counts as grouped bars, so both contracts share the same scale. */
+  rows: SymbolComparisonRow[];
+}
+
+/**
+ * Reads two contracts against each other.
+ *
+ * The coverage view draws every contract on one axis already, but only as totals; this pairs
+ * two chosen contracts so the counts sit next to each other and their hold rates can be read
+ * without moving a selector between them. Both sides use the same rules as the rest of the
+ * record — a line is tested when a touch links back to it, `void` lines are dropped, and a
+ * hold rate is only reported once its decided sample clears {@link summarizeTouches}'s floor.
+ * A contract with nothing marked still returns a zeroed side rather than being omitted, so the
+ * comparison always has two columns.
+ */
+export function buildSymbolComparison(
+  levels: MarkedLevel[],
+  touches: LevelTouch[],
+  instruments: Instrument[],
+  leftId: string,
+  rightId: string
+): SymbolComparison {
+  const coverage = buildSymbolCoverage(levels, touches, instruments);
+
+  const side = (instrumentId: string): SymbolComparisonSide => {
+    const row = coverage.find((entry) => entry.instrumentId === instrumentId);
+    const stats = summarizeTouches(touches.filter((touch) => touch.instrumentId === instrumentId));
+    return {
+      instrumentId,
+      symbol: instrumentSymbol(instruments, instrumentId),
+      marked: row?.marked ?? 0,
+      tested: row?.tested ?? 0,
+      neverTouched: row?.neverTouched ?? 0,
+      open: row?.open ?? 0,
+      testRate: row?.testRate ?? null,
+      decided: stats.decided,
+      neverReturned: stats.neverReturned,
+      holdRate: stats.holdRate,
+      enoughData: stats.enoughData,
+    };
+  };
+
+  const left = side(leftId);
+  const right = side(rightId);
+  const rows: SymbolComparisonRow[] = [
+    { metric: 'Reached', left: left.tested, right: right.tested },
+    { metric: 'Still open', left: left.open, right: right.open },
+    { metric: 'Never touched', left: left.neverTouched, right: right.neverTouched },
+  ];
+  return { left, right, rows };
 }
 
 /** The one line worth fixing, read from the whole marked record. */

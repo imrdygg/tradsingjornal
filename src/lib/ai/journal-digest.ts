@@ -107,6 +107,16 @@ export interface DigestLevelTouch {
   maxExcursionPoints: number | null;
   /** How far price came back through the level, in points. Null while undecided. */
   maxReturnPoints: number | null;
+  /**
+   * Which way price left the level, as the trader recorded it, or null when they did not say.
+   * Never assumed from the level's side — a support that broke upward is a real observation.
+   */
+  breakDirection: 'up' | 'down' | null;
+  /**
+   * When the answer was settled: when price came back, for a return; the moment the call was
+   * made, for a touch that never came back. Null while the touch is still undecided.
+   */
+  decidedAt: string | null;
   checks: number;
   notes: string | null;
 }
@@ -320,6 +330,8 @@ export interface TodayLevelRead {
   touchedAt: string | null;
   /** Points price ran away from the line after the touch, when it was measured. */
   maxExcursionPoints: number | null;
+  /** Which way the line's latest touch broke, as the trader recorded it. Null when unstated. */
+  breakDirection: 'up' | 'down' | null;
   /** How many times that touch has been checked against price. */
   checks: number | null;
   /** How many times price reached this line today in total. */
@@ -332,7 +344,7 @@ export interface TodayLevelRead {
    * `touchedAt`; this list is what lets the coach tell "the first test held" from "the third one
    * near midday came straight back".
    */
-  touches: Array<{ at: string; outcome: TouchOutcome }>;
+  touches: Array<{ at: string; outcome: TouchOutcome; breakDirection: 'up' | 'down' | null }>;
 }
 
 /**
@@ -1107,6 +1119,13 @@ function buildLevelEdge(
         typeof touch.maxExcursionPoints === 'number' ? round(touch.maxExcursionPoints) : null,
       maxReturnPoints:
         typeof touch.maxReturnPoints === 'number' ? round(touch.maxReturnPoints) : null,
+      breakDirection: touch.breakDirection ?? null,
+      decidedAt:
+        touch.outcome === 'returned'
+          ? touch.returnedAt ?? null
+          : touch.outcome === 'never-returned'
+          ? touch.checkedAt ?? null
+          : null,
       checks: touch.checks,
       notes: trimWord(touch.notes),
     }));
@@ -1291,11 +1310,13 @@ function buildTodayLevels(
         touch && typeof touch.maxExcursionPoints === 'number'
           ? round(touch.maxExcursionPoints)
           : null,
+      breakDirection: touch?.breakDirection ?? null,
       checks: touch ? touch.checks : null,
       touchCount: linked.length,
       touches: linked.slice(-6).map((entry) => ({
         at: entry.touchedAt ?? entry.createdAt,
         outcome: entry.outcome,
+        breakDirection: entry.breakDirection ?? null,
       })),
     };
   });

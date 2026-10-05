@@ -20,6 +20,7 @@ import {
   LevelTimeframe,
   LevelTouch,
   MarkedLevel,
+  TouchBreakDirection,
   TouchOutcome,
   TradingDay,
   TradingSession,
@@ -148,6 +149,32 @@ const OUTCOME_SHORT: Record<TouchOutcome, string> = {
   invalid: 'void',
 };
 
+/** The arrow a decided touch badge carries once the trader has said which way price left. */
+const BREAK_DIRECTION_SHORT: Record<TouchBreakDirection, string> = {
+  up: '↑',
+  down: '↓',
+};
+
+/**
+ * The order the marked lines can be read in.
+ *
+ * Price order is the default and reads the way price would travel through the lines: support
+ * low-to-high, resistance high-to-low. Newest-first is the other choice, for finding the line
+ * just added without scrolling past the rest of the day's marks.
+ */
+const SORT_OPTIONS: Array<{ value: 'price' | 'newest'; label: string; title: string }> = [
+  {
+    value: 'price',
+    label: 'By price',
+    title: 'Resistance high to low, support low to high — the order price travels through the lines',
+  },
+  {
+    value: 'newest',
+    label: 'Newest first',
+    title: 'The most recently added line first',
+  },
+];
+
 /** Re-exported so the card's public surface is unchanged; the parser lives in a lib so it can be tested on its own. */
 export { parsePastedPrices } from '../../lib/trading/level-paste';
 
@@ -247,6 +274,14 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
    * This reveals it, so a price can be corrected or a level deleted at any time.
    */
   const [showEarlier, setShowEarlier] = useState(false);
+  /**
+   * The order the lines are listed in.
+   *
+   * Price order is the default because it is the read the trader is actually after — the lines
+   * in the sequence price would meet them — but the record is theirs, and finding a line just
+   * added should not mean hunting down a price-sorted list.
+   */
+  const [sortMode, setSortMode] = useState<'price' | 'newest'>('price');
 
   const currentInstrument = instruments.find((inst) => inst.id === instrumentId);
   // The level width is the instrument's own default; it decides how a touch is graded later.
@@ -346,18 +381,30 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
 
   /**
    * One side's lines, today first and then newest day down, each day read low-to-high for
-   * support and high-to-low for resistance — the order price would travel through them.
+   * support and high-to-low for resistance — the order price would travel through them. When
+   * the trader switches to newest-first, the day grouping is kept but the lines within it are
+   * ordered by when they were added, so the line just entered is always at the top.
    */
-  const byKind = (which: LevelKind) =>
-    view
+  const byKind = (which: LevelKind) => {
+    // The record is stored newest-first, so its own array order breaks a shared createdAt —
+    // a batch pasted in one go carries a single timestamp and would otherwise fall through
+    // to price order, hiding the line just added.
+    const storedOrder = new Map(view.map((level, index) => [level.id, index]));
+    return view
       .filter((level) => level.kind === which)
       .sort((a, b) => {
         const aToday = a.tradeDate === todayTradingDay.tradeDate ? 0 : 1;
         const bToday = b.tradeDate === todayTradingDay.tradeDate ? 0 : 1;
         if (aToday !== bToday) return aToday - bToday;
         if (a.tradeDate !== b.tradeDate) return b.tradeDate.localeCompare(a.tradeDate);
+        if (sortMode === 'newest') {
+          const byNewest = b.createdAt.localeCompare(a.createdAt);
+          if (byNewest !== 0) return byNewest;
+          return (storedOrder.get(a.id) ?? 0) - (storedOrder.get(b.id) ?? 0);
+        }
         return which === 'support' ? a.price - b.price : b.price - a.price;
       });
+  };
 
   const testedInView = view.filter((level) => touchesByLevel.has(level.id)).length;
   const neverTouchedInView = view.filter(
@@ -752,7 +799,12 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
             )}
             {level.timeframe ?? timeframe}
           </span>
-          <span className="font-mono text-sm font-semibold text-zinc-100">{level.price}</span>
+          <span
+            data-level-price={level.price}
+            className="font-mono text-sm font-semibold text-zinc-100"
+          >
+            {level.price}
+          </span>
           <span
             className="font-mono text-[10px] text-zinc-500"
             title={`A break counts once price leaves ${formatPoints(
@@ -950,6 +1002,16 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
                   >
                     <span className="font-bold">{formatTimestamp(touch.touchedAt, timezone)}</span>
                     <span className="uppercase opacity-80">{OUTCOME_SHORT[touch.outcome]}</span>
+                    {/* Which way price left, once the trader has said. Absent until then. */}
+                    {touch.breakDirection && (
+                      <span
+                        id={`level-touch-direction-${touch.id}`}
+                        className="font-bold"
+                        title={`Price broke ${touch.breakDirection}`}
+                      >
+                        {BREAK_DIRECTION_SHORT[touch.breakDirection]}
+                      </span>
+                    )}
                     <ChevronDown
                       className={`h-2.5 w-2.5 transition-transform ${expanded ? 'rotate-180' : ''}`}
                     />
@@ -976,8 +1038,8 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
           </div>
         )}
 
-        {/* Deciding the open touch: what price did after it reached the line, plus the optional
-            distance. Kept inline so the answer is recorded on the level it belongs to. */}
+        {/* Deciding the open touch: what price did after it reached the line, and when that
+            answer was reached. Kept inline so it is recorded on the level it belongs to. */}
         {expandedTouchId &&
           (() => {
             const openTouch = levelTouches.find((touch) => touch.id === expandedTouchId);
@@ -1519,6 +1581,44 @@ export const MarkedLevelsCard: React.FC<MarkedLevelsCardProps> = ({
         </div>
 
         {/*
+          The order the lines are read in.
+
+          Kept as its own quiet control so the two orders are visible without the trader having
+          to know the list is sorted at all: price order is the default, and newest-first is one
+          tap away when they are looking for the line they just added. Hidden with nothing on
+          the chart, since there is no order to choose yet.
+        */}
+        {view.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[10px] font-mono uppercase font-bold text-zinc-500">Order</span>
+            {SORT_OPTIONS.map((option) => {
+              const active = sortMode === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  id={`level-sort-${option.value}`}
+                  title={option.title}
+                  aria-pressed={active}
+                  onClick={() => setSortMode(option.value)}
+                  className={`rounded-lg border px-2 py-0.5 text-[10px] font-semibold transition-colors ${
+                    active
+                      ? 'border-indigo-500/70 bg-indigo-500/20 text-indigo-200'
+                      : 'border-zinc-800 bg-zinc-950/40 text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+            <span className="text-[10px] text-zinc-600">
+              resistance high→low · support low→high
+            </span>
+          </div>
+        )}
+
+        {
+          /*
           Reaching back to earlier sessions.
 
           Shown only when this instrument and chart actually have history, so the control does

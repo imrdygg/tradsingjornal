@@ -819,6 +819,17 @@ export type LevelTimeframe = '1m' | '3m' | '5m' | '15m' | '30m' | '1h';
  */
 export type TouchOutcome = 'watching' | 'never-returned' | 'returned' | 'invalid';
 
+/**
+ * Which way price left a level, when the trader recorded it.
+ *
+ * A level leans a side, and the usual break goes with the lean — a resistance breaks up, a
+ * support breaks down — but price can break either way, and the trader's own record of which it
+ * actually did is what this carries. Deliberately NOT derived from `kind`: a support that broke
+ * upward is exactly the kind of observation the edge read is for, and assuming the direction
+ * from the side the line leaned would silently erase it.
+ */
+export type TouchBreakDirection = 'up' | 'down';
+
 export interface LevelTouch {
   id: string;
   userId: string;
@@ -881,6 +892,15 @@ export interface LevelTouch {
   checkedPrice?: number;
   /** When price first came back through the level, for a `returned` touch. */
   returnedAt?: string;
+  /**
+   * Which way price left the level, as the trader recorded it.
+   *
+   * Recorded per touch rather than assumed from the level's side, because price breaks the
+   * other way often enough to matter: "support broke downward and held" and "support broke
+   * upward and held" are different observations, and the record has to be able to tell them
+   * apart. Left unset when the trader did not say, and never guessed on their behalf.
+   */
+  breakDirection?: TouchBreakDirection;
   /**
    * How many times this touch has been evaluated against price so far.
    *

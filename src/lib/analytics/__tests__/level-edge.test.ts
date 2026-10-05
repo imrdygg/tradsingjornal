@@ -126,6 +126,34 @@ describe('evaluateTouch', () => {
     expect(result.outcome).toBe('never-returned');
     expect(result.checkedPrice).toBe(104);
   });
+
+  it('reads the break on the side the trader recorded, not the level\u2019s lean', () => {
+    // A support that actually broke UPWARD: with the direction recorded, the rise above the
+    // zone is the break, so price staying up there is a hold rather than an endless watch.
+    const upBreak = evaluateTouch(
+      touch({ kind: 'support', price: 100, zonePoints: 2, breakDirection: 'up' }),
+      [s('02:01', 102), s('02:05', 104)]
+    );
+    expect(upBreak.outcome).toBe('never-returned');
+    expect(upBreak.maxExcursionPoints).toBe(4);
+
+    // A resistance that broke DOWNWARD, then traded back inside the zone, is a return.
+    const downBreak = evaluateTouch(
+      touch({ kind: 'resistance', price: 100, zonePoints: 2, breakDirection: 'down' }),
+      [s('02:01', 98), s('02:10', 100.5)]
+    );
+    expect(downBreak.outcome).toBe('returned');
+  });
+
+  it('stays watching while price has not left on the recorded side', () => {
+    // An upward break was recorded, but the samples only moved the other way — nothing has
+    // broken yet, and the evaluator does not pretend the level's lean was the break.
+    const result = evaluateTouch(
+      touch({ kind: 'support', price: 100, zonePoints: 2, breakDirection: 'up' }),
+      [s('02:01', 98), s('02:05', 96)]
+    );
+    expect(result.outcome).toBe('watching');
+  });
 });
 
 describe('summarizeTouches', () => {
@@ -267,5 +295,57 @@ describe('findLevelEdges', () => {
     expect(all?.stats.holdRate).toBe(100);
     // The invalid touch is counted as a touch but never as a decided one.
     expect(all?.stats.touches).toBe(2);
+  });
+
+  it('reads break direction as its own condition, from what the trader recorded', () => {
+    const touches: LevelTouch[] = [
+      // A support that broke DOWNWARD and held, five times.
+      ...Array.from({ length: 5 }, (_, i) =>
+        touch({
+          id: `down${i}`,
+          kind: 'support',
+          session: 'Overnight',
+          outcome: 'never-returned',
+          breakDirection: 'down',
+        })
+      ),
+      // The same side breaking UPWARD and coming back is a different condition.
+      ...Array.from({ length: 5 }, (_, i) =>
+        touch({
+          id: `up${i}`,
+          kind: 'support',
+          session: 'Overnight',
+          outcome: 'returned',
+          breakDirection: 'up',
+        })
+      ),
+    ];
+
+    const edges = findLevelEdges(touches, 5);
+    const down = edges.find((e) => e.key === 'direction:down');
+    const up = edges.find((e) => e.key === 'direction:up');
+
+    expect(down?.label).toBe('Broke downward');
+    expect(down?.stats.holdRate).toBe(100);
+    expect(up?.stats.holdRate).toBe(0);
+    // Direction is its own axis: the same level kind and session appear on both sides.
+    expect(down?.kind).toBeNull();
+    expect(edges.find((e) => e.key === 'Overnight:down')?.stats.decided).toBe(5);
+    expect(edges.find((e) => e.key === 'Overnight:up')?.stats.decided).toBe(5);
+  });
+
+  it('never folds a touch with no recorded direction into a direction bucket', () => {
+    const touches: LevelTouch[] = [
+      ...Array.from({ length: 5 }, (_, i) =>
+        touch({ id: `d${i}`, outcome: 'never-returned', breakDirection: 'down' })
+      ),
+      touch({ id: 'unstated', outcome: 'never-returned' }),
+    ];
+
+    const edges = findLevelEdges(touches, 2);
+    const down = edges.find((e) => e.key === 'direction:down');
+    expect(down?.stats.decided).toBe(5);
+    // No bucket is invented for the break the trader did not describe.
+    expect(edges.some((e) => e.key === 'direction:up')).toBe(false);
   });
 });

@@ -55,10 +55,11 @@ function levelZone(touch: LevelTouch): { low: number; high: number } {
  *
  * The rule, in the trader's own terms:
  *
- * - The **break** is price leaving the zone on the side the level was leaning.
- *   A resistance touch breaks up (above the zone's high); a support touch breaks
- *   down (below its low). Until that happens the touch is still forming, and the
- *   answer is `watching` — not yet a signal in either direction.
+ * - The **break** is price leaving the zone. Which side counts is the direction the trader
+ *   recorded when they gave one — their own observation of where price went — and only falls
+ *   back to the side the level leans (a resistance breaks up above the zone's high, a support
+ *   breaks down below its low) when no direction was recorded. Until price leaves on that
+ *   side the touch is still forming, and the answer is `watching` — not yet a signal either way.
  * - Once the break is confirmed, **any later sample back inside the zone is a
  *   return**. From that moment the set-up failed, however far price later ran.
  * - A break with no sample back inside the zone is `never-returned` — the pattern
@@ -86,7 +87,12 @@ export function evaluateTouch(touch: LevelTouch, since: PriceSample[]): TouchEva
   let maxReturnPoints = 0;
   let returnedAt: string | undefined;
 
-  const upBreak = touch.kind === 'resistance';
+  // The trader's own recorded direction wins: a support that broke upward is a real break, and
+  // the evaluator should read the samples that way rather than wait for a downward break that
+  // never comes. With nothing recorded, the level's lean decides, as before.
+  const upBreak = touch.breakDirection
+    ? touch.breakDirection === 'up'
+    : touch.kind === 'resistance';
 
   for (const sample of samples) {
     const outside = upBreak ? sample.price > high : sample.price < low;
@@ -215,6 +221,14 @@ export interface LevelEdgeBucket {
   kind: LevelKind | null;
   /** The label the levels in this bucket shared, when the bucket is by label. */
   levelLabel: string | null;
+  /**
+   * The break direction the bucket is scoped to, when it is one of the direction reads.
+   *
+   * `null` for every other bucket. Only touches the trader recorded a direction for take part
+   * in a direction bucket, so an unrecorded break is left out of these reads rather than
+   * guessed into one side.
+   */
+  direction: 'up' | 'down' | null;
   stats: LevelEdgeStats;
 }
 
@@ -222,7 +236,12 @@ function bucket(
   key: string,
   label: string,
   touches: LevelTouch[],
-  scope: { session?: TradingSession; kind?: LevelKind; levelLabel?: string },
+  scope: {
+    session?: TradingSession;
+    kind?: LevelKind;
+    levelLabel?: string;
+    direction?: 'up' | 'down';
+  },
   minDecided: number
 ): LevelEdgeBucket {
   return {
@@ -231,6 +250,7 @@ function bucket(
     session: scope.session ?? null,
     kind: scope.kind ?? null,
     levelLabel: scope.levelLabel ?? null,
+    direction: scope.direction ?? null,
     stats: summarizeTouches(touches, minDecided),
   };
 }
@@ -238,13 +258,16 @@ function bucket(
 /**
  * The set-up finder: every condition worth looking at, ranked by hold rate.
  *
- * Buckets are built two ways on purpose. Whole-dimensional buckets (each session on
- * its own, each level kind on its own) say which single condition travels with the
- * pattern; the session-by-kind buckets say whether the two together do, which is the
- * actual question when both set-ups are the same pattern at different hours. Only
- * buckets with a real sample survive — everything else is a count pretending to be an
- * edge — and they are ordered by the hold rate the trader is trying to raise, with
- * the thin-but-decided ones last rather than dropped.
+ * Buckets are built several ways on purpose. Whole-dimensional buckets (each session on
+ * its own, each level kind on its own, each break direction on its own) say which single
+ * condition travels with the pattern; the session-by-kind and session-by-direction buckets
+ * say whether the pair does, which is the actual question when both set-ups are the same
+ * pattern at different hours or taken the other way. Direction is read from what the trader
+ * recorded on the touch, never assumed from the level's side, and a break with no direction
+ * recorded is left out of those buckets rather than guessed into one. Only buckets with a real
+ * sample survive — everything else is a count pretending to be an edge — and they are ordered
+ * by the hold rate the trader is trying to raise, with the thin-but-decided ones last rather
+ * than dropped.
  */
 export function findLevelEdges(
   touches: LevelTouch[],
@@ -278,6 +301,46 @@ export function findLevelEdges(
         const word = kind === 'support' ? 'support' : 'resistance';
         buckets.push(
           bucket(`${session}:${kind}`, `${session} ${word}`, list, { session, kind }, minDecided)
+        );
+      }
+    }
+  }
+
+  // The direction price left in, which the trader records on the touch. It only appears for
+  // touches they actually stated a direction for — an unrecorded break is never folded into
+  // one side. This is the read that answers "does a support break downward hold as well as an
+  // upward break of a resistance?", which the kind buckets alone cannot, because kind and
+  // direction are not the same axis.
+  const directions: Array<'up' | 'down'> = ['up', 'down'];
+  for (const direction of directions) {
+    const list = decidedTouches.filter((t) => t.breakDirection === direction);
+    if (list.length) {
+      buckets.push(
+        bucket(
+          `direction:${direction}`,
+          direction === 'up' ? 'Broke upward' : 'Broke downward',
+          list,
+          { direction },
+          minDecided
+        )
+      );
+    }
+  }
+
+  for (const session of sessions) {
+    for (const direction of directions) {
+      const list = decidedTouches.filter(
+        (t) => t.session === session && t.breakDirection === direction
+      );
+      if (list.length) {
+        buckets.push(
+          bucket(
+            `${session}:${direction}`,
+            `${session} broke ${direction === 'up' ? 'upward' : 'downward'}`,
+            list,
+            { session, direction },
+            minDecided
+          )
         );
       }
     }

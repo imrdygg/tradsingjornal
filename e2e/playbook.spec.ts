@@ -469,6 +469,64 @@ test.describe('Marked levels — never touched and void', () => {
     await expect(reloaded.locator('[data-level-touch]').first()).toContainText('watching');
   });
 
+  test('records which way price left a decided touch, and keeps it across a reload', async ({
+    page,
+  }) => {
+    await gotoPlaybook(page);
+    await markResistance(page, '7770');
+
+    const row = page.locator('[data-marked-level]').first();
+    await row.locator('button[id^="level-touch-first-"]').click();
+    await row.getByRole('button', { name: 'Log touch' }).click();
+
+    const touchId = await row.locator('[data-level-touch]').first().getAttribute('data-level-touch');
+    await page.locator(`#touch-outcome-never-returned-${touchId}`).click();
+
+    // A break that never came back asks WHEN it broke away, and which way — not a distance.
+    await expect(page.locator(`[data-touch-outcome-controls="${touchId}"]`)).toContainText(
+      'Broke away at'
+    );
+
+    // Direction is the trader's own call: both ways are offered and neither is preselected.
+    const up = page.locator(`#touch-direction-up-${touchId}`);
+    const down = page.locator(`#touch-direction-down-${touchId}`);
+    await expect(up).toHaveAttribute('aria-pressed', 'false');
+    await expect(down).toHaveAttribute('aria-pressed', 'false');
+
+    await down.click();
+    await expect(down).toHaveAttribute('aria-pressed', 'true');
+    // The badge carries the recorded direction so a row of repeats reads at a glance.
+    await expect(row.locator('span[id^="level-touch-direction-"]')).toHaveText('↓');
+
+    await page.reload();
+    await gotoPlaybook(page);
+    await expect(
+      page.locator('[data-marked-level]').first().locator('span[id^="level-touch-direction-"]')
+    ).toHaveText('↓');
+  });
+
+  test('sorts the marked lines by price or by newest, at the trader\u2019s choice', async ({ page }) => {
+    await gotoPlaybook(page);
+    // Two resistance lines pasted low-then-high, so paste order differs from price order.
+    await page.locator('#level-prices-resistance').fill('7745\n7790');
+    await page.locator('#level-add-both').click();
+    await expect(page.locator('[data-marked-level]')).toHaveCount(2);
+
+    const order = () =>
+      page
+        .locator('[data-level-price]')
+        .evaluateAll((els) => els.map((el) => el.getAttribute('data-level-price')));
+
+    // Price order is the default: resistance reads high to low.
+    await expect.poll(order).toEqual(['7790', '7745']);
+
+    await page.locator('#level-sort-newest').click();
+    await expect.poll(order).toEqual(['7745', '7790']);
+
+    await page.locator('#level-sort-price').click();
+    await expect.poll(order).toEqual(['7790', '7745']);
+  });
+
   test('a freshly marked line reads as not touched until you say so, then takes repeats', async ({
     page,
   }) => {

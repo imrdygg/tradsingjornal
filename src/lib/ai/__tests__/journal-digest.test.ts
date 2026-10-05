@@ -720,6 +720,34 @@ describe('level touches', () => {
     expect(levelEdge.recentTouches[0].maxExcursionPoints).toBe(12.5);
     expect(levelEdge.recentTouches[1].date).toBe('2026-09-17');
   });
+
+  it('carries the break direction and the decided time onto a recent touch', () => {
+    const { levelEdge } = build({
+      levelTouches: [
+        makeTouch({
+          id: 'broke',
+          kind: 'support',
+          outcome: 'returned',
+          breakDirection: 'up',
+          returnedAt: '2026-09-18T14:30:00.000Z',
+        }),
+        makeTouch({
+          id: 'held',
+          outcome: 'never-returned',
+          breakDirection: 'down',
+          checkedAt: '2026-09-18T15:00:00.000Z',
+        }),
+      ],
+    });
+
+    const byOutcome = new Map(levelEdge.recentTouches.map((t) => [t.outcome, t]));
+    expect(byOutcome.get('returned')?.breakDirection).toBe('up');
+    // For a return, the decided time is when price came back.
+    expect(byOutcome.get('returned')?.decidedAt).toBe('2026-09-18T14:30:00.000Z');
+    expect(byOutcome.get('never-returned')?.breakDirection).toBe('down');
+    // For a hold, it is the moment the call was made, not the touch time.
+    expect(byOutcome.get('never-returned')?.decidedAt).toBe('2026-09-18T15:00:00.000Z');
+  });
 });
 
 /**
@@ -1191,5 +1219,24 @@ describe('todayLevels', () => {
     }).todayLevels;
 
     expect(read.levels[0].status).toBe('never-touched');
+  });
+
+  it('carries the recorded break direction onto the line and each touch in its sequence', () => {
+    const read = build({
+      markedLevels: [level({ id: 'a', price: 7760, kind: 'support' })],
+      levelTouches: [
+        touch({
+          id: 't1',
+          levelId: 'a',
+          kind: 'support',
+          outcome: 'returned',
+          breakDirection: 'up',
+          returnedAt: '2026-09-18T14:30:00.000Z',
+        }),
+      ],
+    }).todayLevels;
+
+    expect(read.levels[0].breakDirection).toBe('up');
+    expect(read.levels[0].touches[0].breakDirection).toBe('up');
   });
 });

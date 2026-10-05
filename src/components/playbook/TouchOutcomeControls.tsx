@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Trash2 } from 'lucide-react';
-import type { LevelTouch, TouchOutcome } from '../../types';
+import type { LevelTouch, TouchBreakDirection, TouchOutcome } from '../../types';
 
 /**
  * Deciding what a level touch did.
@@ -9,7 +9,7 @@ import type { LevelTouch, TouchOutcome } from '../../types';
  * line, while the answer still lies ahead: price either breaks away and stays away, or comes
  * back inside the level's zone. So this is the second half of the record — the controls that
  * turn a `watching` touch into one of the two answers the whole edge read is built on, plus the
- * optional distance that sharpens it.
+ * direction price left in and the time the answer was reached.
  *
  * `watching` and `void` are as reachable as the two answers on purpose. A trader who can only
  * record a finished outcome starts deciding early, and a record of premature calls is worse
@@ -51,6 +51,34 @@ export const TOUCH_OUTCOME_BUTTONS: Array<{
   },
 ];
 
+/**
+ * Where price went when it left the level, as the trader records it.
+ *
+ * Offered instead of assuming the direction from the level's own side: price breaks a support
+ * upward and a resistance downward often enough that the record has to be able to say which
+ * happened, not infer it. Neither is preselected — a guess the trader did not make would be
+ * quoted back as their own observation.
+ */
+export const TOUCH_BREAK_DIRECTIONS: Array<{
+  value: TouchBreakDirection;
+  label: string;
+  title: string;
+  tone: string;
+}> = [
+  {
+    value: 'up',
+    label: 'Broke up',
+    title: 'Price left the level to the upside, above the zone',
+    tone: 'bg-emerald-950/80 text-emerald-300 border-emerald-800',
+  },
+  {
+    value: 'down',
+    label: 'Broke down',
+    title: 'Price left the level to the downside, below the zone',
+    tone: 'bg-rose-950/70 text-rose-300 border-rose-900/80',
+  },
+];
+
 export const TOUCH_OUTCOME_LABEL: Record<TouchOutcome, string> = {
   watching: 'Watching',
   'never-returned': 'Never came back',
@@ -75,6 +103,14 @@ export interface TouchOutcomeControlsProps {
   compact?: boolean;
 }
 
+/** An ISO stamp as a `datetime-local` value in the browser's own zone, or '' when unset. */
+function isoToLocalInput(iso?: string): string {
+  if (!iso) return '';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+}
+
 export const TouchOutcomeControls: React.FC<TouchOutcomeControlsProps> = ({
   touch,
   onSave,
@@ -82,14 +118,14 @@ export const TouchOutcomeControls: React.FC<TouchOutcomeControlsProps> = ({
   compact = false,
 }) => {
   const decided = touch.outcome === 'never-returned' || touch.outcome === 'returned';
-  // The number under a decided touch means a different thing either side of the outcome, so
-  // the box is seeded from whichever field that outcome uses.
-  const storedPoints =
-    touch.outcome === 'returned' ? touch.maxReturnPoints : touch.maxExcursionPoints;
-  const [points, setPoints] = useState(() => (storedPoints == null ? '' : String(storedPoints)));
+  // The time under a decided touch means a different thing either side of the outcome, so the
+  // box is seeded from whichever field that outcome uses: when price came back for a return,
+  // and the moment the call was made for a touch that never came back.
+  const storedAt = touch.outcome === 'returned' ? touch.returnedAt : touch.checkedAt;
+  const [decidedAt, setDecidedAt] = useState(() => isoToLocalInput(storedAt));
 
   useEffect(() => {
-    setPoints(storedPoints == null ? '' : String(storedPoints));
+    setDecidedAt(isoToLocalInput(storedAt));
     // Re-seeded when the row changes outcome, or when a different touch takes its place.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [touch.id, touch.outcome]);
@@ -114,17 +150,24 @@ export const TouchOutcomeControls: React.FC<TouchOutcomeControlsProps> = ({
     });
   };
 
-  /** Saves the optional distance, on blur rather than per keystroke. */
-  const savePoints = () => {
-    const parsed = parseFloat(points);
-    const value =
-      Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed * 100) / 100 : undefined;
+  /** Records which way price left the level, or clears it when the same one is tapped again. */
+  const setBreakDirection = (direction: TouchBreakDirection) => {
+    const next = touch.breakDirection === direction ? undefined : direction;
+    onSave({ ...touch, breakDirection: next });
+  };
+
+  /** Saves the time the answer was settled, on blur rather than per keystroke. */
+  const saveDecidedAt = () => {
+    if (!decidedAt) return;
+    const when = new Date(decidedAt);
+    if (Number.isNaN(when.getTime())) return;
+    const iso = when.toISOString();
     if (touch.outcome === 'returned') {
-      if (value === touch.maxReturnPoints) return;
-      onSave({ ...touch, maxReturnPoints: value });
+      if (iso === touch.returnedAt) return;
+      onSave({ ...touch, returnedAt: iso });
     } else if (touch.outcome === 'never-returned') {
-      if (value === touch.maxExcursionPoints) return;
-      onSave({ ...touch, maxExcursionPoints: value });
+      if (iso === touch.checkedAt) return;
+      onSave({ ...touch, checkedAt: iso });
     }
   };
 
@@ -159,29 +202,64 @@ export const TouchOutcomeControls: React.FC<TouchOutcomeControlsProps> = ({
       })}
 
       {/*
-        The distance is optional on purpose: it sharpens the average run in the record, but a
-        trader who does not remember it exactly should leave it blank rather than guess a number
-        the coach would then quote back as a measurement.
+        Which way price left, when it actually left. Recorded on the trader's word rather than
+        assumed from the level's side, because price can break either way and the direction is
+        the thing a hold-by-direction read is built on.
+      */}
+      {decided && (
+        <div
+          data-touch-direction={touch.id}
+          className="flex flex-wrap items-center gap-1.5 text-[10px] font-mono uppercase text-zinc-500"
+        >
+          Left
+          {TOUCH_BREAK_DIRECTIONS.map((option) => {
+            const active = touch.breakDirection === option.value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                id={`touch-direction-${option.value}-${touch.id}`}
+                title={option.title}
+                aria-pressed={active}
+                onClick={() => setBreakDirection(option.value)}
+                className={`rounded-lg border text-[10px] font-semibold transition-colors ${buttonClass} ${
+                  active
+                    ? option.tone
+                    : 'border-zinc-800 bg-zinc-950/40 text-zinc-500 hover:text-zinc-300'
+                }`}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/*
+        The time the answer was settled. A return is stamped with when price traded back
+        inside the zone; a break that broke away and held is stamped with the moment the call
+        was made, so the record says when the question closed rather than only how it closed.
+        Which way it broke away to is recorded just above, on the direction buttons.
       */}
       {decided && (
         <label className="flex flex-wrap items-center gap-1.5 text-[10px] font-mono uppercase text-zinc-500">
-          {touch.outcome === 'returned' ? 'Came back in' : 'Ran away'}
+          {touch.outcome === 'returned' ? 'Came back at' : 'Broke away at'}
           <input
-            id={`touch-points-${touch.id}`}
-            type="number"
-            min="0"
-            step="0.25"
-            value={points}
-            placeholder="—"
-            onChange={(event) => setPoints(event.target.value)}
-            onBlur={savePoints}
+            id={`touch-decided-at-${touch.id}`}
+            type="datetime-local"
+            value={decidedAt}
+            onChange={(event) => setDecidedAt(event.target.value)}
+            onBlur={saveDecidedAt}
             onKeyDown={(event) => {
               if (event.key === 'Enter') (event.target as HTMLInputElement).blur();
             }}
-            className="w-16 rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1 text-xs font-mono text-zinc-100 placeholder-zinc-600 focus:border-zinc-600 focus:outline-none"
+            title={
+              touch.outcome === 'returned'
+                ? 'The time price traded back inside the level'
+                : 'The time you made the call that price broke away and did not come back'
+            }
+            className="rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1 text-[11px] font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none"
           />
-          pts
-          <span className="normal-case text-zinc-600">optional</span>
         </label>
       )}
 

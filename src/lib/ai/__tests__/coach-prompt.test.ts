@@ -788,6 +788,31 @@ describe('the level-touch record in the prompt', () => {
     expect(systemInstruction).toContain('NO MARKET DATA');
     expect(systemInstruction).toContain('ONLY READ A RATE THAT IS MARKED READABLE');
     expect(systemInstruction).toContain('A HOLD IS NOT A PROFIT');
+    expect(systemInstruction).toContain('THE BREAK DIRECTION IS THE TRADER');
+  });
+
+  it('states the recorded break direction and renders a direction condition', () => {
+    const text = formatDigestForPrompt(
+      digestFor({
+        levelTouches: [
+          ...held(5),
+          touch({
+            id: 'broke-down',
+            outcome: 'never-returned',
+            kind: 'support',
+            session: 'Overnight',
+            breakDirection: 'down',
+            checkedAt: '2026-09-18T15:00:00.000Z',
+          }),
+        ],
+      })
+    );
+
+    // The trader's own direction rides on the recent-touch line, with the decided time...
+    expect(text).toContain('broke down');
+    expect(text).toContain('decided 2026-09-18T15:00:00.000Z');
+    // ...and direction is its own condition, never assumed from the level's side.
+    expect(text).toContain('Broke downward');
   });
 });
 

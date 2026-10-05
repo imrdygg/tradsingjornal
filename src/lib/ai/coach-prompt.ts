@@ -369,7 +369,12 @@ L10. EVERY TOUCH IN A SEQUENCE IS ONE THEY LOGGED, INCLUDING THE LATER ONES. Whe
     touches of a line into a single number, and never let one touch's outcome stand for the
     others.
 L11. THE RECURRING-LINE LIST IS BOUNDED. When the section says further lines were left out, do
-    not claim to have seen them or guess what they were.`;
+    not claim to have seen them or guess what they were.
+L12. THE BREAK DIRECTION IS THE TRADER'S OWN OBSERVATION. When a touch says which way price
+    left, that is what they recorded — never assume it from the level's side, and never state
+    a direction for a touch that did not record one. A support that broke upward is a real
+    recorded fact, not an error to correct, and the direction read is a count of what happened,
+    never a prediction of which way the next break goes.`;
 
 /**
  * The rules for reading one prospective entry against the trader's own marked lines.
@@ -629,8 +634,10 @@ function formatLevelEdgeForPrompt(edge: LevelEdge | undefined): string[] {
   lines.push(
     'A touch is logged when price reaches a level the trader marked. It becomes DECIDED ' +
       'only once price has broken the level; from then it either HELD (price never came back) ' +
-      'or CAME BACK (price returned inside the level). This is a count of what already ' +
-      'happened, not a forecast, and a hold is not a profit.'
+      'or CAME BACK (price returned inside the level). A decided touch may also say which way ' +
+      'price left — UP or DOWN — recorded by the trader rather than assumed from the level side, ' +
+      'and a direction the trader did not record is left unstated. This is a count of what ' +
+      'already happened, not a forecast, and a hold is not a profit.'
   );
   lines.push(
     `${edge.touches} touch(es) logged: ${edge.decided} decided (${edge.neverReturned} held, ` +
@@ -688,6 +695,8 @@ function formatLevelEdgeForPrompt(edge: LevelEdge | undefined): string[] {
           `, ${touch.session} session` +
           (touch.setupName ? `, setup ${touch.setupName}` : '') +
           ` → ${touchOutcomeWord(touch.outcome)}` +
+          (touch.breakDirection ? `, broke ${touch.breakDirection}` : '') +
+          (touch.decidedAt ? `, decided ${touch.decidedAt}` : '') +
           (touch.maxExcursionPoints !== null ? `, ran ${touch.maxExcursionPoints} point(s)` : '') +
           (touch.checks ? `, checked ${touch.checks} time(s)` : '')
       );
@@ -2114,13 +2123,20 @@ export function formatEntryEdgeForPrompt(
           (level.confirmed ? ' — the trader has explicitly marked this line never touched' : '') +
           (level.touchedAt ? ` (touched ${level.touchedAt}` : '') +
           (level.touchedAt && level.checks ? `, checked ${level.checks} time(s))` : level.touchedAt ? ')' : '') +
+          (level.breakDirection ? `, broke ${level.breakDirection}` : '') +
           (level.maxExcursionPoints !== null ? `, ran ${level.maxExcursionPoints} point(s)` : '') +
           '.' +
           // A line reached more than once is the case this read is for: the sequence, oldest
           // first, so the coach can tell a first test that held from a third one that failed.
           (level.touchCount > 1
             ? ` Price reached this line ${level.touchCount} time(s) today, oldest first: ` +
-              level.touches.map((t) => `${t.at} ${todayLevelStatusWord(t.outcome)}`).join('; ') +
+              level.touches
+                .map(
+                  (t) =>
+                    `${t.at} ${todayLevelStatusWord(t.outcome)}` +
+                    (t.breakDirection ? ` (broke ${t.breakDirection})` : '')
+                )
+                .join('; ') +
               '. The latest test sets the state above.'
             : '')
       );
@@ -2569,8 +2585,11 @@ export function buildCoachPrompt(
         `If the windows are too thin to compare, say so plainly and ask for more logged ` +
         `trades instead of naming a direction.`
       : mode === 'edge'
-      ? `Find this trader's break-and-run edge in LEVEL TOUCHES: the sessions, level kinds ` +
-        `and named levels whose own record shows price not coming back. Rank only the ` +
+      ? `Find this trader's break-and-run edge in LEVEL TOUCHES: the sessions, level kinds, ` +
+        `break directions and named levels whose own record shows price not coming back. ` +
+        `The direction is the trader's own record of which way price left the level — up or ` +
+        `down — never assumed from the level's side, and only touches that recorded one belong ` +
+        `in a direction read. Rank only the ` +
         `conditions marked readable, quoting their rates and the decided and watching counts ` +
         `they came from, and name separately what is logged but not yet decidable. Say what ` +
         `the record shows has happened, never what it predicts will happen — and never call a ` +

@@ -46,6 +46,7 @@ import { CoachLessonsCard } from './CoachLessonsCard';
 import { EdgeFinderCard } from './EdgeFinderCard';
 import { CoachSetupsCard } from './CoachSetupsCard';
 import { MarkedLevelsCard } from './MarkedLevelsCard';
+import { TimeframeEdgeCard } from './TimeframeEdgeCard';
 import { LevelOddsCard } from './LevelOddsCard';
 import { isFocusSetup, splitFocusSetups } from '../../lib/playbook/focus-setups';
 import { PATTERNS } from '../../lib/playbook/patterns';
@@ -566,6 +567,23 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
           onInstrumentChange={setLevelInstrumentId}
           timeframe={levelTimeframe}
           onTimeframeChange={setLevelTimeframe}
+        />
+      )}
+
+      {/*
+        The heart of the level record: which of the trader's charts actually holds, judged in
+        each chart's own bars, plus whether that read is still there. Fed by the same lines and
+        touches the card above writes, and reading the same instrument, so the section stays one
+        selection rather than several.
+      */}
+      {markedLevels && (
+        <TimeframeEdgeCard
+          levels={markedLevels.levels}
+          touches={markedLevels.touches}
+          instruments={markedLevels.instruments}
+          instrumentId={levelInstrumentId}
+          todayTradingDay={markedLevels.todayTradingDay}
+          timezone={markedLevels.timezone}
         />
       )}
 

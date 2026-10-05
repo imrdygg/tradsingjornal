@@ -656,6 +656,101 @@ test.describe('Carrying a level between timeframes', () => {
 });
 
 /**
+ * The timeframe edge scoreboard and its rolling read.
+ *
+ * The points here are the ones the record can honestly carry: a line counts as held when price
+ * stays away three bars of its own chart, a return is judged on the exact time price came back,
+ * and a hold called before the horizon elapsed is left out rather than counted against the line.
+ * Seeded rather than tapped in, because the times are what the read is about.
+ */
+test.describe('Timeframe edge', () => {
+  test('ranks the charts by their own horizon, and rolls the read over time', async ({ page }) => {
+    await page.addInitScript(() => {
+      const level = (id: string) => ({
+        id,
+        userId: 'solo-trader-01',
+        tradingDayId: 'day-2026-09-28',
+        tradeDate: '2026-09-28',
+        instrumentId: 'mes',
+        kind: 'resistance',
+        price: 7760,
+        zonePoints: 2,
+        session: 'Regular Session',
+        timeframe: '5m',
+        createdAt: '2026-09-28T13:00:00.000Z',
+        updatedAt: '2026-09-28T13:00:00.000Z',
+      });
+      const at = (hour: number, minute: number) =>
+        `2026-09-28T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00.000Z`;
+      const base = (index: number, touchedAt: string) => ({
+        id: `t${index}`,
+        userId: 'solo-trader-01',
+        tradingDayId: 'day-2026-09-28',
+        tradeDate: '2026-09-28',
+        instrumentId: 'mes',
+        kind: 'resistance',
+        price: 7760,
+        zonePoints: 2,
+        touchedAt,
+        session: 'Regular Session',
+        checks: 1,
+        timeframe: '5m',
+        levelId: index % 2 === 0 ? 'm1' : 'm2',
+        createdAt: touchedAt,
+        updatedAt: touchedAt,
+      });
+      // Eleven decided touches: the first six stayed away an hour, past the 15-minute horizon of
+      // the 5m chart; the last five came back five minutes in, inside it. Enough for two
+      // rolling windows of ten.
+      const held = (index: number) => {
+        const touchedAt = at(14, index * 5);
+        return { ...base(index, touchedAt), outcome: 'never-returned', checkedAt: at(15, index * 5) };
+      };
+      const missed = (index: number) => {
+        const minute = (index - 6) * 5;
+        const touchedAt = at(16, minute);
+        return { ...base(index, touchedAt), outcome: 'returned', returnedAt: at(16, minute + 5) };
+      };
+
+      localStorage.setItem('ptj_marked_levels_v1', JSON.stringify([level('m1'), level('m2')]));
+      localStorage.setItem(
+        'ptj_level_touches_v1',
+        JSON.stringify([
+          ...[1, 2, 3, 4, 5, 6].map(held),
+          ...[7, 8, 9, 10, 11].map(missed),
+        ])
+      );
+    });
+    await page.reload();
+    await gotoPlaybook(page);
+
+    // The bucket is readable: six of eleven held the 15-minute horizon of the 5m chart.
+    await expect(page.locator('#playbook-timeframe-edge')).toBeVisible();
+    const row = page.locator('[data-timeframe-score="5m|resistance"]');
+    await expect(row).toHaveAttribute('data-timeframe-score-enough', 'true');
+    await expect(row).toContainText('held 54.5% of 11');
+    // The plain hold rate is the other half of the story, and reads lower than the horizon rate.
+    await expect(row).toContainText('never came back 54.5% (6/11)');
+    await expect(row).toContainText('held ≥ 15 min');
+
+    // The rolling read moves: the first window is 60%, the last loses one to a fast return.
+    await expect(page.locator('[data-trend-line]')).toBeVisible();
+    const read = page.locator('#timeframe-edge-trend-read');
+    await expect(read).toContainText('first 60%');
+    await expect(read).toContainText('last 50%');
+    await expect(read).toContainText('10 pts');
+  });
+
+  test('says nothing rather than inventing a rate on a fresh journal', async ({ page }) => {
+    await gotoPlaybook(page);
+    await expect(page.locator('#timeframe-edge-empty')).toBeVisible();
+    await expect(page.locator('#timeframe-edge-trend-empty')).toBeVisible();
+    await expect(page.locator('[data-timeframe-score]')).toHaveCount(0);
+    await expect(page.locator('[data-trend-line]')).toHaveCount(0);
+  });
+});
+
+/**
  * The weekday narrowing on the level-odds card.
  *
  * The market is closed on Saturday, so offering it in the picker could only ever return an

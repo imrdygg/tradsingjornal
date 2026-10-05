@@ -40,8 +40,8 @@ import {
  * The level record, drawn.
  *
  * The two cards above read the marked lines and the logged touches as counts and rates. This
- * one puts the same record on axes, because four things about a level journal are far easier to
- * see than to read:
+ * one puts the same record on axes, because what a level journal says is far easier to see
+ * than to read:
  *
  * 1. **Coverage by symbol** — how much of each contract's marked lines price ever reached, with
  *    the lines the trader closed out as never reached shown separately from the ones still open.

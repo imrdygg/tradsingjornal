@@ -908,6 +908,96 @@ test.describe('Timeframe edge', () => {
 });
 
 /**
+ * The recurrence breakdowns drawn rather than listed.
+ *
+ * "By touch order", "By weekday" and "By hour" were columns of percentages and counts that had to
+ * be compared by reading them. They are the same figures now, as bars: green where the sample
+ * carries a rate, grey where it is still being collected. Seeded, because the hour a touch falls
+ * in is read from its own timestamp.
+ */
+test.describe('Recurrence breakdowns as charts', () => {
+  test('draws the hour, weekday and touch-order reads as bars, and keeps a rate off a thin sample', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      const level = {
+        id: 'l1',
+        userId: 'solo-trader-01',
+        tradingDayId: 'day-2026-09-28',
+        tradeDate: '2026-09-28',
+        instrumentId: 'mes',
+        kind: 'resistance',
+        price: 7760,
+        zonePoints: 2,
+        session: 'Regular Session',
+        timeframe: '5m',
+        createdAt: '2026-09-28T12:00:00.000Z',
+        updatedAt: '2026-09-28T12:00:00.000Z',
+      };
+      const at = (hourUtc: number, minute: number) =>
+        `2026-09-28T${String(hourUtc).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00.000Z`;
+      const touch = (id: string, touchedAt: string, outcome: 'never-returned' | 'returned') => ({
+        id,
+        userId: 'solo-trader-01',
+        tradingDayId: 'day-2026-09-28',
+        tradeDate: '2026-09-28',
+        instrumentId: 'mes',
+        kind: 'resistance',
+        price: 7760,
+        zonePoints: 2,
+        touchedAt,
+        session: 'Regular Session',
+        checks: 1,
+        timeframe: '5m',
+        levelId: 'l1',
+        outcome,
+        createdAt: touchedAt,
+        updatedAt: touchedAt,
+      });
+
+      // Six at 08:00 New York (12:xx UTC) that held — a readable hour. Two at 09:00 that came
+      // back — a thin one, which must show a count and never a percentage.
+      const held = [5, 10, 15, 20, 25, 30].map((minute, index) =>
+        touch(`h${index}`, at(12, minute), 'never-returned')
+      );
+      const missed = [5, 10].map((minute, index) =>
+        touch(`m${index}`, at(13, minute), 'returned')
+      );
+
+      localStorage.setItem('ptj_marked_levels_v1', JSON.stringify([level]));
+      localStorage.setItem('ptj_level_touches_v1', JSON.stringify([...held, ...missed]));
+    });
+    await page.reload();
+    await gotoPlaybook(page);
+
+    await expect(page.locator('#playbook-edge-recurrence')).toBeVisible();
+
+    // The hour read is a grid of tiles, each with its own bar and figure.
+    await expect(page.locator('#recurrence-hours')).toBeVisible();
+    const readableHour = page.locator('[data-recurrence-bucket="hour:8"]');
+    await expect(readableHour).toHaveAttribute('data-recurrence-readable', 'true');
+    await expect(readableHour).toContainText('100%');
+
+    // Nine o'clock is two touches: the count, never a percentage.
+    const thinHour = page.locator('[data-recurrence-bucket="hour:9"]');
+    await expect(thinHour).toHaveAttribute('data-recurrence-readable', 'false');
+    await expect(thinHour).toContainText('2 decided');
+    await expect(thinHour).not.toContainText('%');
+
+    // Every touch printed on one Monday, so the weekday read is a single tile.
+    await expect(page.locator('[data-recurrence-bucket="weekday:1"]')).toHaveCount(1);
+
+    // The order read: everything from the third touch on is one bucket, and six decided touches
+    // is enough for a rate there — while the first touch of the day, on its own, is not.
+    const later = page.locator('[data-recurrence-ordinal="ordinal:3"]');
+    await expect(later).toHaveAttribute('data-recurrence-readable', 'true');
+    const first = page.locator('[data-recurrence-ordinal="ordinal:1"]');
+    await expect(first).toHaveAttribute('data-recurrence-readable', 'false');
+    await expect(first).toContainText('1 decided');
+  });
+});
+
+/**
  * The weekday narrowing on the level-odds card.
  *
  * The market is closed on Saturday, so offering it in the picker could only ever return an

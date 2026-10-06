@@ -41,6 +41,7 @@ import { COACH_WAIT_STEPS } from '../common/AiThinking';
 import { formatTimestamp } from '../../lib/storage/date-utils';
 import { formatLevelPrice, instrumentSymbol } from '../../lib/trading/instruments';
 import { LESSON_KINDS, LESSON_KIND_LABEL } from '../../lib/playbook/lessons';
+import { HoldRateTiles, OrdinalBars } from './recurrence-charts';
 
 /**
  * The break-and-run edge finder.
@@ -776,78 +777,49 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
           )}
 
           {recurrence.byOrdinal.length > 0 && (
-            <div className="space-y-1">
+            <div className="space-y-1.5">
               <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
                 By touch order in the day
               </span>
-              {recurrence.byOrdinal.map((bucket) => (
-                <div
-                  key={bucket.key}
-                  data-recurrence-ordinal={bucket.key}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-800/80 bg-zinc-950/40 px-2.5 py-1"
-                >
-                  <span className="truncate text-xs text-zinc-200">{bucket.label}</span>
-                  <span className="shrink-0 font-mono text-[10px] text-zinc-500">
-                    {bucket.stats.touches} touch{bucket.stats.touches === 1 ? '' : 'es'}
-                    {bucket.stats.decided === 0
-                      ? ' · no decided touch yet'
-                      : bucket.stats.enoughData
-                      ? ` · held ${formatRate(bucket.stats.holdRate)} of ${bucket.stats.decided}`
-                      : ` · ${bucket.stats.decided} decided — too thin for a rate`}
-                  </span>
-                </div>
-              ))}
+              <OrdinalBars
+                buckets={recurrence.byOrdinal}
+                minDecided={recurrence.minDecided}
+              />
             </div>
           )}
 
-          {(recurrence.byWeekday.length > 0 || recurrence.byHour.length > 0) && (
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {recurrence.byWeekday.length > 0 && (
-                <div className="space-y-1">
-                  <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
-                    By weekday
-                  </span>
-                  {recurrence.byWeekday.map((bucket) => (
-                    <div
-                      key={bucket.key}
-                      className="flex items-center justify-between gap-2 rounded-lg border border-zinc-800/80 bg-zinc-950/40 px-2.5 py-1"
-                    >
-                      <span className="text-xs text-zinc-200">{bucket.label}</span>
-                      <span className="font-mono text-[10px] text-zinc-500">
-                        {bucket.stats.enoughData
-                          ? `${formatRate(bucket.stats.holdRate)} of ${bucket.stats.decided}`
-                          : `${bucket.stats.decided} decided`}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {recurrence.byHour.length > 0 && (
-                <div className="space-y-1">
-                  <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
-                    By hour
-                  </span>
-                  {recurrence.byHour.map((bucket) => (
-                    <div
-                      key={bucket.key}
-                      className="flex items-center justify-between gap-2 rounded-lg border border-zinc-800/80 bg-zinc-950/40 px-2.5 py-1"
-                    >
-                      <span className="font-mono text-xs text-zinc-200">{bucket.label}</span>
-                      <span className="font-mono text-[10px] text-zinc-500">
-                        {bucket.stats.enoughData
-                          ? `${formatRate(bucket.stats.holdRate)} of ${bucket.stats.decided}`
-                          : `${bucket.stats.decided} decided`}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
+          {recurrence.byWeekday.length > 0 && (
+            <div className="space-y-1.5">
+              <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
+                By weekday
+              </span>
+              <HoldRateTiles
+                buckets={recurrence.byWeekday}
+                minDecided={recurrence.minDecided}
+              />
+            </div>
+          )}
+
+          {recurrence.byHour.length > 0 && (
+            <div className="space-y-1.5">
+              <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
+                By hour
+              </span>
+              <HoldRateTiles
+                id="recurrence-hours"
+                buckets={recurrence.byHour}
+                minDecided={recurrence.minDecided}
+                gridClass="grid-cols-4 sm:grid-cols-6 lg:grid-cols-8"
+              />
             </div>
           )}
 
           <p className="text-[10px] leading-relaxed text-zinc-500">
             A rate only appears once a condition has enough decided touches; below that the
-            counts are shown instead, because three touches are a tally and not an edge.
+            counts are shown instead, because three touches are a tally and not an edge. A green
+            bar is that bucket's hold rate; a grey one is how many decided touches it has against
+            the five a rate needs, so a short bar is a sample still being collected rather than a
+            weak edge.
           </p>
         </div>
       )}

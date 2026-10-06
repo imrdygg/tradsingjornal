@@ -138,6 +138,14 @@ interface EdgeState {
 const IDLE: EdgeState = { loading: false, result: null, failure: null };
 
 /** A rate, or an honest dash while the sample is too thin to carry one. */
+/**
+ * How many price lines the per-line chart draws before it stops.
+ *
+ * The list is ordered best-first, so a cut here keeps the lines nearest a rate and drops the
+ * ones furthest from one — and the note under it says how many were held back.
+ */
+const LINE_LIMIT = 12;
+
 function formatRate(rate: number | null): string {
   return rate === null ? '—' : `${rate}%`;
 }
@@ -238,6 +246,12 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
     recurrence.repeatedLevels.length > 0 ||
     recurrence.byOrdinal.length > 0 ||
     recurrence.byHour.length > 0;
+  // The price lines that have been touched, and how many of them carry a rate — the header of the
+  // per-line chart, and the honest answer before any of the bars are read.
+  const lineEdges = recurrence.lineEdges;
+  const ratedLines = lineEdges.filter(
+    (row) => row.stats.enoughData && row.stats.holdRate !== null
+  ).length;
   const labelOf = (bucket: TimeframeEdgeBucket) =>
     timeframeBucketLabel(bucket, instrumentSymbol(labelInstruments, bucket.instrumentId));
   const digest = useMemo(
@@ -812,6 +826,60 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
               The tick on the hold bar is 50% — the coin flip a hold rate is read against.
             </p>
           )}
+        </div>
+      )}
+
+      {/*
+        Every price line the trader has touched, drawn.
+
+        The block above groups the record by chart and side; this asks the same question of the
+        prices themselves, which is how a line is actually talked about — "7791.25 keeps holding"
+        is a sentence about a price, not about the chart it was read off. The lines whose sample
+        carries a rate lead, best first; the thin ones follow with the most evidence behind them
+        on top, so the lines closest to being readable come before the ones just logged.
+
+        A line with no touch at all is not here. Nothing has been said about it yet, and a row of
+        zeroes would suggest it had been judged.
+      */}
+      {lineEdges.length > 0 && (
+        <div
+          id="playbook-edge-lines"
+          className="space-y-2.5 rounded-xl border border-zinc-800 bg-zinc-900/50 p-3"
+        >
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
+              Every price line you have touched
+            </span>
+            <span className="text-[10px] text-zinc-500">
+              {ratedLines} of {lineEdges.length} with a rate
+            </span>
+          </div>
+          <div className="space-y-2.5">
+            {lineEdges.slice(0, LINE_LIMIT).map((row) => (
+              <div key={row.key} data-line-edge={row.key}>
+                <EdgeBar
+                  label={`${row.symbol} ${row.kind} ${formatLevelPrice(row.price)}`}
+                  detail={`${row.days} day${row.days === 1 ? '' : 's'} · ${row.touches} touch${
+                    row.touches === 1 ? '' : 'es'
+                  } · ${row.weekdays.join(', ')}`}
+                  stats={row.stats}
+                  minDecided={recurrence.minDecided}
+                  marker={50}
+                />
+              </div>
+            ))}
+          </div>
+          {lineEdges.length > LINE_LIMIT && (
+            <p className="text-[10px] text-zinc-600">
+              Showing the {LINE_LIMIT} closest to a rate of {lineEdges.length} price lines you
+              have touched.
+            </p>
+          )}
+          <p className="text-[10px] leading-relaxed text-zinc-500">
+            Green is a rate the sample supports; grey is a line still being collected, filled
+            against the {recurrence.minDecided} decided touches a rate needs — the same scale as
+            the bars above, so a short grey bar is a young line and not a weak one.
+          </p>
         </div>
       )}
 

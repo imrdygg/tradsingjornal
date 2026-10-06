@@ -1278,6 +1278,114 @@ test.describe('Edge finder record — the blocks as bars', () => {
 });
 
 /**
+ * Every price line, drawn with its own hit rate.
+ *
+ * A line is a price, not a chart: "7791.25 keeps holding" is the sentence a trader wants, and it
+ * can only be counted when the same price is marked and touched again. The chart therefore has to
+ * carry the lines with a single touch as well as the ones that keep printing — and be honest that
+ * a one-touch line has no rate yet rather than inventing one.
+ */
+test.describe('Edge finder — every price line drawn', () => {
+  test('rates the price a sample supports and leaves a one-touch line as a count', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      // Five days, one line at the same price each day, held on four of them: enough decided
+      // touches for a rate. Plus a line touched once, and a line marked and never tested.
+      const dates = ['2026-09-28', '2026-09-29', '2026-09-30', '2026-10-01', '2026-10-02'];
+      const level = (id: string, price: number, tradeDate: string) => ({
+        id,
+        userId: 'solo-trader-01',
+        tradingDayId: `day-${tradeDate}`,
+        tradeDate,
+        instrumentId: 'mes',
+        kind: 'resistance',
+        price,
+        zonePoints: 2,
+        session: 'Regular Session',
+        timeframe: '5m',
+        createdAt: `${tradeDate}T12:00:00.000Z`,
+        updatedAt: `${tradeDate}T12:00:00.000Z`,
+      });
+      const touch = (id: string, price: number, tradeDate: string, outcome: string) => ({
+        id,
+        userId: 'solo-trader-01',
+        tradingDayId: `day-${tradeDate}`,
+        tradeDate,
+        instrumentId: 'mes',
+        kind: 'resistance',
+        price,
+        zonePoints: 2,
+        touchedAt: `${tradeDate}T12:15:00.000Z`,
+        session: 'Regular Session',
+        checks: 1,
+        timeframe: '5m',
+        levelId: id.replace('t', 'l'),
+        outcome,
+        createdAt: `${tradeDate}T12:15:00.000Z`,
+        updatedAt: `${tradeDate}T12:15:00.000Z`,
+      });
+
+      const levels = [
+        ...dates.map((date, index) => level(`l${index}`, 7791.25, date)),
+        level('l5', 7760, '2026-10-02'),
+        // Marked and never touched: the chart must not give it a row, because nothing has been
+        // said about it.
+        level('l6', 7750, '2026-10-02'),
+      ];
+      const touches = [
+        ...dates.map((date, index) =>
+          touch(`t${index}`, 7791.25, date, index === 0 ? 'returned' : 'never-returned')
+        ),
+        touch('t5', 7760, '2026-10-02', 'never-returned'),
+      ];
+
+      localStorage.setItem('ptj_marked_levels_v1', JSON.stringify(levels));
+      localStorage.setItem('ptj_level_touches_v1', JSON.stringify(touches));
+    });
+    await page.reload();
+    await gotoPlaybook(page);
+
+    const block = page.locator('#playbook-edge-lines');
+    await expect(block).toBeVisible();
+    // Two price lines have been touched; one of them carries a rate.
+    await expect(block).toContainText('1 of 2 with a rate');
+
+    // The five-day line: one price, five touches, four of them holding into a readable 80%.
+    const repeated = page.locator('[data-line-edge="mes|resistance|7791.25"]');
+    await expect(repeated).toContainText('MES resistance 7791.25');
+    await expect(repeated).toContainText('5 days · 5 touches');
+    await expect(repeated.locator('[data-edge-bar="rate"]')).toHaveCount(1);
+    await expect(repeated).toContainText('80%');
+    await expect(repeated.locator('[data-edge-meter]')).toHaveAttribute(
+      'data-edge-meter',
+      '80'
+    );
+    await expect(repeated.locator('[data-edge-marker]')).toHaveAttribute(
+      'data-edge-marker',
+      '50'
+    );
+
+    // The one-touch line: a count, no percentage, and no tick on a bar that is not a rate.
+    const single = page.locator('[data-line-edge="mes|resistance|7760"]');
+    await expect(single.locator('[data-edge-bar="thin"]')).toHaveCount(1);
+    await expect(single).toContainText('1 decided — too thin for a rate');
+    await expect(single).not.toContainText('%');
+    await expect(single.locator('[data-edge-meter]')).toHaveAttribute(
+      'data-edge-meter',
+      '20'
+    );
+    await expect(single.locator('[data-edge-marker]')).toHaveCount(0);
+
+    // The line marked and never tested has no row here at all.
+    await expect(page.locator('[data-line-edge="mes|resistance|7750"]')).toHaveCount(0);
+
+    // It is read on the same scale as every other bar on the card, and says so.
+    await expect(block).toContainText('the same scale as the bars above');
+  });
+});
+
+/**
  * The weekday narrowing on the level-odds card.
  *
  * The market is closed on Saturday, so offering it in the picker could only ever return an

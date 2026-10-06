@@ -16,6 +16,9 @@ import { MIN_DECIDED, summarizeTouches, type LevelEdgeStats } from './level-edge
  * 2. **Across days.** The same line — same instrument, same side, same price — touched on
  *    different days, with the weekdays it printed on, so a pattern like "every Monday this line
  *    is reached and price comes back" is a fact the record can carry.
+ * 3. **Each price on its own.** Every price line that has been touched, with its own hold rate —
+ *    the way a trader talks about a level ("7791.25 keeps holding") rather than about the chart
+ *    it was read off, and the read that fills in as the same prices are marked again.
  *
  * Deliberately pure and symbol-free at the edges: it takes the touches, a timezone and the
  * instruments to name them, and returns counts. A rate is never returned without the decided
@@ -127,9 +130,25 @@ export interface RepeatedLevelRow {
   stats: LevelEdgeStats;
 }
 
+/**
+ * One price line's own record, whether price came back to it once or many times.
+ *
+ * The same row as `RepeatedLevelRow` — the fields are declared once so a single grouping pass can
+ * serve both reads, and this is the honest name for a line that has only been touched once.
+ */
+export type LineEdgeRow = RepeatedLevelRow;
+
 export interface LevelRecurrenceReport {
   /** Lines touched on more than one day, busiest first; bounded by the caller's slice. */
   repeatedLevels: RepeatedLevelRow[];
+  /**
+   * Every price line that has been touched at all, ready to draw as bars.
+   *
+   * The lines whose sample carries a rate lead, best hold rate first, then the thin ones with the
+   * most evidence behind them — so the lines closest to a rate are the ones read first. A line
+   * nothing has been logged against is not here: the record has said nothing about it yet.
+   */
+  lineEdges: LineEdgeRow[];
   /** Hold rate by where a touch fell in the day's own sequence. */
   byOrdinal: RecurrenceBucket[];
   /** Hold rate by the hour of day a touch printed, in the trader's timezone. */
@@ -214,29 +233,52 @@ export function summarizeLevelRecurrence(
   for (const touch of valid) {
     push(byLevel, levelKeyOf(touch), touch);
   }
-  const repeatedLevels: RepeatedLevelRow[] = [...byLevel.entries()]
-    .map(([key, list]) => {
-      const daySet = new Set(list.map((touch) => touch.tradeDate));
-      const weekdaySet = new Set(
-        list.map((touch) => WEEKDAY_NAMES[weekdayInTimezone(touchDate(touch), timezone)])
-      );
-      const first = list[0];
-      return {
-        key,
-        symbol: instrumentSymbol(instruments, first.instrumentId),
-        kind: first.kind,
-        price: first.price,
-        days: daySet.size,
-        touches: list.length,
-        weekdays: WEEK_ORDER.map((day) => WEEKDAY_NAMES[day]).filter((name) =>
-          weekdaySet.has(name)
-        ),
-        stats: summarizeTouches(list, minDecided),
-      };
-    })
+  const rows: RepeatedLevelRow[] = [...byLevel.entries()].map(([key, list]) => {
+    const daySet = new Set(list.map((touch) => touch.tradeDate));
+    const weekdaySet = new Set(
+      list.map((touch) => WEEKDAY_NAMES[weekdayInTimezone(touchDate(touch), timezone)])
+    );
+    const first = list[0];
+    return {
+      key,
+      symbol: instrumentSymbol(instruments, first.instrumentId),
+      kind: first.kind,
+      price: first.price,
+      days: daySet.size,
+      touches: list.length,
+      weekdays: WEEK_ORDER.map((day) => WEEKDAY_NAMES[day]).filter((name) =>
+        weekdaySet.has(name)
+      ),
+      stats: summarizeTouches(list, minDecided),
+    };
+  });
+
+  const repeatedLevels = rows
     // A line reached on one day only is not a recurrence; it is the ordinary case.
     .filter((row) => row.days > 1)
     .sort((a, b) => b.days - a.days || b.touches - a.touches || a.key.localeCompare(b.key));
 
-  return { repeatedLevels, byOrdinal, byHour, byWeekday, minDecided };
+  // The same rows, ordered for a chart of the prices themselves rather than for recurrence. A
+  // line with a rate leads, best first; a thin one is ordered by how much is behind it, so the
+  // lines closest to being readable come before the ones just logged.
+  const lineEdges = [...rows].sort((a, b) => {
+    const aRated = a.stats.enoughData && a.stats.holdRate !== null;
+    const bRated = b.stats.enoughData && b.stats.holdRate !== null;
+    if (aRated !== bRated) return aRated ? -1 : 1;
+    if (aRated && bRated) {
+      return (
+        (b.stats.holdRate ?? 0) - (a.stats.holdRate ?? 0) ||
+        b.stats.decided - a.stats.decided ||
+        a.key.localeCompare(b.key)
+      );
+    }
+    return (
+      b.stats.decided - a.stats.decided ||
+      b.touches - a.touches ||
+      b.days - a.days ||
+      a.key.localeCompare(b.key)
+    );
+  });
+
+  return { repeatedLevels, lineEdges, byOrdinal, byHour, byWeekday, minDecided };
 }

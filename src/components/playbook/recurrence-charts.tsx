@@ -102,6 +102,86 @@ export const HoldRateTiles: React.FC<{
 );
 
 /**
+ * One headline finding as a tile: the figure, the share behind it, and the condition it is about.
+ *
+ * The callouts at the top of the card were sentences that had to be read to the end before they
+ * could be compared. The figures are the same; drawn now, the finding is the number, the bar is
+ * the share it came from, and the condition is named above it. The detail line carries the raw
+ * counts, so nothing in the sentence is lost.
+ *
+ * `tone` is only ever colour and never changes what is claimed — the caller keeps thin samples
+ * out of here, so a tile that is drawn at all is a finding the record supports.
+ */
+export const HighlightTile: React.FC<{
+  /** The callout name, e.g. "Most reached". */
+  label: string;
+  /** The condition it is about, e.g. "MES 3 min support". */
+  condition: string;
+  /** The headline figure, already formatted. */
+  value: string;
+  /** What that figure counts, e.g. "lines reached". */
+  unit: string;
+  /** Where the bar fills to, 0-100. */
+  meter: number;
+  /** Colour only: `good` is a finding to lean on, `watch` one to look at. */
+  tone?: 'good' | 'watch';
+  /** The counts behind the figure. */
+  detail: string;
+  /** Optional reference tick on the bar, 0-100, with its meaning given by the caller. */
+  marker?: number;
+  /** Test hook; also the `data-highlight` value. */
+  name: string;
+}> = ({ label, condition, value, unit, meter, tone = 'good', detail, marker, name }) => {
+  const good = tone === 'good';
+  return (
+    <div
+      data-highlight={name}
+      data-highlight-tone={tone}
+      className={`space-y-1.5 rounded-xl border p-2.5 ${
+        good ? 'border-emerald-900/60 bg-emerald-950/25' : 'border-amber-900/60 bg-amber-950/20'
+      }`}
+    >
+      <span
+        className={`block font-mono text-[10px] font-bold uppercase tracking-wide ${
+          good ? 'text-emerald-300/90' : 'text-amber-300/90'
+        }`}
+      >
+        {label}
+      </span>
+      <span className="block truncate text-xs text-zinc-200" title={condition}>
+        {condition}
+      </span>
+      <div className="flex items-baseline gap-1.5">
+        <span
+          className={`font-mono text-xl font-bold leading-none ${
+            good ? 'text-emerald-300' : 'text-amber-300'
+          }`}
+        >
+          {value}
+        </span>
+        <span className="font-mono text-[10px] text-zinc-500">{unit}</span>
+      </div>
+      <div className="relative h-2 overflow-hidden rounded-full bg-zinc-800">
+        <div
+          data-highlight-meter={Math.round(clampPct(meter))}
+          className={`h-full rounded-full ${good ? 'bg-emerald-400' : 'bg-amber-400'}`}
+          style={{ width: `${clampPct(meter)}%` }}
+        />
+        {typeof marker === 'number' && (
+          <span
+            data-highlight-marker={Math.round(clampPct(marker))}
+            className="absolute inset-y-0 w-px bg-zinc-300/80"
+            style={{ left: `${clampPct(marker)}%` }}
+            aria-hidden
+          />
+        )}
+      </div>
+      <span className="block text-[10px] leading-snug text-zinc-500">{detail}</span>
+    </div>
+  );
+};
+
+/**
  * Buckets as stacked rows, for the read whose labels are sentences — the touch order in a day.
  *
  * The label needs the width, so the bar sits under it rather than beside it. Same scale as the

@@ -41,7 +41,7 @@ import { COACH_WAIT_STEPS } from '../common/AiThinking';
 import { formatTimestamp } from '../../lib/storage/date-utils';
 import { formatLevelPrice, instrumentSymbol } from '../../lib/trading/instruments';
 import { LESSON_KINDS, LESSON_KIND_LABEL } from '../../lib/playbook/lessons';
-import { HoldRateTiles, OrdinalBars } from './recurrence-charts';
+import { HighlightTile, HoldRateTiles, OrdinalBars } from './recurrence-charts';
 
 /**
  * The break-and-run edge finder.
@@ -689,39 +689,65 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
         The record's own headline findings.
 
         Shown before any AI runs, and drawn only from buckets that clear a count floor, so
-        each line is something the trader can check rather than a hunch dressed as a signal.
+        each tile is something the trader can check rather than a hunch dressed as a signal.
+        Each meter carries the share its figure came from, so a callout can be verified by eye.
       */}
       {(highlights.mostReached || highlights.mostIgnored || highlights.bestHold) && (
         <div
           id="playbook-edge-highlights"
-          className="space-y-1.5 rounded-xl border border-emerald-900/50 bg-emerald-950/20 p-3"
+          className="space-y-2 rounded-xl border border-emerald-900/50 bg-emerald-950/20 p-3"
         >
           <span className="text-[10px] font-mono uppercase font-bold text-emerald-300/90">
             What the record says
           </span>
-          {highlights.mostReached && (
-            <p className="text-[11px] leading-relaxed text-zinc-300">
-              <span className="font-semibold text-emerald-300">Most reached:</span>{' '}
-              {labelOf(highlights.mostReached)} — price has reached{' '}
-              {highlights.mostReached.tested} of its {highlights.mostReached.marked} marked
-              lines.
-            </p>
-          )}
-          {highlights.mostIgnored && (
-            <p className="text-[11px] leading-relaxed text-zinc-300">
-              <span className="font-semibold text-amber-300">Marked but rarely tested:</span>{' '}
-              {labelOf(highlights.mostIgnored)} — {highlights.mostIgnored.untested} of its{' '}
-              {highlights.mostIgnored.marked} lines have never been logged as touched.
-            </p>
-          )}
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            {highlights.mostReached && (
+              <HighlightTile
+                name="most-reached"
+                label="Most reached"
+                condition={labelOf(highlights.mostReached)}
+                value={`${highlights.mostReached.tested}/${highlights.mostReached.marked}`}
+                unit="lines reached"
+                meter={highlights.mostReached.testRate ?? 0}
+                detail={
+                  highlights.mostReached.untested > 0
+                    ? `${highlights.mostReached.untested} still with no answer logged`
+                    : 'every line you marked here has been reached'
+                }
+              />
+            )}
+            {highlights.mostIgnored && (
+              <HighlightTile
+                name="most-ignored"
+                label="Marked but rarely tested"
+                condition={labelOf(highlights.mostIgnored)}
+                value={`${highlights.mostIgnored.untested}/${highlights.mostIgnored.marked}`}
+                unit="never reached"
+                meter={100 - (highlights.mostIgnored.testRate ?? 0)}
+                tone="watch"
+                detail={`price reached ${highlights.mostIgnored.tested} of the ${
+                  highlights.mostIgnored.marked
+                } you marked here`}
+              />
+            )}
+            {highlights.bestHold && (
+              <HighlightTile
+                name="best-hold"
+                label="Strongest hold with a real sample"
+                condition={labelOf(highlights.bestHold)}
+                value={formatRate(highlights.bestHold.stats.holdRate)}
+                unit="never came back"
+                meter={highlights.bestHold.stats.holdRate ?? 0}
+                marker={50}
+                detail={`${highlights.bestHold.stats.decided} of ${
+                  highlights.bestHold.stats.touches
+                } touches decided`}
+              />
+            )}
+          </div>
           {highlights.bestHold && (
-            <p className="text-[11px] leading-relaxed text-zinc-300">
-              <span className="font-semibold text-emerald-300">
-                Strongest hold with a real sample:
-              </span>{' '}
-              {labelOf(highlights.bestHold)} — held{' '}
-              {formatRate(highlights.bestHold.stats.holdRate)} of{' '}
-              {highlights.bestHold.stats.decided} decided.
+            <p className="text-[10px] text-zinc-500">
+              The tick on the hold bar is 50% — the coin flip a hold rate is read against.
             </p>
           )}
         </div>

@@ -994,6 +994,127 @@ test.describe('Recurrence breakdowns as charts', () => {
     const first = page.locator('[data-recurrence-ordinal="ordinal:1"]');
     await expect(first).toHaveAttribute('data-recurrence-readable', 'false');
     await expect(first).toContainText('1 decided');
+
+    // One marked line, and a bucket reads one touch per line, so nothing here clears a count
+    // floor: no callout is drawn at all. The tiles are gated exactly like the sentences were,
+    // which is the point of the block — a headline off a single line would be a hunch.
+    await expect(page.locator('#playbook-edge-highlights')).toHaveCount(0);
+    await expect(page.locator('[data-highlight]')).toHaveCount(0);
+  });
+});
+
+/**
+ * The record's headline callouts drawn as tiles.
+ *
+ * These were three sentences — "Most reached: MES 5 min resistance — price has reached 5 of its 6
+ * marked lines" — that had to be read to the end before they could be compared with each other.
+ * The figures are unchanged; each now sits on the share it came from, so the finding can be read
+ * at a glance and checked against the bar. Seeded, because a callout is only drawn from a bucket
+ * that clears its count floor, so the seed has to clear it too.
+ */
+test.describe('What the record says — as tiles', () => {
+  test('draws each callout as its figure over the share behind it', async ({ page }) => {
+    await page.addInitScript(() => {
+      const day = {
+        userId: 'solo-trader-01',
+        tradingDayId: 'day-2026-09-28',
+        tradeDate: '2026-09-28',
+        instrumentId: 'mes',
+        session: 'Regular Session',
+        createdAt: '2026-09-28T12:00:00.000Z',
+        updatedAt: '2026-09-28T12:00:00.000Z',
+      };
+      const level = (id: string, kind: string, timeframe: string, price: number) => ({
+        ...day,
+        id,
+        kind,
+        timeframe,
+        price,
+        zonePoints: 2,
+      });
+      const touch = (id: string, levelId: string, outcome: string) => ({
+        ...day,
+        id,
+        levelId,
+        kind: levelId.startsWith('r') ? 'resistance' : 'support',
+        timeframe: levelId.startsWith('r') ? '5m' : '15m',
+        price: 7760,
+        zonePoints: 2,
+        touchedAt: '2026-09-28T12:15:00.000Z',
+        checks: 1,
+        outcome,
+      });
+
+      // The 5 min resistance chart: six lines marked, five of them reached — one held short of a
+      // clean sweep. Four never came back, so the hold rate here is 80% of five decided touches.
+      const resistance = [1, 2, 3, 4, 5, 6].map((index) =>
+        level(`r${index}`, 'resistance', '5m', 7760 + index)
+      );
+      const held = [1, 2, 3, 4].map((index) =>
+        touch(`t${index}`, `r${index}`, 'never-returned')
+      );
+      const missed = [touch('t5', 'r5', 'returned')];
+
+      // The 15 min support chart: five marked, one reached. A marked-and-ignored record, which is
+      // the callout that a low test rate is about.
+      const support = [1, 2, 3, 4, 5].map((index) =>
+        level(`s${index}`, 'support', '15m', 7700 - index)
+      );
+      const supportTouch = [touch('t6', 's1', 'never-returned')];
+
+      localStorage.setItem(
+        'ptj_marked_levels_v1',
+        JSON.stringify([...resistance, ...support])
+      );
+      localStorage.setItem(
+        'ptj_level_touches_v1',
+        JSON.stringify([...held, ...missed, ...supportTouch])
+      );
+    });
+    await page.reload();
+    await gotoPlaybook(page);
+
+    await expect(page.locator('#playbook-edge-highlights')).toBeVisible();
+
+    // Most reached: five of six lines, with the bar filled to the 83.3% that came from.
+    const mostReached = page.locator('[data-highlight="most-reached"]');
+    await expect(mostReached).toContainText('MES 5 min resistance');
+    await expect(mostReached).toContainText('5/6');
+    await expect(mostReached).toContainText('lines reached');
+    await expect(mostReached.locator('[data-highlight-meter]')).toHaveAttribute(
+      'data-highlight-meter',
+      '83'
+    );
+    await expect(mostReached).toContainText('1 still with no answer logged');
+
+    // Marked but rarely tested: four of five lines never reached, drawn as a watch.
+    const mostIgnored = page.locator('[data-highlight="most-ignored"]');
+    await expect(mostIgnored).toHaveAttribute('data-highlight-tone', 'watch');
+    await expect(mostIgnored).toContainText('MES 15 min support');
+    await expect(mostIgnored).toContainText('4/5');
+    await expect(mostIgnored).toContainText('never reached');
+    await expect(mostIgnored.locator('[data-highlight-meter]')).toHaveAttribute(
+      'data-highlight-meter',
+      '80'
+    );
+
+    // Strongest hold: the 80% of five decided, with the 50% coin-flip tick on the same bar.
+    const bestHold = page.locator('[data-highlight="best-hold"]');
+    await expect(bestHold).toContainText('MES 5 min resistance');
+    await expect(bestHold).toContainText('80%');
+    await expect(bestHold).toContainText('never came back');
+    await expect(bestHold).toContainText('5 of 5 touches decided');
+    await expect(bestHold.locator('[data-highlight-meter]')).toHaveAttribute(
+      'data-highlight-meter',
+      '80'
+    );
+    await expect(bestHold.locator('[data-highlight-marker]')).toHaveAttribute(
+      'data-highlight-marker',
+      '50'
+    );
+
+    // Only the hold rate is read against a reference line, so only that tile carries one.
+    await expect(mostReached.locator('[data-highlight-marker]')).toHaveCount(0);
   });
 });
 

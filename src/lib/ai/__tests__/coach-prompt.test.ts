@@ -1668,12 +1668,16 @@ describe('selfplan mode', () => {
   it("renders the trader's grades of past plans in every read", () => {
     const digest = digestFor({ coachPlans: [plan] });
     // The feedback is the only signal the coach has about how the trader wants a plan
-    // written, so it travels with every answer rather than only the next self-plan.
-    for (const mode of [...COACH_MODES, undefined]) {
+    // written, so it travels with every answer rather than only the next self-plan — every
+    // answer but the mindset reflection, which is given the notes alone.
+    for (const mode of [...COACH_MODES.filter((entry) => entry !== 'mindset'), undefined]) {
       const text = formatDigestForPrompt(digest, mode);
       expect(text).toContain("THE TRADER'S GRADES OF YOUR PAST PLANS");
       expect(text).toContain('Entry was too close to the level.');
     }
+    expect(formatDigestForPrompt(digest, 'mindset')).not.toContain(
+      "THE TRADER'S GRADES OF YOUR PAST PLANS"
+    );
     // And it is absent when the trader has graded nothing, so it never pads the prompt.
     expect(formatDigestForPrompt(digestFor(), 'brief')).not.toContain(
       "THE TRADER'S GRADES OF YOUR PAST PLANS"
@@ -1984,11 +1988,16 @@ describe('behaviour section in the prompt', () => {
   });
 
   it('reaches every mode, not just the brief', () => {
-    for (const mode of COACH_MODES) {
+    // Every mode but the mindset reflection, which is deliberately handed the trader's notes
+    // and nothing else: no behaviour section, no trades, no P&L.
+    for (const mode of COACH_MODES.filter((entry) => entry !== 'mindset')) {
       expect(buildCoachPrompt(mode, digestFor()).userPrompt).toContain(
         'BEHAVIOUR, READ FROM THEIR OWN TIMESTAMPS AND SIZES'
       );
     }
+    expect(buildCoachPrompt('mindset', digestFor()).userPrompt).not.toContain(
+      'BEHAVIOUR, READ FROM THEIR OWN TIMESTAMPS AND SIZES'
+    );
   });
 });
 
@@ -2367,7 +2376,8 @@ describe('the chart read drafts today’s plan', () => {
  * The mindset mode: the one place the coach reads the trader's own notes on what they were
  * thinking and feeling. What is asserted is the scaffolding that keeps it a reflection rather
  * than a diagnosis or a signal: the notes only reach that one mode, the rules ride along with
- * them, and a feeling is reported with the counts the digest handed over.
+ * them, a feeling is reported with the counts the digest handed over, and no trade or P&L
+ * detail is in the read at all.
  */
 describe('mindset mode', () => {
   const note: MindsetNote = {
@@ -2381,38 +2391,58 @@ describe('mindset mode', () => {
     updatedAt: '2026-09-18T14:30:00.000Z',
   };
 
-  it('renders the trader\u2019s own words, feeling and day link for the reflection only', () => {
+  it('renders the trader\u2019s own words and feeling, with counts, for the reflection only', () => {
     const digest = digestFor({ mindsetNotes: [note] });
     const text = formatDigestForPrompt(digest, 'mindset');
 
     expect(text).toContain('THEIR OWN MINDSET NOTES');
     expect(text).toContain('Chased the open and then doubled down to get it back.');
     expect(text).toContain('"frustrated": written in 1 note(s)');
+    // The feeling line carries the count and nothing about how the day went.
+    expect(text).not.toContain('average day P&L');
     // The section is kept out of every other read.
     expect(formatDigestForPrompt(digest)).not.toContain('MINDSET NOTES');
   });
 
-  it('adds the no-diagnosis rules to the guardrails with the notes', () => {
+  it('sends the notes and nothing else, so no trade or P&L reaches the reflection', () => {
+    const digest = digestFor({
+      tradingDays: [makeDay({ id: 'd1', tradeDate: '2026-09-18' })],
+      trades: [makeTrade({ id: 't1', tradingDayId: 'd1', netPnL: 45 })],
+      mindsetNotes: [note],
+    });
+    const text = formatDigestForPrompt(digest, 'mindset');
+
+    expect(text).toContain('THEIR OWN MINDSET NOTES');
+    // The trade is in the journal the digest was built from...
+    expect(digest.dataSufficiency.totalTrades).toBe(1);
+    // ...and none of that record is in this prompt: the reflection is about the notes alone.
+    expect(text).not.toContain('WHAT THE JOURNAL RECORDS');
+    expect(text).not.toContain('$');
+  });
+
+  it('adds the coach-for-the-mind rules, including no results, to the guardrails', () => {
     const { systemInstruction } = buildCoachPrompt('mindset', digestFor({ mindsetNotes: [note] }));
     expect(systemInstruction).toContain('NO MARKET DATA');
     expect(systemInstruction).toContain('YOU ARE NOT THEIR THERAPIST');
+    expect(systemInstruction).toContain('NO TRADES, NO P&L AND NO RESULTS');
     expect(systemInstruction).toContain('NEVER TURN A NOTE INTO A TRADE TO TAKE');
   });
 
-  it('parses the reflection and drops a pattern with no evidence', () => {
+  it('parses the reflection, keeps what to change, and drops a pattern with no evidence', () => {
     const parsed = parseCoachResponse('mindset', {
       headline: 'Your notes keep returning to chasing.',
-      moodRead: 'Most of your notes are written after chasing a move.',
+      read: 'Most of your notes are written after chasing a move.',
       patterns: [
         {
           pattern: 'Chasing the open',
           evidence: '2 notes, 2026-09-17 and 2026-09-18',
-          withTheirTrading: 'Both days closed red.',
+          whatItDoes: 'It pulls you into a move after it has already run.',
         },
         // No evidence: an impression, not a finding, so it is dropped rather than shown.
         { pattern: 'No evidence given' },
       ],
-      tradingLink: 'Frustrated days average -$200 across 1 day, too few to read.',
+      possibleCauses: 'The notes suggest the chase starts when you feel you have missed it.',
+      whatToChange: 'Wait for the pullback you wrote you wanted instead of taking the open.',
       notEnoughYet: 'Only a few notes so far.',
       nextStep: 'Write a note before the entry, not after it.',
       motivation: 'm',
@@ -2420,12 +2450,13 @@ describe('mindset mode', () => {
 
     expect(parsed.patterns).toHaveLength(1);
     expect(parsed.patterns[0].pattern).toBe('Chasing the open');
-    expect(parsed.tradingLink).toContain('-$200');
+    expect(parsed.patterns[0].whatItDoes).toContain('pulls you into');
+    expect(parsed.whatToChange).toContain('Wait for the pullback');
   });
 
   it('refuses a reflection with no headline', () => {
     expect(() =>
-      parseCoachResponse('mindset', { moodRead: 'x', nextStep: 'y', motivation: 'm' })
+      parseCoachResponse('mindset', { read: 'x', nextStep: 'y', motivation: 'm' })
     ).toThrow(/headline/);
   });
 });

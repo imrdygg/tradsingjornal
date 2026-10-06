@@ -636,39 +636,41 @@ export interface LessonTheme {
  * predicts anything and never turns a note into advice about the market: the lessons are the
  * trader's findings, and the coach's job is to read them back and point at the gaps.
  */
-/** One thought or feeling the trader keeps writing down, as the mindset read reports it. */
+/** One thought or habit the trader keeps writing down, as the mindset read reports it. */
 export interface MindsetPattern {
-  /** The thought or feeling that keeps coming back, in the trader's own terms. */
+  /** The thought, habit or feeling that keeps coming back, in the trader's own terms. */
   pattern: string;
   /** How often it appears and in which notes, with the counts behind it. */
   evidence: string;
   /**
-   * What it lines up with in the trader's own record — the sessions, days or results it tends
-   * to sit beside — or a plain statement that the record does not show a link yet.
+   * How it shows up — what it does to their thinking or their decisions, drawn from the notes
+   * themselves. Never a claim about their results.
    */
-  withTheirTrading: string;
+  whatItDoes: string;
 }
 
 /**
  * The read of the trader's own mindset notes.
  *
- * A reflection on their OWN words, in their own terms: the thoughts and feelings their notes
- * keep returning to, and whether a feeling tends to sit beside better or worse days. It is not
- * a market opinion and not a clinical judgement — the notes are the trader's own report, and
- * the fields are shaped so a feeling is only ever tied to counts the digest handed over.
+ * A reflection on their OWN words, in their own terms: the thoughts and feelings the notes keep
+ * returning to, what may be behind them, and what to do about it. It is deliberately blind to
+ * trades and P&L — the notes are the trader's own report of their head, and the read is about
+ * that alone, so a feeling is never tied to what a day made or lost. Not a market opinion and
+ * not a clinical judgement.
  */
 export interface MindsetResponse {
   headline: string;
-  /** What the notes keep returning to, quoting the trader's own words. */
-  moodRead: string;
+  /** What the notes keep saying about how the trader thinks and feels, quoting their own words. */
+  read: string;
   /** Repeating thoughts or feelings, best supported first. Empty when the notes are too thin. */
   patterns: MindsetPattern[];
   /**
-   * Whether a recorded feeling tends to sit beside the trader's own better or worse days,
-   * quoting the counts and averages from the digest, or saying plainly that the sample is too
-   * thin to show one. Never a market claim.
+   * What may be behind the patterns, offered as possibilities to test rather than as a verdict —
+   * never a diagnosis, and never read off their results.
    */
-  tradingLink: string;
+  possibleCauses: string;
+  /** What to change: the concrete things to do differently, drawn from what the notes show. */
+  whatToChange: string;
   /** What the notes do not cover, or that they are too few to say anything yet. */
   notEnoughYet: string;
   /** One concrete, checkable thing to write down or try next. */

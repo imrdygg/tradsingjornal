@@ -314,7 +314,7 @@ export const MindsetNoteCard: React.FC<MindsetNoteCardProps> = ({
 
             {loading && (
               <CoachLoading
-                label="Reading your notes against your own logged days…"
+                label="Reading what you wrote…"
                 steps={COACH_WAIT_STEPS('your notes')}
               />
             )}
@@ -334,7 +334,7 @@ export const MindsetNoteCard: React.FC<MindsetNoteCardProps> = ({
                 regenerateLabel="Reflect again"
               >
                 <p className="text-sm font-semibold text-zinc-100 leading-snug">{answer.headline}</p>
-                <p className="text-xs text-zinc-300 leading-relaxed">{answer.moodRead}</p>
+                <p className="text-xs text-zinc-300 leading-relaxed">{answer.read}</p>
 
                 {answer.patterns.length > 0 && (
                   <div className="space-y-2">
@@ -349,9 +349,9 @@ export const MindsetNoteCard: React.FC<MindsetNoteCardProps> = ({
                         <p className="mt-1 text-[11px] text-zinc-500 leading-relaxed">
                           Evidence: {pattern.evidence}
                         </p>
-                        {pattern.withTheirTrading && (
+                        {pattern.whatItDoes && (
                           <p className="mt-1 text-[11px] text-zinc-400 leading-relaxed">
-                            {pattern.withTheirTrading}
+                            {pattern.whatItDoes}
                           </p>
                         )}
                       </div>
@@ -359,12 +359,21 @@ export const MindsetNoteCard: React.FC<MindsetNoteCardProps> = ({
                   </div>
                 )}
 
-                {answer.tradingLink && (
+                {answer.possibleCauses && (
                   <div className="space-y-1">
                     <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
-                      Your feelings and your days
+                      What may be behind it
                     </span>
-                    <p className="text-xs text-zinc-300 leading-relaxed">{answer.tradingLink}</p>
+                    <p className="text-xs text-zinc-300 leading-relaxed">{answer.possibleCauses}</p>
+                  </div>
+                )}
+
+                {answer.whatToChange && (
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
+                      What to change
+                    </span>
+                    <p className="text-xs text-zinc-300 leading-relaxed">{answer.whatToChange}</p>
                   </div>
                 )}
 

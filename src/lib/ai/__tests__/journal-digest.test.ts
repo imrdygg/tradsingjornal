@@ -1243,8 +1243,9 @@ describe('todayLevels', () => {
 
 /**
  * The trader's own mindset notes: what they were thinking and feeling through the day. The
- * feeling tally and the day link are computed here before the model sees anything, so what is
- * asserted is that the counts travel with the finding and that a thin sample cannot read as one.
+ * feeling tally is computed here before the model sees anything, so what is asserted is that
+ * the counts travel with the finding — and that nothing about trades, P&L or results is joined
+ * to a note, because the read is about the trader's head alone.
  */
 describe("the trader's own mindset notes", () => {
   const note = (overrides: Partial<MindsetNote> = {}): MindsetNote => ({
@@ -1283,7 +1284,22 @@ describe("the trader's own mindset notes", () => {
     expect(read.withMood).toBe(2);
   });
 
-  it('counts each feeling and pairs it with what those days did', () => {
+  it('counts each feeling the trader recorded, most used first', () => {
+    const read = build({
+      mindsetNotes: [
+        note({ id: 'a', tradeDate: '2026-09-18', mood: 'frustrated' }),
+        note({ id: 'b', tradeDate: '2026-09-17', mood: 'frustrated' }),
+        note({ id: 'c', tradeDate: '2026-09-16', mood: 'calm' }),
+      ],
+    }).mindsetRead;
+
+    expect(read.moods[0]).toEqual({ mood: 'frustrated', notes: 2, days: 2 });
+    expect(read.moods[1]).toEqual({ mood: 'calm', notes: 1, days: 1 });
+  });
+
+  it('joins nothing about trades or P&L to a note, whatever the journal holds', () => {
+    // The read is about the trader's head: a day that made or lost money must not travel with
+    // a feeling, so the tally carries the counts and nothing to quote a result from.
     const read = build({
       tradingDays: [
         makeDay({ id: 'd1', tradeDate: '2026-09-18' }),
@@ -1299,30 +1315,10 @@ describe("the trader's own mindset notes", () => {
       ],
     }).mindsetRead;
 
-    expect(read.moods.find((m) => m.mood === 'frustrated')?.avgDayPnL).toBe(-200);
-    expect(read.moods.find((m) => m.mood === 'calm')?.avgDayPnL).toBe(100);
-  });
-
-  it('averages a feeling once per day, not once per note', () => {
-    const read = build({
-      tradingDays: [makeDay({ id: 'd1', tradeDate: '2026-09-18' })],
-      trades: [makeTrade({ id: 't1', tradingDayId: 'd1', netPnL: -200, rMultiple: -2 })],
-      mindsetNotes: [
-        note({ id: 'a', mood: 'tilted', createdAt: '2026-09-18T14:00:00.000Z' }),
-        note({ id: 'b', mood: 'tilted', createdAt: '2026-09-18T16:00:00.000Z' }),
-      ],
-    }).mindsetRead;
-
-    const tilted = read.moods.find((m) => m.mood === 'tilted');
-    expect(tilted?.notes).toBe(2);
-    expect(tilted?.days).toBe(1);
-    // One day\u2019s result, not the same day averaged twice.
-    expect(tilted?.avgDayPnL).toBe(-200);
-  });
-
-  it('withholds the day average when no day with that feeling closed a trade', () => {
-    const read = build({ mindsetNotes: [note({ id: 'a', mood: 'anxious' })] }).mindsetRead;
-    expect(read.moods[0].avgDayPnL).toBeNull();
+    // Exactly the notes' own facts, so there is no field for a result to arrive in.
+    for (const mood of read.moods) {
+      expect(Object.keys(mood).sort()).toEqual(['days', 'mood', 'notes']);
+    }
   });
 
   it('bounds the list and reports what was left out', () => {

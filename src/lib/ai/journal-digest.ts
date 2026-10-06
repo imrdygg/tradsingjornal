@@ -536,12 +536,12 @@ export interface DigestMindsetNote {
 }
 
 /**
- * One feeling and what the days it was written on actually did.
+ * One feeling the trader recorded, and how often.
  *
- * Counted here rather than left to the model so the counts behind any link travel with it: a
- * feeling recorded twice is not a finding, and `avgDayPnL` is withheld (null) until at least
- * one of its days closed a trade to average. The average is per DAY, not per note, so a single
- * session written about four times cannot weigh four times.
+ * Counted here rather than left to the model so the counts behind a pattern travel with it: a
+ * feeling recorded twice is not a finding. Only the notes' own facts are counted — this read is
+ * about the trader's head, deliberately apart from what their days made or lost, so no result
+ * is ever attached to a feeling.
  */
 export interface MindsetMoodResult {
   mood: string;
@@ -549,16 +549,15 @@ export interface MindsetMoodResult {
   notes: number;
   /** Distinct days those notes cover. */
   days: number;
-  /** Mean net P&L across those days that closed a trade, or null when none did. */
-  avgDayPnL: number | null;
 }
 
 /**
  * The trader's own mindset notes, as the one dedicated read may quote them.
  *
  * This is the only place the journal holds what the trader was thinking and feeling while they
- * traded, so it is also the only place a recorded feeling can be checked against what those
- * days actually did. It is read on request and never folded into the other answers.
+ * traded. The read reflects on those words alone — it is deliberately not joined to results, so
+ * a feeling is never tied to what a day made or lost. Read on request, never folded into the
+ * other answers.
  */
 export interface MindsetRead {
   /** The notes, newest first, bounded. */
@@ -1595,16 +1594,12 @@ function clockOf(iso: string, timezone: string): string | null {
 /**
  * Reads the trader's own mindset notes into the shape the one dedicated read may quote.
  *
- * `dayPnLByDate` is the trader's own net P&L per trading date, already computed for the rest
- * of the digest, so the feeling tally can be shown beside what those days did. The mood tally
- * and the average are computed here, before the model sees anything, so an impression cannot
- * stand in for the count.
+ * The tally is computed here, before the model sees anything, so an impression cannot stand in
+ * for the count. Nothing about trades, P&L or results is included: this read is a reflection on
+ * what the trader wrote, and joining it to outcomes would turn a note about their head into a
+ * verdict about their money.
  */
-function buildMindsetRead(
-  notes: MindsetNote[],
-  dayPnLByDate: Map<string, number>,
-  timezone: string
-): MindsetRead {
+function buildMindsetRead(notes: MindsetNote[], timezone: string): MindsetRead {
   const newestFirst = [...notes]
     .filter((note) => note && typeof note.text === 'string' && note.text.trim())
     .sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
@@ -1625,37 +1620,25 @@ function buildMindsetRead(
   });
 
   // The feeling is only counted when the trader named one — an unlabelled note is left out of
-  // the tally rather than read as neutral. The day link is drawn from the listed notes, so it
-  // can never point at a note the prompt does not carry.
-  const byMood = new Map<
-    string,
-    { notes: number; days: Set<string>; pnlByDay: Map<string, number> }
-  >();
+  // the tally rather than read as neutral. Counted from the listed notes, so a pattern can never
+  // point at a note the prompt does not carry.
+  const byMood = new Map<string, { notes: number; days: Set<string> }>();
   for (const note of listed) {
     if (!note.mood) continue;
-    const entry =
-      byMood.get(note.mood) ?? { notes: 0, days: new Set<string>(), pnlByDay: new Map() };
+    const entry = byMood.get(note.mood) ?? { notes: 0, days: new Set<string>() };
     entry.notes += 1;
     entry.days.add(note.date);
-    const dayPnL = dayPnLByDate.get(note.date);
-    // One sample per DAY, not per note: a session written about four times must not weigh four
-    // times in the average, or one day would read as a mood result.
-    if (dayPnL !== undefined) entry.pnlByDay.set(note.date, dayPnL);
     byMood.set(note.mood, entry);
   }
 
   const moods = [...byMood.entries()]
-    .map(([mood, entry]): MindsetMoodResult => {
-      const values = [...entry.pnlByDay.values()];
-      return {
+    .map(
+      ([mood, entry]): MindsetMoodResult => ({
         mood,
         notes: entry.notes,
         days: entry.days.size,
-        avgDayPnL: values.length
-          ? round(values.reduce((a, b) => a + b, 0) / values.length)
-          : null,
-      };
-    })
+      })
+    )
     .sort((a, b) => b.notes - a.notes || a.mood.localeCompare(b.mood));
 
   return {
@@ -2034,18 +2017,9 @@ export function buildJournalDigest(input: {
   const lessonRead = buildLessonRead(input.lessons ?? [], setups);
 
   // ---- What the trader was thinking and feeling ---------------------------
-  // The day P&L is put on the same date key the notes carry, so a recorded feeling can be read
-  // beside what the day actually did without the model doing its own arithmetic.
-  const dayPnLByDate = new Map<string, number>();
-  for (const [dayId, pnl] of dayPnLById) {
-    const day = dayById.get(dayId);
-    if (day) dayPnLByDate.set(day.tradeDate, pnl);
-  }
-  const mindsetRead = buildMindsetRead(
-    input.mindsetNotes ?? [],
-    dayPnLByDate,
-    input.timezone
-  );
+  // Read on the notes alone: no day P&L is joined to a feeling here, so the reflection stays
+  // about the trader's head rather than about what their days made or lost.
+  const mindsetRead = buildMindsetRead(input.mindsetNotes ?? [], input.timezone);
 
   // ---- The coach's own plans, and how the trader judged them ---------------
   const coachPlanRead = buildCoachPlanRead(input.coachPlans ?? []);

@@ -5,13 +5,12 @@ import type { Instrument } from '../../../types';
 
 /**
  * The instrument catalog has exactly the problem the setup catalog has: a stored list wins
- * over the defaults, so a contract added to `DEFAULT_INSTRUMENTS` in a release would only
- * ever appear on a journal that did not exist yet. Micro WTI is the contract that forced
- * this — the trader trades MCL and their journal predates it.
+ * over the defaults, so the read is what decides which contracts a journal actually keeps.
+ * The trader now records MES and nothing else, so this read is the thing that strips the
+ * micro Nasdaq, micro WTI, VIX and the wider complexes an existing journal may still hold.
  *
- * The merge has to grow the catalog without ever overwriting what the trader has done to
- * it: not the contracts they added, not the prices they corrected on the built-ins, and
- * not resurrecting one they deliberately removed.
+ * The prune must never touch what the trader has done to the catalog: not the contracts they
+ * added themselves, and not the prices they corrected on the built-ins.
  *
  * Vitest runs in node, so a fake localStorage is installed before each test, the same
  * approach the storage-failure and setup-catalog tests use.
@@ -97,23 +96,27 @@ beforeEach(() => {
 afterEach(removeStorage);
 
 describe('ensureInstrumentCatalog', () => {
-  it('adds the contracts a stored journal is missing', () => {
-    seedJournal([{ id: 'mes', symbol: 'MES' }], 1);
+  it('brings a stored journal back to the one contract it is for', () => {
+    // A journal that once carried the micros keeps them forever unless the read prunes them,
+    // and a stale cloud copy reintroduces them. Only MES survives.
+    seedJournal(
+      [
+        { id: 'mes', symbol: 'MES' },
+        { id: 'mnq', symbol: 'MNQ' },
+        { id: 'mcl', symbol: 'MCL' },
+        { id: 'vix', symbol: 'VIX' },
+      ],
+      1
+    );
 
     const result = storage.ensureInstrumentCatalog();
 
-    // Micro WTI is the one contract this journal is missing; the retired complexes are not
-    // brought back by the merge.
-    expect(symbols(result)).toContain('MCL');
-    expect(symbols(result)).not.toContain('CL');
-    expect(symbols(listInStorage())).toContain('MCL');
+    expect(symbols(result)).toEqual(['MES']);
+    expect(symbols(listInStorage())).toEqual(['MES']);
     expect(JSON.parse(fake.getItem(VERSION_KEY) ?? '0')).toBe(INSTRUMENT_CATALOG_VERSION);
   });
 
-  it('drops the contracts the journal no longer records', () => {
-    // A journal that grew the full complex keeps every retired contract forever unless the
-    // read prunes them, and a stale cloud copy reintroduces them. Only the three the trader
-    // uses survive.
+  it('drops the whole retired complex and the levels-only symbol', () => {
     seedJournal(
       [
         { id: 'mes', symbol: 'MES' },
@@ -121,14 +124,15 @@ describe('ensureInstrumentCatalog', () => {
         { id: 'gc', symbol: 'GC' },
         { id: 'cl', symbol: 'CL' },
         { id: 'mcl', symbol: 'MCL' },
+        { id: 'vix', symbol: 'VIX' },
       ],
       3
     );
 
     const result = storage.ensureInstrumentCatalog();
 
-    expect(symbols(result)).toEqual(['MES', 'MCL']);
-    expect(symbols(listInStorage())).toEqual(['MES', 'MCL']);
+    expect(symbols(result)).toEqual(['MES']);
+    expect(symbols(listInStorage())).toEqual(['MES']);
   });
 
   it('keeps the contract the trader added themselves', () => {
@@ -152,27 +156,6 @@ describe('ensureInstrumentCatalog', () => {
     const result = storage.ensureInstrumentCatalog();
 
     expect(result.find((instrument) => instrument.symbol === 'MES')?.pointValue).toBe(50);
-  });
-
-  it('never doubles a contract that is already in the list', () => {
-    seedJournal([{ id: 'mcl', symbol: 'MCL' }], 1);
-
-    const result = storage.ensureInstrumentCatalog();
-
-    expect(result.filter((instrument) => instrument.symbol === 'MCL')).toHaveLength(1);
-  });
-
-  it('gives micro WTI back to a journal whose marker had already passed it', () => {
-    // The reported case: the marker says the catalog is current and MCL is missing, because
-    // an earlier attempt announced it under a version the marker had already passed. Micro WTI
-    // is announced again from a version this journal has not reached precisely so it receives
-    // it, rather than the gap reading as a deliberate removal forever.
-    seedJournal([{ id: 'mes', symbol: 'MES' }], 4);
-
-    const result = storage.ensureInstrumentCatalog();
-
-    expect(symbols(result)).toContain('MCL');
-    expect(symbols(listInStorage())).toContain('MCL');
   });
 
   it('does not bring back a contract the version it arrived in already recorded', () => {

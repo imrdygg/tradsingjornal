@@ -998,8 +998,8 @@ export const SessionExtremesCard: React.FC<SessionExtremesCardProps> = ({
               />
             </React.Suspense>
             <p className="text-[10px] leading-relaxed text-zinc-600">
-              Separate price scales for MES, MNQ and MCL. Each dot is a manually logged session
-              extreme; gaps between dots are unknown, not interpolated.
+              Separate price scales for MES. Each dot is a manually logged session extreme;
+              gaps between dots are unknown, not interpolated.
             </p>
           </div>
 

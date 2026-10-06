@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import type { Instrument } from '../../../types';
+import { DEFAULT_INSTRUMENTS } from '../instruments';
 import { parseTradovateCSV, parseCsvRows } from '../tradovate-import';
 
 describe('parseCsvRows', () => {
@@ -51,6 +53,19 @@ describe('parseTradovateCSV — orders export with an empty order price', () => 
 });
 
 describe('parseTradovateCSV — fills export and instrument pricing', () => {
+  // The journal records MES alone, so the $2/pt contract this exercises is handed to the
+  // parser explicitly: the point is that a fill is priced by the contract it names, not that
+  // the catalog still carries that contract.
+  const MNQ: Instrument = {
+    id: 'mnq',
+    symbol: 'MNQ',
+    name: 'Micro E-mini Nasdaq-100',
+    pointValue: 2,
+    tickSize: 0.25,
+    tickValue: 0.5,
+    active: true,
+  };
+  const parse = (text: string) => parseTradovateCSV(text, [...DEFAULT_INSTRUMENTS, MNQ]);
   const csv = [
     'Timestamp,Symbol,Action,Qty,Price',
     '2026-09-18 09:31:00,MNQU6,Buy,1,20000.00',
@@ -58,8 +73,8 @@ describe('parseTradovateCSV — fills export and instrument pricing', () => {
     '2026-09-18 09:40:00,MNQU6,Sell,4,20000.00',
   ].join('\n');
 
-  it('matches a scale-in and prices it with MNQ’s $2/point', () => {
-    const result = parseTradovateCSV(csv);
+  it('matches a scale-in and prices it with the contract’s own $2/point', () => {
+    const result = parse(csv);
 
     expect(result.errors).toEqual([]);
     expect(result.trades).toHaveLength(1);
@@ -74,7 +89,7 @@ describe('parseTradovateCSV — fills export and instrument pricing', () => {
   });
 
   it('groups every leg of one position under a shared positionId', () => {
-    const result = parseTradovateCSV(csv);
+    const result = parse(csv);
     expect(result.trades[0].positionId).toBeTruthy();
   });
 });

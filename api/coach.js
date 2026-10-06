@@ -1002,7 +1002,7 @@ function formatLevelTimeframesForPrompt(read) {
     "=== MARKED LEVELS BY TIMEFRAME (the trader's own lines, written before any was touched) ==="
   );
   lines.push(
-    "The trader marks support and resistance from their indicator on 1m, 3m, 5m, 15m, 30m and 1h charts, for MES, MNQ, MCL and VIX, every day. A line is TESTED when a touch was logged against it and NEVER TESTED when nothing has been; the two are different facts and are never merged into one number. A row whose hold rate is marked NOT yet a rate has too few decided touches: report its counts and say plainly that no rate can be read from it."
+    "The trader marks support and resistance from their indicator on 1m, 3m, 5m, 15m, 30m and 1h charts, for MES, every day. A line is TESTED when a touch was logged against it and NEVER TESTED when nothing has been; the two are different facts and are never merged into one number. A row whose hold rate is marked NOT yet a rate has too few decided touches: report its counts and say plainly that no rate can be read from it."
   );
   lines.push(
     `${read.marked} line(s) marked: ${read.tested} tested, ${read.untested} never tested` + (read.neverTouched > 0 ? ` of which ${read.neverTouched} the trader has explicitly closed out as never reached` : "") + (read.voided > 0 ? `; ${read.voided} line(s) were set aside as void and left out` : "") + (read.testRate === null ? "." : ` (${read.testRate}% of marked lines were tested).`)
@@ -1080,7 +1080,7 @@ function formatLevelOutlooksForPrompt(read) {
   lines.push("");
   lines.push("=== THE TRADER'S OUTLOOK (their own read, written before the session) ===");
   lines.push(
-    "These are the trader's own expectations for the day, one per instrument. They are not a market read and not yours, and they may disagree with each other \u2014 MES bullish while MCL is bearish is normal. Treat them as what the trader thought, never as a fact about price."
+    "These are the trader's own expectations for the day, one per instrument. They are not a market read and not yours. Treat them as what the trader thought, never as a fact about price."
   );
   if (read.today.length) {
     lines.push("Today:");

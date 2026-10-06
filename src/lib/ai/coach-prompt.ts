@@ -772,7 +772,7 @@ function formatLevelTimeframesForPrompt(read: LevelTimeframesRead | undefined): 
   );
   lines.push(
     'The trader marks support and resistance from their indicator on 1m, 3m, 5m, 15m, 30m and 1h '
-      + 'charts, for MES, MNQ, MCL and VIX, every day. A line is TESTED when a touch was logged '
+      + 'charts, for MES, every day. A line is TESTED when a touch was logged '
       + 'against it and NEVER TESTED when nothing has been; the two are different facts and are '
       + 'never merged into one number. A row whose hold rate is marked NOT yet a rate has too '
       + 'few decided touches: report its counts and say plainly that no rate can be read from it.'
@@ -904,9 +904,8 @@ function formatLevelRecurrenceForPrompt(read: LevelRecurrenceRead | undefined): 
 /**
  * The trader's daily outlooks, rendered as their own opinion rather than a market fact.
  *
- * The instruments are allowed to disagree, and the text says so, so the model does not flatten
- * "MES bullish, MCL bearish" into one house view. The previous lean travels with today's so a
- * change of mind can be named — and quoted as the trader's, not as a call the coach is making.
+ * The previous lean travels with today's so a change of mind can be named — and quoted as the
+ * trader's, not as a call the coach is making.
  */
 function formatLevelOutlooksForPrompt(read: LevelOutlookRead | undefined): string[] {
   const lines: string[] = [];
@@ -916,8 +915,8 @@ function formatLevelOutlooksForPrompt(read: LevelOutlookRead | undefined): strin
   lines.push("=== THE TRADER'S OUTLOOK (their own read, written before the session) ===");
   lines.push(
     "These are the trader's own expectations for the day, one per instrument. They are not a "
-      + 'market read and not yours, and they may disagree with each other — MES bullish while MCL '
-      + 'is bearish is normal. Treat them as what the trader thought, never as a fact about price.'
+      + 'market read and not yours. Treat them as what the trader thought, never as a fact about '
+      + 'price.'
   );
 
   if (read.today.length) {

@@ -143,7 +143,7 @@ export const LevelChartCard: React.FC<LevelChartCardProps> = ({
   const compareInstrumentId =
     ownCompareId && ownCompareId !== instrumentId
       ? ownCompareId
-      : (instruments.find((inst) => inst.id !== instrumentId)?.id ?? instruments[0]?.id ?? 'mnq');
+      : (instruments.find((inst) => inst.id !== instrumentId)?.id ?? instruments[0]?.id ?? 'mes');
 
   // Every series is derived from the same two records. The symbol coverage is deliberately over
   // the WHOLE record — it is the one view that compares contracts — while the other three are
@@ -176,6 +176,15 @@ export const LevelChartCard: React.FC<LevelChartCardProps> = ({
 
   const hasAnyLevel = symbolCoverage.length > 0;
   const canCompare = symbolCoverage.length > 1;
+
+  /**
+   * The views on offer.
+   *
+   * Compare pairs two contracts, so it is dropped when the catalog holds one: a journal that
+   * records a single market has nothing to compare it against, and the tab would only ever
+   * open on its own empty state. Every other view stands on its own.
+   */
+  const views = instruments.length > 1 ? VIEWS : VIEWS.filter((entry) => entry.id !== 'compare');
 
   // The one blind spot worth naming: the line the trader keeps marking and price keeps missing.
   // Read over the whole record, not the selected contract, because that is the question the
@@ -255,9 +264,11 @@ export const LevelChartCard: React.FC<LevelChartCardProps> = ({
       <div
         role="tablist"
         aria-label="Level chart views"
-        className="grid grid-cols-2 gap-1.5 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-1.5 sm:grid-cols-5"
+        className={`grid grid-cols-2 gap-1.5 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-1.5 ${
+          views.length >= VIEWS.length ? 'sm:grid-cols-5' : 'sm:grid-cols-4'
+        }`}
       >
-        {VIEWS.map((entry) => (
+        {views.map((entry) => (
           <button
             key={entry.id}
             type="button"

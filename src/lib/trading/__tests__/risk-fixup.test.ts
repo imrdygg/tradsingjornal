@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Trade } from '../../../types';
+import { Trade, Instrument } from '../../../types';
 import { DEFAULT_INSTRUMENTS, findInstrument } from '../instruments';
 import {
   deriveStop,
@@ -12,7 +12,20 @@ import {
 } from '../risk-fixup';
 
 const MES = findInstrument(DEFAULT_INSTRUMENTS, 'mes')!; // $5/pt, 0.25 tick
-const MNQ = findInstrument(DEFAULT_INSTRUMENTS, 'mnq')!; // $2/pt, 0.25 tick
+/**
+ * A contract the journal no longer records, kept here on purpose: the maths has to read the
+ * instrument it is handed rather than pricing every trade as MES, and that has to stay true
+ * even though the catalog now carries one contract.
+ */
+const MNQ: Instrument = {
+  id: 'mnq',
+  symbol: 'MNQ',
+  name: 'Micro E-mini Nasdaq-100',
+  pointValue: 2,
+  tickSize: 0.25,
+  tickValue: 0.5,
+  active: true,
+};
 
 function makeTrade(overrides: Partial<Trade> = {}): Trade {
   return {
@@ -253,7 +266,11 @@ describe('previewRiskFix', () => {
       makeTrade({ id: 'mnq-trade', instrumentId: 'mnq', entryPrice: 18000, contracts: 1 }),
     ];
 
-    const result = preview(trades, { mode: 'dollars', dollars: 100 });
+    const result = previewRiskFix({
+      trades,
+      instruments: [...DEFAULT_INSTRUMENTS, MNQ],
+      plan: { mode: 'dollars', dollars: 100 },
+    });
     const mes = result.items.find((i) => i.tradeId === 'mes-trade')!;
     const mnq = result.items.find((i) => i.tradeId === 'mnq-trade')!;
 

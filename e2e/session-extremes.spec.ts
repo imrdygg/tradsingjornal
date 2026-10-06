@@ -12,7 +12,7 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/');
 });
 
-test('plots all three symbols separately and keeps price edits and ratings', async ({ page }) => {
+test('plots the session extremes and keeps price edits and ratings', async ({ page }) => {
   const card = page.locator('#session-extremes');
   await card.scrollIntoViewIfNeeded();
   const date = await page.locator('#extreme-date').inputValue();
@@ -26,15 +26,12 @@ test('plots all three symbols separately and keeps price edits and ratings', asy
     await page.locator('#extreme-save').click();
   };
 
+  // MES is the only instrument the journal records, so its own high is the whole log.
   await addExtreme('MES', 'high', '08:05', '6012.25');
-  await addExtreme('MNQ', 'low', '08:15', '21950');
-  await addExtreme('MCL', 'high', '08:25', '70.25');
 
   const charts = page.locator('#extremes-price-pattern');
   await expect(charts.locator('[data-extreme-price-chart="MES"]')).toHaveAttribute('data-extreme-chart-count', '1');
-  await expect(charts.locator('[data-extreme-price-chart="MNQ"]')).toHaveAttribute('data-extreme-chart-count', '1');
-  await expect(charts.locator('[data-extreme-price-chart="MCL"]')).toHaveAttribute('data-extreme-chart-count', '1');
-  await expect(charts).toContainText('Separate price scales for MES, MNQ and MCL');
+  await expect(charts).toContainText('Separate price scales for MES');
 
   const mesRow = card.locator('[data-extreme-row]').filter({ hasText: '08:05' });
   const mesId = await mesRow.getAttribute('data-extreme-row');
@@ -55,8 +52,6 @@ test('plots all three symbols separately and keeps price edits and ratings', asy
   await expect(restored).toContainText('6013.25');
   await expect(restored.getByRole('button', { name: /Rated/ })).toBeVisible();
   await expect(page.locator('#extremes-price-pattern [data-extreme-price-chart="MES"]')).toHaveAttribute('data-extreme-chart-count', '1');
-  await expect(page.locator('#extremes-price-pattern [data-extreme-price-chart="MNQ"]')).toHaveAttribute('data-extreme-chart-count', '1');
-  await expect(page.locator('#extremes-price-pattern [data-extreme-price-chart="MCL"]')).toHaveAttribute('data-extreme-chart-count', '1');
 });
 
 /**

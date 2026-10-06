@@ -990,10 +990,6 @@ test.describe('Level charts', () => {
           level('l4', 7805, '2026-09-30'),
           level('l5', 7820, '2026-10-01'),
           level('l6', 7835, '2026-10-02'),
-          // A second contract, so the compare view has two sides. Kept under the fixup floors
-          // so it does not displace the MES finding asserted below.
-          level('n1', 20500, '2026-09-28', undefined, 'mnq'),
-          level('n2', 20520, '2026-09-29', undefined, 'mnq'),
         ])
       );
       localStorage.setItem(
@@ -1001,7 +997,6 @@ test.describe('Level charts', () => {
         JSON.stringify([
           touch('t1', 'l1', '2026-09-28', 'never-returned', 7760),
           touch('t2', 'l3', '2026-09-29', 'returned', 7790),
-          touch('t3', 'n1', '2026-09-28', 'returned', 20500, 'mnq'),
         ])
       );
     });
@@ -1024,11 +1019,9 @@ test.describe('Level charts', () => {
     await page.locator('#level-chart-tab-sessions').click();
     await expect(page.locator('#level-chart-sessions svg[role="application"]')).toBeVisible();
 
-    // Two contracts side by side, with the second selector defaulting to the other contract.
-    await page.locator('#level-chart-tab-compare').click();
-    await expect(page.locator('#level-chart-compare svg[role="application"]')).toBeVisible();
-    await expect(page.locator('#level-chart-compare')).toContainText('MNQ');
-    await expect(page.locator('#level-chart-compare')).toContainText('MES');
+    // Compare pairs two contracts, so it is gone from a journal that records one: a single
+    // market has nothing to compare against, and the tab would only open on its own empty state.
+    await expect(page.locator('#level-chart-tab-compare')).toHaveCount(0);
 
     // And it survives a reload, because it is drawn from the journal, not from React state.
     await page.reload();

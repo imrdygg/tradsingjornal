@@ -21,12 +21,10 @@ const NOT_IN_THE_CATALOG = 'ng';
 describe('instrumentSymbol', () => {
   it('resolves a stored instrument id to its display symbol', () => {
     expect(instrumentSymbol(DEFAULT_INSTRUMENTS, 'mes')).toBe('MES');
-    expect(instrumentSymbol(DEFAULT_INSTRUMENTS, 'mnq')).toBe('MNQ');
-    expect(instrumentSymbol(DEFAULT_INSTRUMENTS, 'es')).toBe('ES');
   });
 
   it('accepts a symbol as well as an id', () => {
-    expect(instrumentSymbol(DEFAULT_INSTRUMENTS, 'MNQ')).toBe('MNQ');
+    expect(instrumentSymbol(DEFAULT_INSTRUMENTS, 'MES')).toBe('MES');
   });
 
   it('never falls back to MES for an unknown instrument', () => {
@@ -56,20 +54,14 @@ describe('the built-in catalog', () => {
     }
   });
 
-  it('holds exactly the three contracts this journal is for', () => {
-    expect(DEFAULT_INSTRUMENTS.map((instrument) => instrument.symbol)).toEqual([
-      'MES',
-      'MNQ',
-      'MCL',
-    ]);
+  it('holds exactly the one contract this journal is for', () => {
+    expect(DEFAULT_INSTRUMENTS.map((instrument) => instrument.symbol)).toEqual(['MES']);
   });
 
   it('matches the dollar figures a trader would check by hand', () => {
     const pointValue = (symbol: string) => findInstrument(DEFAULT_INSTRUMENTS, symbol).pointValue;
 
     expect(pointValue('MES')).toBe(5);
-    expect(pointValue('MNQ')).toBe(2);
-    expect(pointValue('MCL')).toBe(100);
   });
 
   it('can quote every contract it records, so no instrument silently has no live read', () => {
@@ -90,10 +82,10 @@ describe('defaultLevelZonePoints', () => {
     defaultLevelZonePoints(findInstrument(DEFAULT_INSTRUMENTS, symbol));
 
   it('derives the level width from the contract tick, not one figure for all', () => {
-    // 4 points is sixteen ticks of MES, but $400 of crude — the same number cannot be both.
+    // 4 points is sixteen ticks of MES. A contract trading in a smaller tick gets a narrower
+    // band, which is what keeps one width from being copied onto a market it does not fit.
     expect(zone('MES')).toBe(4);
-    expect(zone('MNQ')).toBe(4);
-    expect(zone('MCL')).toBe(0.16);
+    expect(defaultLevelZonePoints({ ...DEFAULT_INSTRUMENTS[0], tickSize: 0.01 })).toBe(0.16);
   });
 
   it('falls back to four points when the instrument or its tick is unusable', () => {
@@ -111,8 +103,8 @@ describe('formatPoints', () => {
 
 describe('formatLevelPrice', () => {
   it('keeps the trailing zero a stored number drops', () => {
-    // Stored as numbers, a crude line entered at 80.80 and one at 89.30 come back as 80.8
-    // and 89.3; showing them that way reads as different prices. Two decimals restores them.
+    // Stored as numbers, a line entered at 80.80 and one at 89.30 come back as 80.8 and 89.3;
+    // showing them that way reads as different prices. Two decimals restores them.
     expect(formatLevelPrice(80.8)).toBe('80.80');
     expect(formatLevelPrice(89.3)).toBe('89.30');
     expect(formatLevelPrice(88.88)).toBe('88.88');
@@ -130,21 +122,21 @@ describe('formatLevelPrice', () => {
 describe('findInstrumentByContract', () => {
   it('matches the full broker contract month code', () => {
     expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'MESZ5')?.symbol).toBe('MES');
-    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'MNQU6')?.symbol).toBe('MNQ');
-    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'MCLZ5')?.symbol).toBe('MCL');
+    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'MESU6')?.symbol).toBe('MES');
   });
 
   it('does not resolve a contract the journal no longer records', () => {
-    // ES, GC, CL and the rest were retired, so a broker export naming one must not be read
-    // as some other instrument just because its root is a prefix of a tracked symbol.
+    // MNQ, MCL, ES, GC, CL and the rest were retired, so a broker export naming one must not
+    // be read as some other instrument just because its root is a prefix of a tracked symbol.
+    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'MNQU6')).toBeUndefined();
+    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'MCLZ5')).toBeUndefined();
     expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'ESH4')).toBeUndefined();
     expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'GCZ5')).toBeUndefined();
     expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'CLZ5')).toBeUndefined();
-    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'MCLZ5')?.symbol).toBe('MCL');
   });
 
   it('is case insensitive and returns undefined for unknown contracts', () => {
-    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'mnqu6')?.symbol).toBe('MNQ');
+    expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'mesu6')?.symbol).toBe('MES');
     expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, 'NGZ5')).toBeUndefined();
     expect(findInstrumentByContract(DEFAULT_INSTRUMENTS, '')).toBeUndefined();
   });

@@ -1,12 +1,11 @@
 import { Instrument } from '../../types';
 
 /**
- * The built-in instrument catalog: the three contracts this journal is for.
+ * The built-in instrument catalog: the one contract this journal is for.
  *
- * It is deliberately short. The journal is one trader's record, and this trader trades
- * micro S&P, micro Nasdaq and micro WTI — nothing else. A dropdown of fifteen contracts
- * turns recording a trade into a search and invites a wrong one to be picked; the three
- * the trader actually uses sit there and nothing else does.
+ * It is deliberately a single entry. The journal is one trader's record, and this trader
+ * trades micro S&P and nothing else. A dropdown of other contracts turns recording a trade
+ * into a search and invites a wrong one to be picked; MES sits there and nothing else does.
  *
  * `since` marks the catalog version an instrument arrived in, and it is what lets the
  * catalog grow for a journal that already exists: see `ensureInstrumentCatalog`. Entries
@@ -17,15 +16,11 @@ import { Instrument } from '../../types';
  * The current built-in catalog version. Bump it, and tag the new instruments with the new
  * number, when adding contracts that existing journals should receive.
  *
- * 1 — the equity index futures the journal shipped with.
- * 2 — micro WTI.
- * 3 — the rest of the index, metals and energy complexes, micro and full size.
- * 4 — micro WTI announced again, so a journal that is somehow missing it receives it.
- * 5 — micro WTI announced once more, from a version a journal that somehow passed 4
- *     without receiving it has not yet reached.
- * 6 — micro WTI announced again, because the 5 tag could not reach a journal whose marker
- *     had already recorded 5 without holding it. No journal can have recorded 6 yet, so
- *     this reaches every one; a journal that already holds MCL is untouched.
+ * The catalog grew over several releases to carry the equity index, metals and energy
+ * complexes. Those are gone now: the trader trades MES alone, and every other contract —
+ * including the micro Nasdaq and micro WTI this file used to hold — is retired below, so a
+ * journal that once carried them is brought back to MES on its next read. There is nothing
+ * left to add, so the marker survives only to keep the merge's rule well defined.
  */
 export const INSTRUMENT_CATALOG_VERSION = 6;
 
@@ -34,11 +29,18 @@ export const INSTRUMENT_CATALOG_VERSION = 6;
  *
  * The merge in `ensureInstrumentCatalog` only ever adds, so a journal that received ES, GC,
  * CL and the rest would keep them forever. These ids are stripped from a stored list on
- * every read instead, so a journal that grew the full catalog is brought back to the three
- * the trader uses. Matched on id, which is stable for the built-ins, so a contract the
- * trader added themselves under another id is untouched.
+ * every read instead, so a journal that grew the full catalog is brought back to the one
+ * contract the trader uses. Matched on id, which is stable for the built-ins, so a contract
+ * the trader added themselves under another id is untouched.
+ *
+ * MNQ and MCL were this catalog's own defaults until the trader narrowed the journal to
+ * MES; VIX was a levels-only symbol. All three are listed here so an existing journal loses
+ * them too, rather than only a fresh install being clean.
  */
 export const RETIRED_INSTRUMENT_IDS: readonly string[] = [
+  'mnq',
+  'mcl',
+  'vix',
   'es',
   'nq',
   'mym',
@@ -62,79 +64,44 @@ export const DEFAULT_INSTRUMENTS: Instrument[] = [
     tickValue: 1.25,
     active: true,
   },
-  {
-    id: 'mnq',
-    symbol: 'MNQ',
-    name: 'Micro E-mini Nasdaq-100',
-    pointValue: 2,
-    tickSize: 0.25,
-    tickValue: 0.5,
-    active: true,
-  },
-  // Micro WTI is 100 barrels, so a $1.00 move in the barrel price is $100 per contract.
-  //
-  // Tagged at version 6, three releases past the 2 it first arrived in: a journal whose
-  // catalog marker had already passed micro WTI but which did not hold it was reaching a
-  // state the upgrade rule reads as a deliberate removal. Re-announcing it is the only way
-  // that journal receives it, and a journal that already has it is untouched — the merge
-  // skips anything already present by symbol or id. The version must be one the journal has
-  // not yet recorded, so each attempt advances the marker rather than reusing it.
-  {
-    id: 'mcl',
-    symbol: 'MCL',
-    name: 'Micro WTI Crude Oil',
-    pointValue: 100,
-    tickSize: 0.01,
-    tickValue: 1,
-    active: true,
-    since: 6,
-  },
 ];
 
 /**
  * The instruments whose session extremes the trader logs.
  *
- * Deliberately their own short list rather than every contract in the catalog, because the
- * log exists to answer a question about these three contracts specifically.
+ * One now: MES. It was the micro Nasdaq and micro WTI as well, but the journal records a
+ * single contract, so there is nothing else to log extremes against.
  */
-export const TRACKED_EXTREME_SYMBOLS: readonly string[] = ['MES', 'MNQ', 'MCL'];
+export const TRACKED_EXTREME_SYMBOLS: readonly string[] = ['MES'];
 
 /**
  * The instruments whose support and resistance lines the trader marks, every day.
  *
- * Their three tradable contracts plus VIX, which they read but do not trade. Kept as its own
- * list rather than added to the catalog above, because the catalog is what the trade form and
- * the P&L read from — a levels-only symbol must never appear there and be mistaken for
- * something the account can hold.
+ * MES alone. It also carried the micro Nasdaq and micro WTI, and VIX as a symbol the trader
+ * read but did not trade; all four became one when the journal narrowed to a single market.
+ * Kept as its own list rather than read straight off the catalog, because the catalog is what
+ * the trade form and the P&L read from — a levels-only symbol must never appear there and be
+ * mistaken for something the account can hold.
  */
-export const TRACKED_LEVEL_SYMBOLS: readonly string[] = ['MES', 'MNQ', 'MCL', 'VIX'];
+export const TRACKED_LEVEL_SYMBOLS: readonly string[] = ['MES'];
 
 /**
  * Levels-only instruments that are not in the trade catalog.
  *
- * Given a zero point value on purpose: nothing here can be priced or traded, so if one ever
- * reached a trade calculation it would contribute nothing rather than inventing a figure.
+ * Empty since VIX — the only such symbol — was removed. The list and the path that reads it
+ * are kept: marking a level on a market you do not trade is still something this card can
+ * do, so adding one back should be a single entry rather than a new feature.
  */
-export const LEVEL_ONLY_INSTRUMENTS: Instrument[] = [
-  {
-    id: 'vix',
-    symbol: 'VIX',
-    name: 'CBOE Volatility Index',
-    pointValue: 0,
-    tickSize: 0.01,
-    tickValue: 0,
-    active: true,
-  },
-];
+export const LEVEL_ONLY_INSTRUMENTS: Instrument[] = [];
 
 /**
- * The instruments the level-marking card offers, in a fixed order: the trader's four.
+ * The instruments the level-marking card offers, in a fixed order: MES.
  *
  * The journal's own entry wins whenever the catalog holds the symbol, so a corrected name or
  * an added contract is respected; a symbol the catalog does not hold falls back to the
- * built-in definition, and VIX to its levels-only one. Mirrors `trackedExtremeInstruments`
- * for the same reason: this card exists to record these four specifically and must not depend
- * on a catalog migration having delivered them.
+ * built-in definition, and a levels-only symbol to its own. Mirrors
+ * `trackedExtremeInstruments` for the same reason: this card exists to record this contract
+ * specifically and must not depend on a catalog migration having delivered it.
  */
 export function trackedLevelInstruments(instruments: Instrument[]): Instrument[] {
   const bySymbol = new Map<string, Instrument>();
@@ -161,11 +128,11 @@ export function trackedLevelInstruments(instruments: Instrument[]): Instrument[]
  * The journal's own entry is used whenever the catalog holds it, so a trader who corrected a
  * point value or deactivated one of the three sees their version. When the catalog does not
  * hold one, the built-in definition is used rather than leaving a gap: this log exists to
- * record these three contracts specifically, and it must not depend on a catalog migration
- * having delivered them.
+ * record this contract specifically, and it must not depend on a catalog migration having
+ * delivered it.
  *
  * Falls back to the whole catalog only when the list is unusable, so the picker is never
- * empty for a trader who has removed all three from their own catalog.
+ * empty for a trader who has removed it from their own catalog.
  */
 export function trackedExtremeInstruments(instruments: Instrument[]): Instrument[] {
   const bySymbol = new Map<string, Instrument>();
@@ -198,8 +165,8 @@ export const DEFAULT_LEVEL_ZONE_TICKS = 16;
  * A level is a zone, not a tick — the edge code only counts price as having broken a level once
  * it leaves a band around it, and counts a step back inside the band as the level failing — so
  * the width is a real setting and one figure cannot fit every contract. Four points is sixteen
- * ticks of MES but $400 of crude: the default is derived from the contract's own tick so each
- * instrument starts somewhere sensible instead of copying crude's mistake onto the index.
+ * ticks of MES: the default is derived from the contract's own tick so an instrument starts
+ * somewhere sensible instead of copying one contract's width onto another.
  */
 export function defaultLevelZonePoints(instrument: Instrument | undefined): number {
   const tick = instrument?.tickSize;
@@ -215,12 +182,11 @@ export function formatPoints(value: number): string {
 /**
  * A price the trader recorded, shown at the two decimals the price fields are typed in.
  *
- * Prices are held as numbers, so a line marked at 80.80 comes back as 80.8 — printing the
- * number straight silently drops the trailing zero and reads as a different price, which is
- * exactly what a crude (MCL) line does because it trades in cents. The level editors, the
- * marked-line list, the touch log and the session extremes all show two decimals; this is
- * that convention in one place, so a line entered at 80.80 reads as 80.80 everywhere without
- * changing what is stored.
+ * Prices are held as numbers, so a line marked at 7760.80 comes back as 7760.8 — printing the
+ * number straight silently drops the trailing zero and reads as a different price. The level
+ * editors, the marked-line list, the touch log and the session extremes all show two decimals;
+ * this is that convention in one place, so a line entered at 7760.80 reads as 7760.80
+ * everywhere without changing what is stored.
  */
 export function formatLevelPrice(value: number): string {
   return Number.isFinite(value) ? value.toFixed(2) : '—';
@@ -236,7 +202,7 @@ export function findInstrument(instruments: Instrument[], symbolOrId: string): I
 }
 
 /**
- * Display symbol for a trade's stored instrument id (e.g. 'mnq' -> 'MNQ').
+ * Display symbol for a trade's stored instrument id (e.g. 'mes' -> 'MES').
  *
  * Unlike findInstrument this does NOT fall back to MES: labelling an unknown
  * instrument as MES is exactly the kind of silent lie that makes a journal
@@ -255,7 +221,7 @@ export function instrumentSymbol(instruments: Instrument[], instrumentId?: strin
 /**
  * Resolves a broker contract month code to a journal instrument.
  *
- * Broker exports name the full contract — "MESZ5", "MNQU6", "MCLZ5" — so we
+ * Broker exports name the full contract — "MESZ5", "MESU6" — so we
  * match on the longest instrument symbol that the contract starts with, so a contract
  * is never read as the shorter symbol it happens to begin with.
  */

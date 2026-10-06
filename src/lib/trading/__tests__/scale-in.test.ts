@@ -1,9 +1,31 @@
 import { describe, it, expect } from 'vitest';
+import type { Instrument } from '../../../types';
 import { DEFAULT_INSTRUMENTS, findInstrument } from '../instruments';
 import { calculateScaleInPlan, calculateScaleInScenarios } from '../scale-in';
 
 const mes = findInstrument(DEFAULT_INSTRUMENTS, 'MES'); // $5/pt
-const mnq = findInstrument(DEFAULT_INSTRUMENTS, 'MNQ'); // $2/pt
+/**
+ * Contracts the journal no longer records, kept only to prove the maths reads whatever
+ * instrument it is handed rather than assuming a fixed dollar-per-point.
+ */
+const mnq: Instrument = {
+  id: 'mnq',
+  symbol: 'MNQ',
+  name: 'Micro E-mini Nasdaq-100',
+  pointValue: 2,
+  tickSize: 0.25,
+  tickValue: 0.5,
+  active: true,
+};
+const mcl: Instrument = {
+  id: 'mcl',
+  symbol: 'MCL',
+  name: 'Micro WTI Crude Oil',
+  pointValue: 100,
+  tickSize: 0.01,
+  tickValue: 1,
+  active: true,
+};
 
 describe('calculateScaleInPlan — weighted average / break-even', () => {
   it('pulls the break-even to the weighted average of all fills', () => {
@@ -47,7 +69,6 @@ describe('calculateScaleInPlan — weighted average / break-even', () => {
     expect(mnqPlan.dollarPerPointAfter).toBeCloseTo(8, 5);
     expect(mnqPlan.dollarPerTickAfter).toBeCloseTo(2, 5); // 0.25 tick * $8/pt
 
-    const mcl = findInstrument(DEFAULT_INSTRUMENTS, 'MCL'); // $100/pt
     const mclPlan = calculateScaleInPlan({
       direction: 'long',
       contracts: 1,

@@ -14,7 +14,7 @@ import {
   Trade,
   TradingDay,
 } from '../../types';
-import { summarizeMarkedLevels } from '../../lib/analytics/level-edge';
+import { MIN_DECIDED, summarizeMarkedLevels } from '../../lib/analytics/level-edge';
 import { summarizeLevelRecurrence } from '../../lib/analytics/level-recurrence';
 import {
   summarizeInstrumentEdges,
@@ -41,7 +41,16 @@ import { COACH_WAIT_STEPS } from '../common/AiThinking';
 import { formatTimestamp } from '../../lib/storage/date-utils';
 import { formatLevelPrice, instrumentSymbol } from '../../lib/trading/instruments';
 import { LESSON_KINDS, LESSON_KIND_LABEL } from '../../lib/playbook/lessons';
-import { HighlightTile, HoldRateTiles, OrdinalBars } from './recurrence-charts';
+import {
+  EdgeBar,
+  EdgeBarKey,
+  HighlightTile,
+  HoldRateTiles,
+  MeterRow,
+  OrdinalBars,
+  StackedBar,
+  samplePct,
+} from './recurrence-charts';
 
 /**
  * The break-and-run edge finder.
@@ -533,7 +542,7 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
       {instrumentComparison.length > 0 && (
         <div
           id="playbook-edge-instruments"
-          className="space-y-2 rounded-xl border border-zinc-800 bg-zinc-900/50 p-3"
+          className="space-y-2.5 rounded-xl border border-zinc-800 bg-zinc-900/50 p-3"
         >
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
@@ -543,43 +552,68 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
               where your marked lines actually get reached
             </span>
           </div>
-          <div className="space-y-1">
+          <div className="space-y-2.5">
             {instrumentComparison.map((bucket) => {
               const symbol = instrumentSymbol(labelInstruments, bucket.instrumentId);
               const isFocus = bucket.instrumentId === focusInstrumentId;
+              const readable = bucket.stats.enoughData && bucket.stats.holdRate !== null;
               return (
                 <div
                   key={bucket.key}
                   data-instrument-bucket={bucket.key}
-                  className={`flex flex-wrap items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 ${
+                  className={`space-y-1.5 rounded-lg border px-2.5 py-2 ${
                     isFocus
                       ? 'border-emerald-900/60 bg-emerald-950/20'
                       : 'border-zinc-800/80 bg-zinc-950/40'
                   }`}
                 >
-                  <span className="flex items-center gap-2 truncate text-xs text-zinc-200">
-                    <span className="font-mono">{symbol}</span>
-                    {isFocus && (
-                      <span className="rounded border border-emerald-800 bg-emerald-950/60 px-1.5 py-0.5 text-[9px] font-mono uppercase text-emerald-300">
-                        focus
-                      </span>
-                    )}
-                  </span>
-                  <span className="shrink-0 font-mono text-[10px] text-zinc-500">
-                    {bucket.marked} marked · {bucket.tested} touched
-                    {bucket.stats.decided === 0
-                      ? ' · no decided touch yet'
-                      : bucket.stats.enoughData
-                      ? ` · held ${formatRate(bucket.stats.holdRate)} of ${bucket.stats.decided}`
-                      : ` · ${bucket.stats.decided} decided — too thin for a rate`}
-                  </span>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="flex items-center gap-2 truncate text-xs text-zinc-200">
+                      <span className="font-mono">{symbol}</span>
+                      {isFocus && (
+                        <span className="rounded border border-emerald-800 bg-emerald-950/60 px-1.5 py-0.5 text-[9px] font-mono uppercase text-emerald-300">
+                          focus
+                        </span>
+                      )}
+                    </span>
+                    <span className="shrink-0 font-mono text-[10px] text-zinc-500">
+                      {bucket.marked} marked · {bucket.tested} touched
+                    </span>
+                  </div>
+                  <MeterRow
+                    name="test-rate"
+                    label="lines reached"
+                    value={bucket.testRate === null ? '—' : `${bucket.testRate}%`}
+                    meter={bucket.testRate ?? 0}
+                    thin={bucket.testRate === null}
+                  />
+                  <MeterRow
+                    name="hold-rate"
+                    label="held when tested"
+                    value={
+                      bucket.stats.decided === 0
+                        ? 'no decided touch yet'
+                        : readable
+                        ? `${formatRate(bucket.stats.holdRate)} of ${bucket.stats.decided}`
+                        : `${bucket.stats.decided} decided — too thin`
+                    }
+                    meter={
+                      readable
+                        ? bucket.stats.holdRate ?? 0
+                        : samplePct(bucket.stats.decided, MIN_DECIDED)
+                    }
+                    thin={!readable}
+                    marker={50}
+                  />
                 </div>
               );
             })}
           </div>
           <p className="text-[10px] leading-relaxed text-zinc-500">
-            A hold rate only appears once an instrument has enough decided touches; below that
-            the counts are shown instead, because a handful of lines is a tally and not an edge.
+            Two measures per contract: how much of what you marked price even reached, and how
+            often it stayed away once it had. A hold rate only appears once there are enough
+            decided touches behind it; below that the bar shows how far the sample has come,
+            because a handful of lines is a tally and not an edge.
           </p>
         </div>
       )}
@@ -594,7 +628,7 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
       {coverage.marked > 0 && (
         <div
           id="playbook-edge-coverage"
-          className="space-y-2 rounded-xl border border-zinc-800 bg-zinc-900/50 p-3"
+          className="space-y-2.5 rounded-xl border border-zinc-800 bg-zinc-900/50 p-3"
         >
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
@@ -604,28 +638,60 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
               {coverage.tested} of {coverage.marked} tested
             </span>
           </div>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-            <CoachFact label="Levels marked" value={`${coverage.marked}`} />
-            <CoachFact label="Tested" value={`${coverage.tested}`} />
-            <CoachFact label="Never tested" value={`${coverage.untested}`} />
-            <CoachFact label="Closed out" value={`${coverage.neverTouched}`} />
-            <CoachFact
-              label="Test rate"
-              value={coverage.testRate === null ? '—' : `${coverage.testRate}%`}
-            />
-          </div>
-          <p className="text-[11px] leading-relaxed text-zinc-500">
-            The hold rate below is counted from every touch. Of the lines you marked,{' '}
-            {coverage.testedStats.decided} of the tested ones are decided
-            {coverage.testedStats.decided > 0
-              ? `, holding ${formatRate(coverage.testedStats.holdRate)} of the time`
+          <StackedBar
+            total={coverage.marked}
+            note={`Test rate ${coverage.testRate === null ? '—' : `${coverage.testRate}%`}`}
+            segments={[
+              {
+                key: 'tested',
+                label: 'tested',
+                count: coverage.tested,
+                barClass: 'bg-emerald-400',
+              },
+              {
+                // Open lines only: a line the trader closed out is counted once, in grey, so the
+                // bar adds up to the marked total rather than double-counting the same line.
+                key: 'untested-open',
+                label: 'never tested',
+                count: coverage.untested - coverage.neverTouched,
+                barClass: 'bg-amber-400',
+              },
+              {
+                key: 'closed-out',
+                label: 'closed out as never reached',
+                count: coverage.neverTouched,
+                barClass: 'bg-zinc-600',
+              },
+            ]}
+          />
+          <MeterRow
+            name="tested-hold-rate"
+            label="held when tested"
+            value={
+              coverage.testedStats.decided === 0
+                ? 'no decided touch yet'
+                : coverage.testedStats.enoughData && coverage.testedStats.holdRate !== null
+                ? `${formatRate(coverage.testedStats.holdRate)} of ${coverage.testedStats.decided}`
+                : `${coverage.testedStats.decided} decided — too thin`
+            }
+            meter={
+              coverage.testedStats.enoughData && coverage.testedStats.holdRate !== null
+                ? coverage.testedStats.holdRate
+                : samplePct(coverage.testedStats.decided, MIN_DECIDED)
+            }
+            thin={!(coverage.testedStats.enoughData && coverage.testedStats.holdRate !== null)}
+            marker={50}
+          />
+          <p className="text-[10px] leading-relaxed text-zinc-500">
+            A line counts as tested once one of your touches links back to it: on the bar, green is
+            a line price reached, amber one you marked and never checked, grey one you closed out
+            yourself as never reached. The hold rate is counted from every decided touch on the
+            tested lines.
+            {coverage.untested > 0
+              ? ` ${coverage.untested} line${coverage.untested === 1 ? '' : 's'} here ${
+                  coverage.untested === 1 ? 'was' : 'were'
+                } never tested — worth noticing if your indicator keeps offering ${coverage.untested === 1 ? 'it' : 'them'}.`
               : ''}
-            . {coverage.untested} line{coverage.untested === 1 ? '' : 's'} you marked were never
-            tested — worth noticing if your indicator keeps offering them
-            {coverage.neverTouched > 0
-              ? `, and ${coverage.neverTouched} of those you have closed out yourself as never reached`
-              : ''}
-            .
             {coverage.voided > 0
               ? ` ${coverage.voided} line${coverage.voided === 1 ? '' : 's'} you set aside as void ${coverage.voided === 1 ? 'is' : 'are'} left out of these counts.`
               : ''}
@@ -637,8 +703,9 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
         Which timeframe and side price actually reaches.
 
         This is the comparison the trader marked the lines for: a 5-minute resistance that is
-        reached every day against a 30-minute one that is not. Counts first — a bucket with no
-        decided touch reports its watched lines, never a rate.
+        reached every day against a 30-minute one that is not. Drawn as one bar per chart and side,
+        so the record can be scanned for the one that holds; counts first — a bucket with no decided
+        touch reports its watched lines, never a rate.
       */}
       {timeframeBuckets.length > 0 && (
         <div
@@ -653,27 +720,21 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
               which lines price reaches, and how they behaved
             </span>
           </div>
-          <div className="space-y-1">
+          <div className="space-y-2.5">
             {timeframeBuckets.slice(0, 12).map((bucket) => (
-              <div
-                key={bucket.key}
-                data-timeframe-bucket={bucket.key}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-800/80 bg-zinc-950/40 px-2.5 py-1.5"
-              >
-                <span className="truncate text-xs text-zinc-200">
-                  {timeframeBucketLabel(
+              <div key={bucket.key} data-timeframe-bucket={bucket.key}>
+                <EdgeBar
+                  label={timeframeBucketLabel(
                     bucket,
                     instrumentSymbol(labelInstruments, bucket.instrumentId)
                   )}
-                </span>
-                <span className="shrink-0 font-mono text-[10px] text-zinc-500">
-                  {bucket.marked} marked · {bucket.tested} touched
-                  {bucket.stats.decided === 0
-                    ? ' · no decided touch yet'
-                    : bucket.stats.enoughData
-                    ? ` · held ${formatRate(bucket.stats.holdRate)} of ${bucket.stats.decided}`
-                    : ` · ${bucket.stats.decided} decided — too thin for a rate`}
-                </span>
+                  detail={`${bucket.marked} marked · ${bucket.tested} touched${
+                    bucket.stats.watching > 0 ? ` · ${bucket.stats.watching} watching` : ''
+                  }`}
+                  stats={bucket.stats}
+                  minDecided={MIN_DECIDED}
+                  marker={50}
+                />
               </div>
             ))}
           </div>
@@ -682,6 +743,7 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
               Showing the 12 busiest of {timeframeBuckets.length} instrument/timeframe/side records.
             </p>
           )}
+          <EdgeBarKey minDecided={MIN_DECIDED} />
         </div>
       )}
 
@@ -774,29 +836,21 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
           </div>
 
           {recurrence.repeatedLevels.length > 0 && (
-            <div className="space-y-1">
+            <div className="space-y-2.5">
               <span className="text-[10px] font-mono uppercase font-bold text-zinc-400">
                 Lines reached on more than one day
               </span>
               {recurrence.repeatedLevels.slice(0, 6).map((row) => (
-                <div
-                  key={row.key}
-                  data-recurring-level={row.key}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-800/80 bg-zinc-950/40 px-2.5 py-1.5"
-                >
-                  <span className="truncate text-xs text-zinc-200">
-                    <span className="font-mono">{row.symbol}</span> {row.kind}{' '}
-                    {formatLevelPrice(row.price)}
-                  </span>
-                  <span className="shrink-0 font-mono text-[10px] text-zinc-500">
-                    {row.days} day{row.days === 1 ? '' : 's'} · {row.touches} touch
-                    {row.touches === 1 ? '' : 'es'} · {row.weekdays.join(', ')}
-                    {row.stats.decided === 0
-                      ? ' · no decided touch yet'
-                      : row.stats.enoughData
-                      ? ` · held ${formatRate(row.stats.holdRate)} of ${row.stats.decided}`
-                      : ` · ${row.stats.decided} decided — too thin for a rate`}
-                  </span>
+                <div key={row.key} data-recurring-level={row.key}>
+                  <EdgeBar
+                    label={`${row.symbol} ${row.kind} ${formatLevelPrice(row.price)}`}
+                    detail={`${row.days} day${row.days === 1 ? '' : 's'} · ${row.touches} touch${
+                      row.touches === 1 ? '' : 'es'
+                    } · ${row.weekdays.join(', ')}`}
+                    stats={row.stats}
+                    minDecided={recurrence.minDecided}
+                    marker={50}
+                  />
                 </div>
               ))}
             </div>

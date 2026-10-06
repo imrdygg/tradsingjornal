@@ -1119,6 +1119,165 @@ test.describe('What the record says — as tiles', () => {
 });
 
 /**
+ * The record blocks drawn rather than listed.
+ *
+ * "By instrument", "Marked levels tested" and "By timeframe and side" were rows of figures with a
+ * paragraph under each, and the trader had to add them up to see the shape of their own record.
+ * They are the same numbers now, on one shared scale: green where a rate may be read, grey where
+ * the sample is still being collected. Seeded, because these blocks only fill in off a record no
+ * test could tap in by hand.
+ */
+test.describe('Edge finder record — the blocks as bars', () => {
+  /** Eleven lines marked across two charts, six reached, one of the two buckets readable. */
+  const seedRecord = (page: Page) =>
+    page.addInitScript(() => {
+      const day = {
+        userId: 'solo-trader-01',
+        tradingDayId: 'day-2026-09-28',
+        tradeDate: '2026-09-28',
+        instrumentId: 'mes',
+        session: 'Regular Session',
+        createdAt: '2026-09-28T12:00:00.000Z',
+        updatedAt: '2026-09-28T12:00:00.000Z',
+      };
+      const level = (id: string, kind: string, timeframe: string, price: number) => ({
+        ...day,
+        id,
+        kind,
+        timeframe,
+        price,
+        zonePoints: 2,
+      });
+      const touch = (
+        id: string,
+        levelId: string,
+        kind: string,
+        timeframe: string,
+        price: number,
+        outcome: string
+      ) => ({
+        ...day,
+        id,
+        levelId,
+        kind,
+        timeframe,
+        price,
+        zonePoints: 2,
+        touchedAt: '2026-09-28T12:15:00.000Z',
+        checks: 1,
+        outcome,
+      });
+
+      // Six 5 min resistance lines, five of them reached and four holding: the one bucket with
+      // enough decided touches to carry a rate.
+      const resistance = [1, 2, 3, 4, 5, 6].map((index) =>
+        level(`r${index}`, 'resistance', '5m', 7760 + index)
+      );
+      // Five 15 min support lines with a single line reached, so that bucket must report counts.
+      const support = [1, 2, 3, 4, 5].map((index) =>
+        level(`s${index}`, 'support', '15m', 7700 - index)
+      );
+      const touches = [
+        ...['r1', 'r2', 'r3', 'r4'].map((id, index) =>
+          touch(`t${index}`, id, 'resistance', '5m', 7761 + index, 'never-returned')
+        ),
+        touch('t5', 'r5', 'resistance', '5m', 7766, 'returned'),
+        touch('t6', 's1', 'support', '15m', 7699, 'never-returned'),
+      ];
+
+      localStorage.setItem('ptj_marked_levels_v1', JSON.stringify([...resistance, ...support]));
+      localStorage.setItem('ptj_level_touches_v1', JSON.stringify(touches));
+    });
+
+  test('draws the instrument, coverage and timeframe reads as bars on one scale', async ({
+    page,
+  }) => {
+    await seedRecord(page);
+    await page.reload();
+    await gotoPlaybook(page);
+
+    // By instrument: two meters under the contract, reach and hold, replacing the dense line of
+    // counts. 6 of 11 lines reached, and 5 of the 6 decided touches held away from price.
+    const mes = page.locator('#playbook-edge-instruments [data-instrument-bucket="mes"]');
+    await expect(mes).toContainText('11 marked · 6 touched');
+    await expect(mes.locator('[data-meter="test-rate"]')).toContainText('54.5%');
+    await expect(mes.locator('[data-meter="test-rate"] [data-meter-value]')).toHaveAttribute(
+      'data-meter-value',
+      '55'
+    );
+    await expect(mes.locator('[data-meter="hold-rate"]')).toContainText('83.3% of 6');
+    await expect(mes.locator('[data-meter="hold-rate"] [data-meter-value]')).toHaveAttribute(
+      'data-meter-value',
+      '83'
+    );
+    await expect(mes.locator('[data-meter="hold-rate"] [data-meter-marker]')).toHaveAttribute(
+      'data-meter-marker',
+      '50'
+    );
+
+    // Marked levels tested: one bar for what the eleven lines became, instead of five figures.
+    const coverageBlock = page.locator('#playbook-edge-coverage');
+    await expect(coverageBlock.locator('[data-coverage-bar]')).toHaveAttribute(
+      'data-coverage-bar',
+      '11'
+    );
+    await expect(coverageBlock.locator('[data-coverage-segment="tested"]')).toHaveAttribute(
+      'data-coverage-count',
+      '6'
+    );
+    await expect(coverageBlock.locator('[data-coverage-segment="untested-open"]')).toHaveAttribute(
+      'data-coverage-count',
+      '5'
+    );
+    await expect(coverageBlock.locator('[data-coverage-segment="closed-out"]')).toHaveAttribute(
+      'data-coverage-count',
+      '0'
+    );
+    await expect(coverageBlock).toContainText('6 tested');
+    await expect(coverageBlock).toContainText('5 never tested');
+    await expect(coverageBlock).toContainText('Test rate 54.5%');
+    // Nothing was closed out here, so the bar carries no slice for it and the legend no entry.
+    await expect(coverageBlock).not.toContainText('closed out as never reached');
+    await expect(coverageBlock.locator('[data-meter="tested-hold-rate"]')).toContainText(
+      '83.3% of 6'
+    );
+
+    // By timeframe and side: one bar per chart and side, the readable one green and ticked at the
+    // coin flip, the thin one grey and filled against the five touches a rate needs.
+    const resistanceBar = page.locator('[data-timeframe-bucket="mes|5m|resistance"]');
+    await expect(resistanceBar).toContainText('6 marked · 5 touched');
+    await expect(resistanceBar.locator('[data-edge-bar="rate"]')).toHaveCount(1);
+    await expect(resistanceBar).toContainText('80%');
+    await expect(resistanceBar.locator('[data-edge-meter]')).toHaveAttribute(
+      'data-edge-meter',
+      '80'
+    );
+    await expect(resistanceBar.locator('[data-edge-marker]')).toHaveAttribute(
+      'data-edge-marker',
+      '50'
+    );
+
+    const supportBar = page.locator('[data-timeframe-bucket="mes|15m|support"]');
+    await expect(supportBar.locator('[data-edge-bar="thin"]')).toHaveCount(1);
+    await expect(supportBar).toContainText('1 decided — too thin for a rate');
+    await expect(supportBar).not.toContainText('%');
+    await expect(supportBar.locator('[data-edge-meter]')).toHaveAttribute(
+      'data-edge-meter',
+      '20'
+    );
+    // The tick only means something for a rate, so a thin bar does not carry one.
+    await expect(supportBar.locator('[data-edge-marker]')).toHaveCount(0);
+
+    // And the block says what the colours mean, so a grey bar is a young sample and not a weak
+    // line.
+    await expect(page.locator('#playbook-edge-timeframes')).toContainText(
+      'Grey is a sample still being collected'
+    );
+    await expect(page.locator('#playbook-edge-timeframes')).toContainText('never came back');
+  });
+});
+
+/**
  * The weekday narrowing on the level-odds card.
  *
  * The market is closed on Saturday, so offering it in the picker could only ever return an

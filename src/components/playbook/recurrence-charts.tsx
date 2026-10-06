@@ -18,6 +18,11 @@ import type { RecurrenceBucket } from '../../lib/analytics/level-recurrence';
  * given a rate. Its figure is the count, and its bar shows how far the sample has come against
  * the five decided touches a rate needs — so a thin bucket reads as "still collecting" rather
  * than as a percentage wearing a much bigger sample's clothes.
+ *
+ * The same bar language carries through the rest of the card: `MeterRow` for the measures that are
+ * not a bucket's hold rate, `EdgeBar` for one bucket per row, and `StackedBar` for what the marked
+ * lines turned into. One rule holds across all of them — green is a rate that may be read, grey is
+ * a sample still being collected — so the trader learns the colours once.
  */
 
 const clampPct = (value: number) =>
@@ -34,6 +39,11 @@ function figureOf(stats: LevelEdgeStats): string {
   return stats.decided > 0 ? `${stats.decided} decided` : '—';
 }
 
+/** How far a sample has come toward the decided touches a rate needs, 0-100. */
+export function samplePct(decided: number, minDecided: number): number {
+  return minDecided > 0 ? clampPct((decided / minDecided) * 100) : 0;
+}
+
 /**
  * How far the bar is filled, 0-100.
  *
@@ -43,7 +53,7 @@ function figureOf(stats: LevelEdgeStats): string {
  */
 function barPct(stats: LevelEdgeStats, minDecided: number): number {
   if (isReadable(stats)) return clampPct(stats.holdRate ?? 0);
-  return minDecided > 0 ? clampPct((stats.decided / minDecided) * 100) : 0;
+  return samplePct(stats.decided, minDecided);
 }
 
 /** The one line under the figure: how many touches the bucket holds, and any still watched. */
@@ -222,4 +232,183 @@ export const OrdinalBars: React.FC<{
       );
     })}
   </ul>
+);
+
+/**
+ * One labelled meter: the name on the left, the bar in the middle, the figure at the end of it.
+ *
+ * For the measures that are not a bucket's hold rate — how much of an instrument's marked record
+ * is reached at all, how many of the tested lines are decided. Same bar language as the tiles, so
+ * a coverage figure and a rate are read the same way rather than one as a bar and one as a wall of
+ * counts. A `thin` row is grey and fills against the rate's floor, because its figure is a sample
+ * still being collected and must not look like a reading.
+ */
+export const MeterRow: React.FC<{
+  label: string;
+  /** The figure at the end of the bar, already formatted. */
+  value: string;
+  /** Where the bar fills to, 0-100. */
+  meter: number;
+  /** True while the sample is too thin for the figure to be a rate. */
+  thin?: boolean;
+  /** Reference tick, 0-100 — drawn only when the row is not `thin`. */
+  marker?: number;
+  /** Test hook; also the `data-meter` value. */
+  name: string;
+}> = ({ label, value, meter, thin = false, marker, name }) => (
+  <div data-meter={name} className="flex items-center gap-2">
+    <span
+      className="w-24 shrink-0 truncate font-mono text-[10px] text-zinc-500 sm:w-32"
+      title={label}
+    >
+      {label}
+    </span>
+    <div className="relative h-2 flex-1 overflow-hidden rounded-full bg-zinc-800">
+      <div
+        data-meter-value={Math.round(clampPct(meter))}
+        className={`h-full rounded-full ${thin ? 'bg-zinc-600' : 'bg-emerald-400'}`}
+        style={{ width: `${clampPct(meter)}%` }}
+      />
+      {!thin && typeof marker === 'number' && (
+        <span
+          data-meter-marker={Math.round(clampPct(marker))}
+          className="absolute inset-y-0 w-px bg-zinc-300/80"
+          style={{ left: `${clampPct(marker)}%` }}
+          aria-hidden
+        />
+      )}
+    </div>
+    <span
+      className={`w-20 shrink-0 text-right font-mono text-[10px] sm:w-32 ${
+        thin ? 'text-zinc-500' : 'text-emerald-300'
+      }`}
+    >
+      {value}
+    </span>
+  </div>
+);
+
+/** One slice of a stacked bar. */
+export interface StackedSegment {
+  key: string;
+  /** Named in the legend under the bar. */
+  label: string;
+  count: number;
+  /** Background class for this slice and, unless overridden, its legend swatch. */
+  barClass: string;
+}
+
+/**
+ * One bar split into what the marked lines turned into.
+ *
+ * Five figures in a row — marked, tested, never tested, closed out, test rate — left the trader
+ * adding them up to see the shape of their own record. One bar shows the shape; the legend keeps
+ * the exact counts, because a bar can show a proportion but never a number. Slices with nothing in
+ * them are dropped from the legend rather than listed as a row of zeroes.
+ */
+export const StackedBar: React.FC<{
+  segments: StackedSegment[];
+  /** The whole the slices divide — the marked lines. */
+  total: number;
+  /** One extra item on the legend line, e.g. the rate the split implies. */
+  note?: string;
+}> = ({ segments, total, note }) => (
+  <div className="space-y-1.5">
+    <div
+      data-coverage-bar={total}
+      className="flex h-2.5 w-full overflow-hidden rounded-full bg-zinc-800"
+    >
+      {segments.map((segment) => (
+        <div
+          key={segment.key}
+          data-coverage-segment={segment.key}
+          data-coverage-count={segment.count}
+          className={segment.barClass}
+          style={{ width: `${total > 0 ? clampPct((segment.count / total) * 100) : 0}%` }}
+        />
+      ))}
+    </div>
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+      {segments
+        .filter((segment) => segment.count > 0)
+        .map((segment) => (
+          <span
+            key={segment.key}
+            className="flex items-center gap-1.5 font-mono text-[10px] text-zinc-500"
+          >
+            <span className={`h-2 w-2 shrink-0 rounded-sm ${segment.barClass}`} aria-hidden />
+            {segment.count} {segment.label}
+          </span>
+        ))}
+      {note && <span className="font-mono text-[10px] text-zinc-400">{note}</span>}
+    </div>
+  </div>
+);
+
+/**
+ * One bucket on its own row: the label, the figure, the bar, and the counts behind it.
+ *
+ * Used where a name needs the width — a chart and a side, or a price line — so the bar sits under
+ * the label rather than beside it. The figure is the hold rate once there is one, and the plain
+ * count before that, in the same words the text rows used.
+ */
+export const EdgeBar: React.FC<{
+  label: string;
+  /** The counts under the bar, e.g. `7 marked · 5 touched · held 40% of 5`. */
+  detail: string;
+  stats: LevelEdgeStats;
+  minDecided: number;
+  /** Reference tick, 0-100, drawn only once the rate may be read. */
+  marker?: number;
+}> = ({ label, detail, stats, minDecided, marker }) => {
+  const readable = isReadable(stats);
+  return (
+    <div data-edge-bar={readable ? 'rate' : 'thin'} className="space-y-1">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="truncate text-xs text-zinc-200" title={label}>
+          {label}
+        </span>
+        <span
+          className={`shrink-0 font-mono text-[10px] ${
+            readable ? 'text-emerald-300' : 'text-zinc-500'
+          }`}
+        >
+          {figureOf(stats)}
+          {readable ? '' : ' — too thin for a rate'}
+        </span>
+      </div>
+      <div className="relative h-2 overflow-hidden rounded-full bg-zinc-800">
+        <div
+          data-edge-meter={Math.round(barPct(stats, minDecided))}
+          className={`h-full rounded-full ${readable ? 'bg-emerald-400' : 'bg-zinc-600'}`}
+          style={{ width: `${barPct(stats, minDecided)}%` }}
+        />
+        {readable && typeof marker === 'number' && (
+          <span
+            data-edge-marker={Math.round(clampPct(marker))}
+            className="absolute inset-y-0 w-px bg-zinc-300/80"
+            style={{ left: `${clampPct(marker)}%` }}
+            aria-hidden
+          />
+        )}
+      </div>
+      <span className="block font-mono text-[10px] leading-snug text-zinc-500">{detail}</span>
+    </div>
+  );
+};
+
+/**
+ * The one-line key that belongs under any block of these bars.
+ *
+ * Every bar in the card shares a scale, so the key is shared too: green is a rate that may be read,
+ * the tick is the coin flip a hold rate is worth comparing to, and grey is a sample still being
+ * collected. Written once so a grey bar can never be mistaken for a weak edge.
+ */
+export const EdgeBarKey: React.FC<{ minDecided: number }> = ({ minDecided }) => (
+  <p className="text-[10px] leading-relaxed text-zinc-500">
+    Green is a hold rate: the share of decided touches where price never came back. The tick is
+    50% — the coin flip that rate is worth comparing to. Grey is a sample still being collected,
+    filled to the {minDecided} decided touches a rate needs, so a short grey bar is a young record
+    and not a weak line.
+  </p>
 );

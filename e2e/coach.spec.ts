@@ -374,3 +374,53 @@ test.describe('Mindset check-in', () => {
     await expect(page.locator('#coach-mindset-generate')).toHaveCount(0);
   });
 });
+
+/**
+ * The week, one setup at a time — the half of the coach that is arithmetic.
+ *
+ * The level half of each row is the one place the coach tab prints a hold rate, and it now names
+ * how much is behind it. Seeded inside the current week rather than on fixed dates, because the
+ * window is the last seven days from today and a fixed date would fall out of it.
+ */
+test.describe('The week, one setup at a time', () => {
+  test('prints the hold rate with the sample strength behind it', async ({ page }) => {
+    await page.addInitScript(() => {
+      const dateAt = (daysBack: number) => {
+        const date = new Date();
+        date.setDate(date.getDate() - daysBack);
+        return date.toISOString().slice(0, 10);
+      };
+      // Five resistance touches inside the window, every one of them holding: enough for a rate,
+      // and only just — which is exactly what the tier is there to say.
+      const touches = [1, 2, 3, 4, 5].map((back) => {
+        const tradeDate = dateAt(back);
+        return {
+          id: `t${back}`,
+          userId: 'solo-trader-01',
+          tradingDayId: `day-${tradeDate}`,
+          tradeDate,
+          instrumentId: 'mes',
+          kind: 'resistance',
+          price: 7760,
+          zonePoints: 2,
+          touchedAt: `${tradeDate}T13:00:00.000Z`,
+          session: 'Regular Session',
+          checks: 1,
+          outcome: 'never-returned',
+          createdAt: `${tradeDate}T13:00:00.000Z`,
+          updatedAt: `${tradeDate}T13:00:00.000Z`,
+        };
+      });
+      localStorage.setItem('ptj_level_touches_v1', JSON.stringify(touches));
+    });
+    await page.reload();
+    await gotoTab(page, 'coach', /Coach/i);
+
+    const row = page.locator('#coach-setup-week-resistance');
+    await expect(row).toBeVisible();
+    // The counts, then the rate, then the word that says how much is behind it.
+    await expect(row).toContainText(
+      '5 decided of 5 touched · 5 held, 0 came back · 100% held (early read)'
+    );
+  });
+});

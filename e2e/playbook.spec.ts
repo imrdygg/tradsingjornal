@@ -1527,6 +1527,62 @@ test.describe('Level odds — weekday narrowing', () => {
     await expect(weekday.locator('option', { hasText: 'Fri' })).toHaveCount(1);
     await expect(weekday.locator('option', { hasText: 'Sat' })).toHaveCount(0);
   });
+
+  /**
+   * The hold sentence on each row, which is the one place this card prints a rate.
+   *
+   * It now names the sample strength as well as the counts, for the same reason the bars do: five
+   * decided touches is a rate that may be read and not one that may be leaned on. Seeded across
+   * five days so the row has a rate at all, and every one of them holding.
+   */
+  test('prints the hold rate with the sample strength behind it', async ({ page }) => {
+    await page.addInitScript(() => {
+      const dates = ['2026-09-28', '2026-09-29', '2026-09-30', '2026-10-01', '2026-10-02'];
+      const levels = dates.map((tradeDate, index) => ({
+        id: `l${index}`,
+        userId: 'solo-trader-01',
+        tradingDayId: `day-${tradeDate}`,
+        tradeDate,
+        instrumentId: 'mes',
+        kind: 'resistance',
+        timeframe: '5m',
+        price: 7760 + index,
+        zonePoints: 2,
+        session: 'Regular Session',
+        createdAt: `${tradeDate}T12:00:00.000Z`,
+        updatedAt: `${tradeDate}T12:00:00.000Z`,
+      }));
+      const touches = dates.map((tradeDate, index) => ({
+        id: `t${index}`,
+        userId: 'solo-trader-01',
+        tradingDayId: `day-${tradeDate}`,
+        tradeDate,
+        instrumentId: 'mes',
+        kind: 'resistance',
+        timeframe: '5m',
+        price: 7760 + index,
+        zonePoints: 2,
+        touchedAt: `${tradeDate}T12:15:00.000Z`,
+        session: 'Regular Session',
+        checks: 1,
+        levelId: `l${index}`,
+        outcome: 'never-returned',
+        createdAt: `${tradeDate}T12:15:00.000Z`,
+        updatedAt: `${tradeDate}T12:15:00.000Z`,
+      }));
+
+      localStorage.setItem('ptj_marked_levels_v1', JSON.stringify(levels));
+      localStorage.setItem('ptj_level_touches_v1', JSON.stringify(touches));
+    });
+    await page.reload();
+    await gotoPlaybook(page);
+
+    const row = page.locator('[data-level-odds="5m|resistance"]');
+    await expect(row).toBeVisible();
+    await expect(row).toContainText(
+      'After a touch: 5 of 5 decided held (100% never came back, early read).'
+    );
+  });
 });
 
 /**

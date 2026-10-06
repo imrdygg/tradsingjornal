@@ -618,6 +618,8 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
                     }
                     thin={!readable}
                     marker={50}
+                    interval={readable ? bucket.stats.holdInterval : null}
+                    strength={bucket.stats.strength}
                   />
                 </div>
               );
@@ -695,6 +697,10 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
             }
             thin={!(coverage.testedStats.enoughData && coverage.testedStats.holdRate !== null)}
             marker={50}
+            interval={
+              coverage.testedStats.enoughData ? coverage.testedStats.holdInterval : null
+            }
+            strength={coverage.testedStats.strength}
           />
           <p className="text-[10px] leading-relaxed text-zinc-500">
             A line counts as tested once one of your touches links back to it: on the bar, green is
@@ -815,6 +821,8 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
                 unit="never came back"
                 meter={highlights.bestHold.stats.holdRate ?? 0}
                 marker={50}
+                interval={highlights.bestHold.stats.holdInterval}
+                strength={highlights.bestHold.stats.strength}
                 detail={`${highlights.bestHold.stats.decided} of ${
                   highlights.bestHold.stats.touches
                 } touches decided`}
@@ -876,9 +884,11 @@ export const EdgeFinderCard: React.FC<EdgeFinderCardProps> = ({
             </p>
           )}
           <p className="text-[10px] leading-relaxed text-zinc-500">
-            Green is a rate the sample supports; grey is a line still being collected, filled
-            against the {recurrence.minDecided} decided touches a rate needs — the same scale as
-            the bars above, so a short grey bar is a young line and not a weak one.
+            Green is a rate the sample supports, with the pale band showing the range it could sit
+            in and the word naming how much is behind it — a line at 80% off five touches is not
+            the same statement as one at 80% off twenty. Grey is a line still being collected,
+            filled against the {recurrence.minDecided} decided touches a rate needs, on the same
+            scale as the bars above, so a short grey bar is a young line and not a weak one.
           </p>
         </div>
       )}

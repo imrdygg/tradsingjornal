@@ -4,6 +4,9 @@ import {
   evaluateTouch,
   findLevelEdges,
   MIN_DECIDED,
+  rateInterval,
+  rateStrength,
+  SOLID_DECIDED,
   summarizeMarkedLevels,
   summarizeTouches,
   type PriceSample,
@@ -192,6 +195,65 @@ describe('summarizeTouches', () => {
       )
     );
     expect(enough.enoughData).toBe(true);
+  });
+
+  it('carries the range of the rate, and withholds it wherever the rate is withheld', () => {
+    const decided = (neverReturned: number, returned: number) =>
+      summarizeTouches([
+        ...Array.from({ length: neverReturned }, (_, i) =>
+          touch({ id: `n${i}`, outcome: 'never-returned' as const })
+        ),
+        ...Array.from({ length: returned }, (_, i) =>
+          touch({ id: `r${i}`, outcome: 'returned' as const })
+        ),
+      ]);
+
+    // Four of five is a rate, and a wide one: 80% whose honest range is 37.6-96.3.
+    const early = decided(4, 1);
+    expect(early.holdRate).toBe(80);
+    expect(early.holdInterval).toEqual({ low: 37.6, high: 96.3 });
+    expect(early.strength).toBe('early');
+
+    // Four times the sample at the same rate: a much narrower range behind it.
+    const settled = decided(20, 5);
+    expect(settled.holdRate).toBe(80);
+    expect(settled.holdInterval).toEqual({ low: 60.9, high: 91.1 });
+    expect(settled.strength).toBe('settled');
+    expect(settled.holdInterval!.high - settled.holdInterval!.low).toBeLessThan(
+      early.holdInterval!.high - early.holdInterval!.low
+    );
+
+    // Below the rate floor there is no rate, so there is no range to show either.
+    const thin = decided(2, 0);
+    expect(thin.holdRate).toBe(100);
+    expect(thin.enoughData).toBe(false);
+    expect(thin.holdInterval).toBeNull();
+    expect(thin.strength).toBeNull();
+  });
+});
+
+describe('rateInterval', () => {
+  it('reports no range without a decided touch', () => {
+    expect(rateInterval(0, 0)).toBeNull();
+  });
+
+  it('stops short of certainty even when every touch held', () => {
+    // Six of six is a 100% rate that cannot be read as certainty, so the top is 99.9%.
+    const interval = rateInterval(6, 6)!;
+    expect(interval.low).toBe(61);
+    expect(interval.high).toBe(99.9);
+  });
+});
+
+describe('rateStrength', () => {
+  it('names the tiers, and gives a rate below the floor no tier at all', () => {
+    expect(rateStrength(4)).toBeNull();
+    expect(rateStrength(MIN_DECIDED)).toBe('early');
+    expect(rateStrength(9)).toBe('early');
+    expect(rateStrength(10)).toBe('building');
+    expect(rateStrength(SOLID_DECIDED - 1)).toBe('building');
+    expect(rateStrength(SOLID_DECIDED)).toBe('settled');
+    expect(rateStrength(200)).toBe('settled');
   });
 });
 

@@ -232,11 +232,18 @@ export const TimeframeEdgeCard: React.FC<TimeframeEdgeCardProps> = ({
           </span>
         </div>
 
-        {trend.points.length < 2 ? (
+        {/*
+          Guarded on the readable windows, not on how many windows there are. A window is built
+          from decided touches, but it only carries a rate once a touch in it has an answer at its
+          chart's own horizon — so a record can fill three windows and still have nothing to roll.
+          Reading `firstRead` off the window count crashed the card on that record, which took the
+          whole tab down with it; the two cases are said out loud instead.
+        */}
+        {trend.points.length < 2 || trendReadable.length === 0 ? (
           <p id="timeframe-edge-trend-empty" className="text-[10px] leading-relaxed text-zinc-500">
-            A rolling read needs more decided touches than a single window. Keep logging what
-            price does after each touch and this fills in — it is what shows whether the edge is
-            still there rather than only that it once was.
+            {trend.points.length < 2
+              ? 'A rolling read needs more decided touches than a single window. Keep logging what price does after each touch and this fills in — it is what shows whether the edge is still there rather than only that it once was.'
+              : `None of these ${trend.points.length} windows carries a judged rate yet, so there is nothing to roll. A window counts a touch once it has an answer at its own chart's horizon — the counts above are the read for now.`}
           </p>
         ) : (
           <>

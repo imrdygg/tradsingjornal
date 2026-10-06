@@ -1,5 +1,10 @@
 import React from 'react';
-import type { LevelEdgeStats } from '../../lib/analytics/level-edge';
+import {
+  RATE_STRENGTH_LABEL,
+  type LevelEdgeStats,
+  type RateInterval,
+  type RateStrength,
+} from '../../lib/analytics/level-edge';
 import type { RecurrenceBucket } from '../../lib/analytics/level-recurrence';
 
 /**
@@ -23,10 +28,47 @@ import type { RecurrenceBucket } from '../../lib/analytics/level-recurrence';
  * not a bucket's hold rate, `EdgeBar` for one bucket per row, and `StackedBar` for what the marked
  * lines turned into. One rule holds across all of them — green is a rate that may be read, grey is
  * a sample still being collected — so the trader learns the colours once.
+ *
+ * A green bar carries two more things, because a percentage on its own is the most over-read figure
+ * in a small journal: the pale band behind it is the range the true rate could sit in at this
+ * sample size, and the tier word under the figure names how much is behind it. Five touches at 80%
+ * and twenty at 80% are not the same statement, and they no longer look the same.
  */
 
 const clampPct = (value: number) =>
   Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0));
+
+/**
+ * The range a rate could sit in, painted behind its bar.
+ *
+ * Drawn before the fill so the observed rate covers the middle of it: what stays visible is the
+ * part of the range the figure does not already claim, which is the thing a bare percentage hides.
+ */
+const RateBand: React.FC<{ interval: RateInterval | null }> = ({ interval }) =>
+  interval ? (
+    <span
+      data-rate-band={`${interval.low}-${interval.high}`}
+      className="absolute inset-y-0 rounded-full bg-emerald-400/30"
+      style={{
+        left: `${clampPct(interval.low)}%`,
+        width: `${clampPct(interval.high) - clampPct(interval.low)}%`,
+      }}
+      aria-hidden
+    />
+  ) : null;
+
+/**
+ * How much is behind a rate, as a word.
+ *
+ * Given rather than derived so a caller that has no rate to read simply renders nothing, and no
+ * component can invent a tier for a sample the floor has not let through.
+ */
+const RateTier: React.FC<{ strength: RateStrength | null }> = ({ strength }) =>
+  strength ? (
+    <span className="rounded border border-zinc-700 px-1 py-0.5 font-mono text-[9px] uppercase text-zinc-400">
+      {RATE_STRENGTH_LABEL[strength]}
+    </span>
+  ) : null;
 
 /** True when this bucket has enough decided touches for its hold rate to be read at all. */
 function isReadable(stats: LevelEdgeStats): boolean {
@@ -84,6 +126,7 @@ export const HoldRateTiles: React.FC<{
           key={bucket.key}
           data-recurrence-bucket={bucket.key}
           data-recurrence-readable={readable ? 'true' : 'false'}
+          data-rate-strength={stats.strength ?? 'none'}
           className={`space-y-1 rounded-xl border p-2 ${
             readable ? 'border-emerald-900/60 bg-emerald-950/25' : 'border-zinc-800 bg-zinc-950/50'
           }`}
@@ -96,7 +139,8 @@ export const HoldRateTiles: React.FC<{
           >
             {figureOf(stats)}
           </span>
-          <div className="h-1.5 overflow-hidden rounded-full bg-zinc-800">
+          <div className="relative h-1.5 overflow-hidden rounded-full bg-zinc-800">
+            <RateBand interval={stats.holdInterval} />
             <div
               className={`h-full rounded-full ${readable ? 'bg-emerald-400' : 'bg-zinc-600'}`}
               style={{ width: `${barPct(stats, minDecided)}%` }}
@@ -104,6 +148,7 @@ export const HoldRateTiles: React.FC<{
           </div>
           <span className="block font-mono text-[9px] leading-tight text-zinc-500">
             {sampleNote(stats)}
+            {stats.strength ? ` · ${RATE_STRENGTH_LABEL[stats.strength]}` : ''}
           </span>
         </div>
       );
@@ -139,9 +184,25 @@ export const HighlightTile: React.FC<{
   detail: string;
   /** Optional reference tick on the bar, 0-100, with its meaning given by the caller. */
   marker?: number;
+  /** The range the figure could sit in, for the tiles that carry a rate. */
+  interval?: RateInterval | null;
+  /** How much is behind the figure, for the tiles that carry a rate. */
+  strength?: RateStrength | null;
   /** Test hook; also the `data-highlight` value. */
   name: string;
-}> = ({ label, condition, value, unit, meter, tone = 'good', detail, marker, name }) => {
+}> = ({
+  label,
+  condition,
+  value,
+  unit,
+  meter,
+  tone = 'good',
+  detail,
+  marker,
+  interval,
+  strength,
+  name,
+}) => {
   const good = tone === 'good';
   return (
     <div
@@ -161,7 +222,7 @@ export const HighlightTile: React.FC<{
       <span className="block truncate text-xs text-zinc-200" title={condition}>
         {condition}
       </span>
-      <div className="flex items-baseline gap-1.5">
+      <div className="flex flex-wrap items-baseline gap-1.5">
         <span
           className={`font-mono text-xl font-bold leading-none ${
             good ? 'text-emerald-300' : 'text-amber-300'
@@ -170,8 +231,10 @@ export const HighlightTile: React.FC<{
           {value}
         </span>
         <span className="font-mono text-[10px] text-zinc-500">{unit}</span>
+        <RateTier strength={strength ?? null} />
       </div>
       <div className="relative h-2 overflow-hidden rounded-full bg-zinc-800">
+        <RateBand interval={interval ?? null} />
         <div
           data-highlight-meter={Math.round(clampPct(meter))}
           className={`h-full rounded-full ${good ? 'bg-emerald-400' : 'bg-amber-400'}`}
@@ -220,9 +283,11 @@ export const OrdinalBars: React.FC<{
               }`}
             >
               {figureOf(stats)} · {sampleNote(stats)}
+              {stats.strength ? ` · ${RATE_STRENGTH_LABEL[stats.strength]}` : ''}
             </span>
           </div>
-          <div className="h-2 overflow-hidden rounded-full bg-zinc-800">
+          <div className="relative h-2 overflow-hidden rounded-full bg-zinc-800">
+            <RateBand interval={stats.holdInterval} />
             <div
               className={`h-full rounded-full ${readable ? 'bg-emerald-400' : 'bg-zinc-600'}`}
               style={{ width: `${barPct(stats, minDecided)}%` }}
@@ -253,10 +318,14 @@ export const MeterRow: React.FC<{
   thin?: boolean;
   /** Reference tick, 0-100 — drawn only when the row is not `thin`. */
   marker?: number;
+  /** The range the figure could sit in, drawn behind the bar. Only ever given for a rate. */
+  interval?: RateInterval | null;
+  /** How much is behind the figure, named under it. Only ever given for a rate. */
+  strength?: RateStrength | null;
   /** Test hook; also the `data-meter` value. */
   name: string;
-}> = ({ label, value, meter, thin = false, marker, name }) => (
-  <div data-meter={name} className="flex items-center gap-2">
+}> = ({ label, value, meter, thin = false, marker, interval, strength, name }) => (
+  <div data-meter={name} data-rate-strength={strength ?? 'none'} className="flex items-center gap-2">
     <span
       className="w-24 shrink-0 truncate font-mono text-[10px] text-zinc-500 sm:w-32"
       title={label}
@@ -264,6 +333,7 @@ export const MeterRow: React.FC<{
       {label}
     </span>
     <div className="relative h-2 flex-1 overflow-hidden rounded-full bg-zinc-800">
+      <RateBand interval={interval ?? null} />
       <div
         data-meter-value={Math.round(clampPct(meter))}
         className={`h-full rounded-full ${thin ? 'bg-zinc-600' : 'bg-emerald-400'}`}
@@ -278,12 +348,17 @@ export const MeterRow: React.FC<{
         />
       )}
     </div>
-    <span
-      className={`w-20 shrink-0 text-right font-mono text-[10px] sm:w-32 ${
-        thin ? 'text-zinc-500' : 'text-emerald-300'
-      }`}
-    >
-      {value}
+    <span className="flex w-20 shrink-0 flex-col items-end sm:w-32">
+      <span
+        className={`font-mono text-[10px] ${thin ? 'text-zinc-500' : 'text-emerald-300'}`}
+      >
+        {value}
+      </span>
+      {strength && (
+        <span className="font-mono text-[9px] text-zinc-500">
+          {RATE_STRENGTH_LABEL[strength]}
+        </span>
+      )}
     </span>
   </div>
 );
@@ -363,21 +438,29 @@ export const EdgeBar: React.FC<{
 }> = ({ label, detail, stats, minDecided, marker }) => {
   const readable = isReadable(stats);
   return (
-    <div data-edge-bar={readable ? 'rate' : 'thin'} className="space-y-1">
+    <div
+      data-edge-bar={readable ? 'rate' : 'thin'}
+      data-rate-strength={stats.strength ?? 'none'}
+      className="space-y-1"
+    >
       <div className="flex items-baseline justify-between gap-2">
         <span className="truncate text-xs text-zinc-200" title={label}>
           {label}
         </span>
-        <span
-          className={`shrink-0 font-mono text-[10px] ${
-            readable ? 'text-emerald-300' : 'text-zinc-500'
-          }`}
-        >
-          {figureOf(stats)}
-          {readable ? '' : ' — too thin for a rate'}
+        <span className="flex shrink-0 items-baseline gap-1.5">
+          <span
+            className={`font-mono text-[10px] ${
+              readable ? 'text-emerald-300' : 'text-zinc-500'
+            }`}
+          >
+            {figureOf(stats)}
+            {readable ? '' : ' — too thin for a rate'}
+          </span>
+          <RateTier strength={stats.strength} />
         </span>
       </div>
       <div className="relative h-2 overflow-hidden rounded-full bg-zinc-800">
+        <RateBand interval={stats.holdInterval} />
         <div
           data-edge-meter={Math.round(barPct(stats, minDecided))}
           className={`h-full rounded-full ${readable ? 'bg-emerald-400' : 'bg-zinc-600'}`}
@@ -406,9 +489,11 @@ export const EdgeBar: React.FC<{
  */
 export const EdgeBarKey: React.FC<{ minDecided: number }> = ({ minDecided }) => (
   <p className="text-[10px] leading-relaxed text-zinc-500">
-    Green is a hold rate: the share of decided touches where price never came back. The tick is
-    50% — the coin flip that rate is worth comparing to. Grey is a sample still being collected,
-    filled to the {minDecided} decided touches a rate needs, so a short grey bar is a young record
-    and not a weak line.
+    Green is a hold rate — the share of decided touches where price never came back. The pale band
+    behind it is the range that rate could sit in at this sample size: five touches at 80% could
+    honestly be anywhere from 38% to 96%, where twenty at the same 80% is 61% to 91%. The word
+    under the figure names how much is behind it. The tick is 50%, the coin flip worth comparing
+    to. Grey is a sample still being collected, filled to the {minDecided} decided touches a rate
+    needs, so a short grey bar is a young record and not a weak line.
   </p>
 );

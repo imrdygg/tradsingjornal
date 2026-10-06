@@ -905,6 +905,79 @@ test.describe('Timeframe edge', () => {
     await expect(page.locator('[data-timeframe-score]')).toHaveCount(0);
     await expect(page.locator('[data-trend-line]')).toHaveCount(0);
   });
+
+  /**
+   * A record that fills the rolling windows without a single judged rate.
+   *
+   * A window is built from decided touches, but it only carries a rate once one of them has an
+   * answer at its chart's own horizon. Most of a real journal's touches do not — the horizon reads
+   * `returnedAt`/`checkedAt`, and every touch logged without them is decided yet unjudgeable. The
+   * card used to read its first window off the window count alone, which threw and took the whole
+   * Playbook tab down with it. Twelve decided touches over two charts is three windows of ten and
+   * no judgeable rate at all, so this is the case that has to render an explanation.
+   */
+  test('explains itself when no window has a judged rate, instead of falling over', async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      const level = (id: string, timeframe: string) => ({
+        id,
+        userId: 'solo-trader-01',
+        tradingDayId: 'day-2026-09-28',
+        tradeDate: '2026-09-28',
+        instrumentId: 'mes',
+        kind: 'resistance',
+        timeframe,
+        price: 7760,
+        zonePoints: 2,
+        session: 'Regular Session',
+        createdAt: '2026-09-28T12:00:00.000Z',
+        updatedAt: '2026-09-28T12:00:00.000Z',
+      });
+      // No `returnedAt` and no `checkedAt`: decided, but with nothing to judge a horizon on.
+      const touch = (id: string, levelId: string, timeframe: string) => ({
+        id,
+        userId: 'solo-trader-01',
+        tradingDayId: 'day-2026-09-28',
+        tradeDate: '2026-09-28',
+        instrumentId: 'mes',
+        kind: 'resistance',
+        timeframe,
+        price: 7760,
+        zonePoints: 2,
+        touchedAt: '2026-09-28T12:15:00.000Z',
+        session: 'Regular Session',
+        checks: 1,
+        levelId,
+        outcome: 'never-returned',
+        createdAt: '2026-09-28T12:15:00.000Z',
+        updatedAt: '2026-09-28T12:15:00.000Z',
+      });
+
+      localStorage.setItem(
+        'ptj_marked_levels_v1',
+        JSON.stringify([level('a', '5m'), level('b', '15m')])
+      );
+      localStorage.setItem(
+        'ptj_level_touches_v1',
+        JSON.stringify([
+          ...Array.from({ length: 6 }, (_, index) => touch(`t${index}`, 'a', '5m')),
+          ...Array.from({ length: 6 }, (_, index) => touch(`u${index}`, 'b', '15m')),
+        ])
+      );
+    });
+    await page.reload();
+    await gotoPlaybook(page);
+
+    // The card is drawn, the buckets are listed, and the roll explains why it has nothing.
+    await expect(page.locator('#playbook-timeframe-edge')).toBeVisible();
+    await expect(page.locator('[data-timeframe-score]')).toHaveCount(2);
+    await expect(page.locator('#timeframe-edge-trend-empty')).toContainText(
+      'carries a judged rate yet'
+    );
+    await expect(page.locator('[data-trend-line]')).toHaveCount(0);
+    await expect(page.locator('#timeframe-edge-trend-read')).toHaveCount(0);
+  });
 });
 
 /**
@@ -1290,9 +1363,8 @@ test.describe('Edge finder — every price line drawn', () => {
     page,
   }) => {
     await page.addInitScript(() => {
-      // Five days, one line at the same price each day, held on four of them: enough decided
-      // touches for a rate. Plus a line touched once, and a line marked and never tested.
-      const dates = ['2026-09-28', '2026-09-29', '2026-09-30', '2026-10-01', '2026-10-02'];
+      const isoDate = (offset: number) =>
+        new Date(Date.UTC(2026, 8, 1 + offset)).toISOString().slice(0, 10);
       const level = (id: string, price: number, tradeDate: string) => ({
         id,
         userId: 'solo-trader-01',
@@ -1325,57 +1397,112 @@ test.describe('Edge finder — every price line drawn', () => {
         createdAt: `${tradeDate}T12:15:00.000Z`,
         updatedAt: `${tradeDate}T12:15:00.000Z`,
       });
+      /** `held` of `total` touches at one price, one a day — the same shape at two sample sizes. */
+      const line = (tag: string, price: number, total: number, held: number) => {
+        const dates = Array.from({ length: total }, (_, index) => isoDate(index));
+        return {
+          levels: dates.map((date, index) => level(`${tag}l${index}`, price, date)),
+          touches: dates.map((date, index) =>
+            touch(`${tag}t${index}`, price, date, index < held ? 'never-returned' : 'returned')
+          ),
+        };
+      };
 
-      const levels = [
-        ...dates.map((date, index) => level(`l${index}`, 7791.25, date)),
-        level('l5', 7760, '2026-10-02'),
-        // Marked and never touched: the chart must not give it a row, because nothing has been
-        // said about it.
-        level('l6', 7750, '2026-10-02'),
-      ];
-      const touches = [
-        ...dates.map((date, index) =>
-          touch(`t${index}`, 7791.25, date, index === 0 ? 'returned' : 'never-returned')
-        ),
-        touch('t5', 7760, '2026-10-02', 'never-returned'),
-      ];
+      // The same 80% at two very different sample sizes, plus a line touched once, plus a line
+      // marked and never tested.
+      const early = line('e', 7791.25, 5, 4);
+      const settled = line('s', 7700, 25, 20);
+      const single = line('o', 7760, 1, 1);
 
-      localStorage.setItem('ptj_marked_levels_v1', JSON.stringify(levels));
-      localStorage.setItem('ptj_level_touches_v1', JSON.stringify(touches));
+      localStorage.setItem(
+        'ptj_marked_levels_v1',
+        JSON.stringify([
+          ...early.levels,
+          ...settled.levels,
+          ...single.levels,
+          // Marked and never touched: the chart must not give it a row, because nothing has been
+          // said about it.
+          level('untouched', 7750, '2026-09-30'),
+        ])
+      );
+      localStorage.setItem(
+        'ptj_level_touches_v1',
+        JSON.stringify([...early.touches, ...settled.touches, ...single.touches])
+      );
     });
     await page.reload();
     await gotoPlaybook(page);
 
     const block = page.locator('#playbook-edge-lines');
     await expect(block).toBeVisible();
-    // Two price lines have been touched; one of them carries a rate.
-    await expect(block).toContainText('1 of 2 with a rate');
+    // Three price lines have been touched; two of them carry a rate.
+    await expect(block).toContainText('2 of 3 with a rate');
 
-    // The five-day line: one price, five touches, four of them holding into a readable 80%.
-    const repeated = page.locator('[data-line-edge="mes|resistance|7791.25"]');
-    await expect(repeated).toContainText('MES resistance 7791.25');
-    await expect(repeated).toContainText('5 days · 5 touches');
-    await expect(repeated.locator('[data-edge-bar="rate"]')).toHaveCount(1);
-    await expect(repeated).toContainText('80%');
-    await expect(repeated.locator('[data-edge-meter]')).toHaveAttribute(
+    // Both rated lines print the same 80%, and must not read as equally solid: five decided
+    // touches sit in a range of 37.6-96.3 and are named an early read, twenty-five sit in
+    // 60.9-91.1 and are settled.
+    const earlyRead = page.locator('[data-line-edge="mes|resistance|7791.25"]');
+    await expect(earlyRead).toContainText('MES resistance 7791.25');
+    await expect(earlyRead).toContainText('5 days · 5 touches');
+    await expect(earlyRead.locator('[data-edge-bar="rate"]')).toHaveCount(1);
+    await expect(earlyRead).toContainText('80%');
+    await expect(earlyRead).toContainText('early read');
+    await expect(earlyRead.locator('[data-edge-bar]')).toHaveAttribute(
+      'data-rate-strength',
+      'early'
+    );
+    await expect(earlyRead.locator('[data-rate-band]')).toHaveAttribute(
+      'data-rate-band',
+      '37.6-96.3'
+    );
+    await expect(earlyRead.locator('[data-edge-meter]')).toHaveAttribute(
       'data-edge-meter',
       '80'
     );
-    await expect(repeated.locator('[data-edge-marker]')).toHaveAttribute(
+    await expect(earlyRead.locator('[data-edge-marker]')).toHaveAttribute(
       'data-edge-marker',
       '50'
     );
 
-    // The one-touch line: a count, no percentage, and no tick on a bar that is not a rate.
-    const single = page.locator('[data-line-edge="mes|resistance|7760"]');
-    await expect(single.locator('[data-edge-bar="thin"]')).toHaveCount(1);
-    await expect(single).toContainText('1 decided — too thin for a rate');
-    await expect(single).not.toContainText('%');
-    await expect(single.locator('[data-edge-meter]')).toHaveAttribute(
+    const settled = page.locator('[data-line-edge="mes|resistance|7700"]');
+    await expect(settled).toContainText('80%');
+    await expect(settled).toContainText('settled');
+    await expect(settled.locator('[data-edge-bar]')).toHaveAttribute(
+      'data-rate-strength',
+      'settled'
+    );
+    await expect(settled.locator('[data-rate-band]')).toHaveAttribute(
+      'data-rate-band',
+      '60.9-91.1'
+    );
+
+    // The band is drawn on the page, not only in the markup: a settled rate's range is narrower
+    // on screen than an early one's, at the same width of card.
+    const widths = await page.evaluate(() => {
+      const width = (key: string) => {
+        const band = document.querySelector(`[data-line-edge="${key}"] [data-rate-band]`);
+        return band ? Math.round(band.getBoundingClientRect().width) : 0;
+      };
+      return { early: width('mes|resistance|7791.25'), settled: width('mes|resistance|7700') };
+    });
+    expect(widths.early).toBeGreaterThan(0);
+    expect(widths.settled).toBeGreaterThan(0);
+    expect(widths.settled).toBeLessThan(widths.early);
+
+    // The one-touch line: a count, no percentage, no range and no tier, and no tick on a bar
+    // that is not a rate.
+    const one = page.locator('[data-line-edge="mes|resistance|7760"]');
+    await expect(one.locator('[data-edge-bar="thin"]')).toHaveCount(1);
+    await expect(one).toContainText('1 decided — too thin for a rate');
+    await expect(one).not.toContainText('%');
+    await expect(one.locator('[data-edge-bar]')).toHaveAttribute('data-rate-strength', 'none');
+    await expect(one.locator('[data-rate-band]')).toHaveCount(0);
+    await expect(one).not.toContainText('early read');
+    await expect(one.locator('[data-edge-meter]')).toHaveAttribute(
       'data-edge-meter',
       '20'
     );
-    await expect(single.locator('[data-edge-marker]')).toHaveCount(0);
+    await expect(one.locator('[data-edge-marker]')).toHaveCount(0);
 
     // The line marked and never tested has no row here at all.
     await expect(page.locator('[data-line-edge="mes|resistance|7750"]')).toHaveCount(0);

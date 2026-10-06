@@ -148,9 +148,82 @@ export function evaluateTouch(touch: LevelTouch, since: PriceSample[]): TouchEva
  */
 export const MIN_DECIDED = 5;
 
+/**
+ * The decided touches behind a rate before it is more than an early read.
+ *
+ * {@link MIN_DECIDED} says when a rate may be *shown*. This says when it is worth *trusting*. At
+ * five decided touches an 80% rate could honestly sit anywhere between roughly a third and almost
+ * certain, which is why the range travels with the figure — and twenty is about where an 80% can
+ * be told apart from a coin flip at all. Until then a rate describes the last few lines price
+ * happened to touch, and the card says so in words rather than letting two identical percentages
+ * look equally solid.
+ */
+export const SOLID_DECIDED = 20;
+
 /** A touch that has a definite answer, either way. `watching` and `invalid` do not. */
 export function isDecided(touch: LevelTouch): boolean {
   return touch.outcome === 'never-returned' || touch.outcome === 'returned';
+}
+
+/** The range a rate could honestly sit in, as percentages. */
+export interface RateInterval {
+  low: number;
+  high: number;
+}
+
+/** How much record is behind a rate, so two identical percentages cannot look equally solid. */
+export type RateStrength = 'early' | 'building' | 'settled';
+
+/** The word for each tier, in the card's own terms. */
+export const RATE_STRENGTH_LABEL: Record<RateStrength, string> = {
+  early: 'early read',
+  building: 'building',
+  settled: 'settled',
+};
+
+/**
+ * How much is behind a rate: null while there is no rate to read at all.
+ *
+ * Open-ended at the top on purpose. `settled` does not mean proven — only that the sample is
+ * finally big enough that one more touch cannot move the figure much.
+ */
+export function rateStrength(decided: number, minDecided = MIN_DECIDED): RateStrength | null {
+  if (decided < minDecided) return null;
+  if (decided >= SOLID_DECIDED) return 'settled';
+  return decided >= 10 ? 'building' : 'early';
+}
+
+/**
+ * The Wilson score interval for a rate — the range the true rate could sit in at this sample size.
+ *
+ * A bare proportion hides the thing a small journal most needs to see: five decided touches at 80%
+ * is a rate whose honest range is roughly 38-96%, while twenty at the same 80% is a 58-92%. Same
+ * centre, very different amounts of knowledge, so the range is carried with the figure rather than
+ * left to the reader's imagination.
+ *
+ * Wilson rather than the textbook normal approximation because it behaves at small samples and at
+ * the edges: six of six holding still gets a range that stops short of 100%, where the normal
+ * approximation would give a zero-width interval that reads as certainty.
+ *
+ * One assumption is worth naming, because it is the one this journal breaks: each decided touch is
+ * treated as an independent draw. Yours often are not — two touches of one line in one afternoon
+ * are closer to one observation than to two — so the range is a floor on the uncertainty, never a
+ * promise of precision.
+ */
+export function rateInterval(neverReturned: number, decided: number, z = 1.96): RateInterval | null {
+  if (decided <= 0) return null;
+  const p = neverReturned / decided;
+  const denom = 1 + (z * z) / decided;
+  const centre = (p + (z * z) / (2 * decided)) / denom;
+  const half =
+    (z * Math.sqrt((p * (1 - p)) / decided + (z * z) / (4 * decided * decided))) / denom;
+
+  // Rounded inward, to one decimal: a range that rounds outward claims more than the sample
+  // supports. Six of six holding is where that shows — the honest upper bound is 99.9%, and a
+  // flat 100% there would read as certainty about a rate built from six touches.
+  const low = Math.ceil(Math.max(0, centre - half) * 1000) / 10;
+  const high = Math.max(low, Math.floor(Math.min(1, centre + half) * 1000) / 10);
+  return { low, high };
 }
 
 export interface LevelEdgeStats {
@@ -169,6 +242,15 @@ export interface LevelEdgeStats {
   holdRate: number | null;
   /** True when `decided` reaches {@link MIN_DECIDED}, so `holdRate` may be read. */
   enoughData: boolean;
+  /**
+   * The range `holdRate` could sit in, or null while there is no rate to read.
+   *
+   * Null together with `holdRate`, never on its own: anything that may draw a rate may draw its
+   * range, and anything that may not draw a rate has no range to show.
+   */
+  holdInterval: RateInterval | null;
+  /** How much record is behind `holdRate`, or null while there is no rate to read. */
+  strength: RateStrength | null;
   /** Average favourable excursion across decided touches, in points. */
   avgExcursionPoints: number | null;
 }
@@ -188,6 +270,7 @@ export function summarizeTouches(
   const watching = touches.filter((t) => t.outcome === 'watching').length;
   const invalid = touches.filter((t) => t.outcome === 'invalid').length;
   const decided = neverReturned + returned;
+  const enoughData = decided >= minDecided;
 
   const excursions = touches
     .filter(isDecided)
@@ -202,7 +285,9 @@ export function summarizeTouches(
     watching,
     invalid,
     holdRate: decided > 0 ? round((neverReturned / decided) * 100, 1) : null,
-    enoughData: decided >= minDecided,
+    enoughData,
+    holdInterval: enoughData ? rateInterval(neverReturned, decided) : null,
+    strength: rateStrength(decided, minDecided),
     avgExcursionPoints: excursions.length
       ? round(excursions.reduce((a, b) => a + b, 0) / excursions.length)
       : null,

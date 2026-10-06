@@ -11,7 +11,7 @@ import {
 import { CoachCard } from '../coach/coach-ui';
 import { Collapse } from '../common/Collapse';
 import { instrumentSymbol } from '../../lib/trading/instruments';
-import { MIN_DECIDED } from '../../lib/analytics/level-edge';
+import { MIN_DECIDED, RATE_STRENGTH_LABEL } from '../../lib/analytics/level-edge';
 import { TIMEFRAME_LABEL } from '../../lib/analytics/level-timeframes';
 import {
   mostReachedLine,
@@ -139,7 +139,10 @@ export const LevelOddsCard: React.FC<LevelOddsCardProps> = ({
   const holdLine = (row: LevelOddsRow): string => {
     if (row.stats.touches === 0) return 'No touch logged against this line yet.';
     if (row.stats.decided >= MIN_DECIDED) {
-      return `After a touch: ${row.stats.neverReturned} of ${row.stats.decided} decided held (${row.stats.holdRate}% never came back).`;
+      // The tier travels with the rate: three of five holding is a rate that may be read and not
+      // one that may be leaned on, and the sentence says which it is.
+      const tier = row.stats.strength ? `, ${RATE_STRENGTH_LABEL[row.stats.strength]}` : '';
+      return `After a touch: ${row.stats.neverReturned} of ${row.stats.decided} decided held (${row.stats.holdRate}% never came back${tier}).`;
     }
     return `After ${row.stats.touches} touch${row.stats.touches === 1 ? '' : 'es'}: ${row.stats.decided} decided — need ${MIN_DECIDED} for a hold rate.`;
   };

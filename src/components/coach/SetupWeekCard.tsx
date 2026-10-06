@@ -7,6 +7,7 @@ import {
   type SetupWeek,
   type SetupWeekRow,
 } from '../../lib/analytics/setup-week';
+import { RATE_STRENGTH_LABEL } from '../../lib/analytics/level-edge';
 import { CoachCard, CoachFact, money } from './coach-ui';
 
 /**
@@ -90,7 +91,10 @@ function touchLine(row: SetupWeekRow): string {
     `${touch.decided} decided of ${touch.touches} touched · ` +
     `${touch.neverReturned} held, ${touch.returned} came back`;
   if (!touch.enoughData) return `${counts} · too thin to rate`;
-  return `${counts} · ${touch.holdRate}% held`;
+  // The tier belongs on the rate for the same reason the counts do: a week of five touches and a
+  // week of thirty can print the same percentage and mean different things.
+  const tier = touch.strength ? ` (${RATE_STRENGTH_LABEL[touch.strength]})` : '';
+  return `${counts} · ${touch.holdRate}% held${tier}`;
 }
 
 /** What one week of the strip is worth hovering: the window, its verdict and its P&L. */

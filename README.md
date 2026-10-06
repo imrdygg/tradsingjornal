@@ -73,6 +73,8 @@ It creates:
 
 - `journal_snapshots` — one JSON document per user (`user_id` primary key, RLS so a user
   can only touch their own row), plus a `revision` column used for conflict detection.
+- `coach_quota` and the `coach_consume_quota` function — the coach's shared rate-limit
+  ledger, keyed on the signed-in user (see *The AI coach* below).
 - The public `journal-media` Storage bucket for video clips, with per-user folder policies.
 
 > **Upgrading an existing project:** re-run `supabase/schema.sql`. The `revision` column is
@@ -105,8 +107,10 @@ device's change, which is what the old "use the cloud copy" box actually was.
 **Nothing a sync replaces is deleted.** When a save overwrites another device's copy, or
 when adopting the cloud copy on sign-in would drop records this device holds, the displaced
 journal is kept as a recovery copy and offered for download in **Settings → Account & Cloud
-Sync**. Only the most recent copy is held, and none is kept for a journal too large to store
-twice (one carrying chart screenshots), where duplicating it would break later writes.
+Sync**. The three most recent copies are held and each can be downloaded or discarded on its
+own, so a device that syncs twice in a row cannot lose the earlier copy to the later one. None
+is kept for a journal too large to store twice (one carrying chart screenshots), where
+duplicating it would break later writes.
 
 The two copies are still not merged: a deletion on one device is indistinguishable from a
 record the other device never had, so a merge would quietly resurrect deleted trades. Cloud
@@ -140,10 +144,18 @@ The endpoint spends a paid key, so it only answers a caller it can identify:
    lock a trader out of their own coach, and a single caller cannot have more than
    `COACH_MAX_IN_FLIGHT` answers running at once.
 
-> **These counters are per instance.** They live in the function's memory, so each running
-> instance enforces its own ceiling and a cold start resets them. That cheaply makes a
-> scraped endpoint useless, which is the risk being managed; it is not billing enforcement.
-> A shared store would be the next step if you need a hard global quota.
+**A signed-in trader's allowance is global, not per instance.** It is spent in the
+`coach_quota` row for their user id, so every running instance counts against the same
+ceiling and a cold start no longer resets it. The endpoint spends it with the caller's own
+access token, so row-level security — not a service-role key — is what keeps a trader inside
+their own row. `coach_consume_quota` locks that row while it counts, so two instances cannot
+both read the same number and both spend one.
+
+> **One thing is still per instance:** the `COACH_MAX_IN_FLIGHT` guard, and the whole
+> anonymous per-IP path. Both are deliberate. In-flight is about how many model calls *this
+> box* is running, so sharing it would cost a round-trip to guard a local resource; and the
+> anonymous path only runs on a deployment with no Supabase project at all, which has no
+> shared store to use. The health check says which one is in play.
 
 If the server has **no Supabase credentials** it cannot identify anyone, and refusing
 outright would break the documented local-only deployment. It then falls back to the tight
@@ -174,7 +186,7 @@ On a deployment, `GET /api/coach` returns a small JSON health check:
 {
   "ok": true,
   "service": "coach",
-  "version": 5,
+  "version": 21,
   "keyConfigured": true,
   "models": ["gemini-flash-lite-latest", "..."],
   "access": {
@@ -182,14 +194,20 @@ On a deployment, `GET /api/coach` returns a small JSON health check:
     "perUserPerHour": 30,
     "anonymousPerHour": 10,
     "maxInFlight": 2,
-    "countersArePerInstance": true
+    "countersArePerInstance": false,
+    "sharedQuota": "available"
   }
 }
 ```
 
-The health check itself is deliberately unauthenticated and reveals nothing secret; it is
+`countersArePerInstance` is false once a Supabase project is configured, and `sharedQuota`
+says whether that project's ledger answered the last time it was asked: `"available"`, or
+`"unavailable"` when the endpoint had to fall back to its own counter — the usual cause being
+that `supabase/schema.sql` has not been re-run since the `coach_quota` table was added.
+
+(The health check itself is deliberately unauthenticated and reveals nothing secret; it is
 the one place to confirm whether a session is required and that the key is visible to the
-function. If you get the app back instead, `api/coach` was not deployed with that build.
+function. If you get the app back instead, `api/coach` was not deployed with that build.)
 
 ### Coach guardrails
 
@@ -268,19 +286,20 @@ Conventions that matter if you add or edit a pattern:
 
 ```
 src/
-  App.tsx                  journal state, cloud sync, modals, tab routing
+  App.tsx                  view composition, modals, tab routing
   types.ts                 the data model (TradingDay, Trade, DailyReview, ...)
   components/              by feature: today, trades, history, analytics,
                            insights, coach, playbook, settings, common, layout
   lib/
     storage/               localStorage persistence + date helpers + failure reporting
+    journal/               useJournalStore (records) + useCloudSync (load/save/conflict)
     cloud-sync.ts          revision-checked Supabase snapshot read/write
     trading/               P&L, R, risk, scale-in grouping, Tradovate CSV import
     analytics/             aggregations, expectancy, drawdown, discipline, insights
     ai/                    digest, prompt, response validation, checkpoint cache
-    playbook/              chart-pattern content, registry, geometry, timeline
+    playbook/              chart-pattern content, registry, geometry, timeline, deep links
   api/coach.ts             the serverless handler (bundled to api/coach.js)
-supabase/schema.sql        tables, RLS policies, storage bucket
+supabase/schema.sql        tables, RLS policies, storage bucket, coach quota
 scripts/                   bundle + coach diagnostics
 e2e/                       Playwright specs
 ```
@@ -343,12 +362,18 @@ Any host that serves a Vite build and Node serverless functions works; the check
 3. Run `npm run build:function` if you touched `src/api/coach.ts`, and commit the result.
 4. Confirm `GET /api/coach` reports `keyConfigured: true` and `access.authRequired: true`
    once deployed. If `authRequired` is false, the coach is answering anybody who finds the
-   URL, limited only by IP.
+   URL, limited only by IP. After one signed-in coach request, `access.sharedQuota` should
+   read `"available"` — `"unavailable"` means the `coach_quota` table is missing, so step 2
+   needs re-running and the per-user limit is only per instance until it is.
 
 ## Known gaps
 
-- Coach rate-limit counters are per function instance and reset on a cold start (see above);
-  a shared store would be needed for a hard global quota.
+- A signed-in trader's coach rate limit is global, but the per-IP ceiling for the anonymous
+  fallback is still per function instance. That path only runs on a deployment with no
+  server-side Supabase credentials, which has nowhere to share a count.
+- Until `supabase/schema.sql` is re-run against a project, `coach_quota` does not exist and
+  the endpoint silently falls back to its per-instance counter. `GET /api/coach` reports
+  `sharedQuota: "unavailable"` once that has happened.
 - A deployment with no server-side Supabase credentials falls back to per-IP limiting for
   the coach rather than refusing to serve it.
 - Cloud sync resolves a clash by keeping this device's copy and setting the other aside,

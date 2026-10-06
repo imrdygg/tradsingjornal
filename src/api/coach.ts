@@ -75,7 +75,7 @@ interface ApiResponse {
  * knows the meaning of gets updated without being read. Bump it when the request or response
  * contract changes in a way a caller could notice.
  */
-export const ENDPOINT_VERSION = 20;
+export const ENDPOINT_VERSION = 21;
 
 /** Total time to spend trying models before returning what we have. */
 const REQUEST_BUDGET_MS = 45_000;
@@ -119,10 +119,13 @@ export function isRetryable(status: number, message: string): boolean {
 // ceiling on how often that caller may ask. Both belong on the server: a client can
 // be edited by anyone who opens devtools, so neither can be enforced from there.
 //
-// The one hole worth naming: the counters live in this instance's memory. A serverless
-// platform runs many instances and replaces them freely, so the limits below are a
-// per-instance speed bump, not a global quota accounting. They make a scraped endpoint
-// useless cheaply, which is the actual risk; they are not billing enforcement.
+// A counter that lives only in one instance's memory is a speed bump, not a quota: a
+// serverless platform runs many instances and replaces them freely, so each box enforces
+// its own ceiling and a cold start resets it. A signed-in caller's allowance is therefore
+// spent in a shared Postgres row (`coach_consume_quota`, created by supabase/schema.sql)
+// keyed on their user id, which makes the per-user ceiling genuinely global. The anonymous
+// fallback keeps the in-memory per-IP counter, because it only runs on a deployment with no
+// Supabase project at all — and so has no shared store to use.
 // ---------------------------------------------------------------------------
 
 /** Requests allowed in one window, and how long that window lasts. */
@@ -159,11 +162,15 @@ function readPositiveInt(raw: string | undefined, fallback: number): number {
  * a code change, but never to zero: a bad value falls back to the default rather than
  * disabling the limit.
  */
-export function rateLimitRules(env: Record<string, string | undefined> = process.env): {
+export interface RateLimitRules {
   user: RateLimitRule;
   anon: RateLimitRule;
   maxInFlight: number;
-} {
+}
+
+export function rateLimitRules(
+  env: Record<string, string | undefined> = process.env,
+): RateLimitRules {
   return {
     user: {
       limit: readPositiveInt(env.COACH_RATE_LIMIT, DEFAULT_USER_LIMIT),
@@ -404,8 +411,148 @@ export function createRateLimiter(
   };
 }
 
-/** The limiter this instance enforces. See the note on per-instance counters above. */
+/** The fallback limiter this instance enforces. See the note on counters above. */
 export const coachRateLimiter = createRateLimiter();
+
+/**
+ * How many answers one identity may have running on THIS instance at once.
+ *
+ * In-flight is deliberately not shared: it is about how many model calls this box is
+ * running, not about the account's allowance, so a shared store would add a round-trip to
+ * guard something that is local anyway. The allowance is the part that has to be global.
+ */
+export function createInFlightGuard() {
+  const inFlight = new Map<string, number>();
+
+  return {
+    acquire(key: string, max: number): Admission {
+      const active = inFlight.get(key) ?? 0;
+      if (active >= max) {
+        return { ok: false, reason: 'too_many_in_flight', retryAfterSeconds: 20 };
+      }
+      inFlight.set(key, active + 1);
+
+      let released = false;
+      return {
+        ok: true,
+        remaining: 0,
+        release() {
+          // Guarded so a double release cannot free someone else's slot.
+          if (released) return;
+          released = true;
+          const current = inFlight.get(key) ?? 0;
+          if (current <= 1) inFlight.delete(key);
+          else inFlight.set(key, current - 1);
+        },
+      };
+    },
+    reset() {
+      inFlight.clear();
+    },
+  };
+}
+
+/** The in-flight guard this instance enforces. */
+export const coachInFlight = createInFlightGuard();
+
+/**
+ * Whether the shared allowance store was usable the last time it was asked.
+ *
+ * Reported by the health check, so a deployment can tell a genuinely global quota apart
+ * from one that quietly fell back to this instance's own counter — the usual cause being
+ * that supabase/schema.sql has not been re-run since the table was added.
+ */
+export type SharedQuotaState = 'unknown' | 'available' | 'unavailable';
+
+let sharedQuotaState: SharedQuotaState = 'unknown';
+
+export function getSharedQuotaState(): SharedQuotaState {
+  return sharedQuotaState;
+}
+
+export type SharedQuotaOutcome =
+  | { status: 'allowed'; remaining: number }
+  | { status: 'exhausted'; retryAfterSeconds: number }
+  /** The store could not be used; the caller should fall back rather than be refused. */
+  | { status: 'unavailable' };
+
+/**
+ * Spends one unit of the caller's allowance in the shared Postgres store.
+ *
+ * Called with the caller's own access token, so the table's row-level security decides what
+ * it may touch: a trader can only ever spend their own allowance, and the endpoint needs no
+ * service-role key to make the ceiling global. That is what turns the per-instance speed
+ * bump into a real quota — every instance reads and writes the same row.
+ *
+ * An unreachable store reports `unavailable` rather than an exhaustion, so the caller can
+ * fall back instead of being refused for a reason that is not the caller's doing.
+ */
+export async function consumeSharedQuota(
+  config: SupabaseAuthConfig,
+  token: string,
+  rule: RateLimitRule,
+  fetchImpl: typeof fetch = fetch,
+): Promise<SharedQuotaOutcome> {
+  let status = 0;
+  let text = '';
+  try {
+    const res = await fetchImpl(`${config.url}/rest/v1/rpc/coach_consume_quota`, {
+      method: 'POST',
+      headers: {
+        apikey: config.anonKey,
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        p_limit: rule.limit,
+        p_window_seconds: Math.max(1, Math.round(rule.windowMs / 1000)),
+      }),
+    });
+    status = res.status;
+    text = await res.text();
+  } catch (err) {
+    sharedQuotaState = 'unavailable';
+    console.warn(
+      '[coach] shared quota store unreachable:',
+      err instanceof Error ? err.message : err,
+    );
+    return { status: 'unavailable' };
+  }
+
+  if (status < 200 || status >= 300) {
+    sharedQuotaState = 'unavailable';
+    console.warn(`[coach] shared quota store refused the call (HTTP ${status}): ${text.slice(0, 200)}`);
+    return { status: 'unavailable' };
+  }
+
+  let row: Record<string, unknown> | null = null;
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    const single = Array.isArray(parsed) ? parsed[0] : parsed;
+    if (single && typeof single === 'object') row = single as Record<string, unknown>;
+  } catch {
+    row = null;
+  }
+
+  if (!row || typeof row.allowed !== 'boolean') {
+    sharedQuotaState = 'unavailable';
+    console.warn('[coach] shared quota store returned an unreadable row.');
+    return { status: 'unavailable' };
+  }
+
+  sharedQuotaState = 'available';
+
+  if (row.allowed) {
+    const remaining = typeof row.remaining === 'number' ? row.remaining : 0;
+    return { status: 'allowed', remaining: Math.max(0, remaining) };
+  }
+
+  const retryAfterSeconds =
+    typeof row.retry_after_seconds === 'number' && row.retry_after_seconds > 0
+      ? Math.ceil(row.retry_after_seconds)
+      : 60;
+  return { status: 'exhausted', retryAfterSeconds };
+}
 
 export interface AuthorizationGrant {
   ok: true;
@@ -470,6 +617,59 @@ export async function authorize(
     limitKey: `user:${check.userId}`,
     rule: rules.user,
   };
+}
+
+/**
+ * Decides whether this request may start an answer, and reserves the slot if it may.
+ *
+ * The allowance is spent in the shared store whenever a token and a Supabase project are
+ * available, and in this instance's own memory otherwise — the rule the endpoint always
+ * had, now demoted to the fallback. Only requests that would actually reach Gemini are
+ * counted, so a malformed request cannot lock a trader out of their own coach.
+ */
+export async function admitRequest(
+  req: ApiRequest,
+  auth: AuthorizationGrant,
+  rules: RateLimitRules,
+  env: Record<string, string | undefined> = process.env,
+): Promise<Admission> {
+  const config = supabaseAuthConfig(env);
+  const token = auth.identity === 'user' ? bearerToken(req) : null;
+
+  if (config && token) {
+    // The in-flight slot is taken first so a burst cannot all reach the shared store at once.
+    const slot = coachInFlight.acquire(auth.limitKey, rules.maxInFlight);
+    if (!slot.ok) return slot;
+
+    const shared = await consumeSharedQuota(config, token, auth.rule);
+    if (shared.status === 'allowed') {
+      return { ok: true, remaining: shared.remaining, release: slot.release };
+    }
+    if (shared.status === 'exhausted') {
+      slot.release();
+      return { ok: false, reason: 'rate_limited', retryAfterSeconds: shared.retryAfterSeconds };
+    }
+
+    // The shared store could not be used. Fall back to this instance's own counter rather than
+    // refusing a trader because a counter table is missing.
+    const local = coachRateLimiter.acquire(auth.limitKey, auth.rule, rules.maxInFlight);
+    if (!local.ok) {
+      slot.release();
+      return local;
+    }
+    return {
+      ok: true,
+      remaining: local.remaining,
+      release: () => {
+        local.release();
+        slot.release();
+      },
+    };
+  }
+
+  // No project to share the count with (or no token at all): this instance's own counter is
+  // all there is, which is the documented local-only deployment.
+  return coachRateLimiter.acquire(auth.limitKey, auth.rule, rules.maxInFlight);
 }
 
 export interface CoachModelOutcome {
@@ -819,8 +1019,11 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
         perUserPerHour: rules.user.limit,
         anonymousPerHour: rules.anon.limit,
         maxInFlight: rules.maxInFlight,
-        // These counters are this instance's memory, not a shared ledger.
-        countersArePerInstance: true,
+        // With no project to share counts with, the ceiling really is this instance's alone.
+        // With one, an authenticated caller's allowance is spent in the shared store, and
+        // `sharedQuota` below says whether that store answered the last time it was asked.
+        countersArePerInstance: !config,
+        sharedQuota: config ? getSharedQuotaState() : 'not-configured',
       },
       ...(config
         ? {}
@@ -1033,7 +1236,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
 
   // Only requests that would actually reach Gemini are counted, so a malformed request
   // cannot lock a trader out of their own coach.
-  const admission = coachRateLimiter.acquire(auth.limitKey, auth.rule, rules.maxInFlight);
+  const admission = await admitRequest(req, auth, rules);
   if (!admission.ok) {
     const busy = admission.reason === 'too_many_in_flight';
     res.setHeader('Retry-After', String(admission.retryAfterSeconds));

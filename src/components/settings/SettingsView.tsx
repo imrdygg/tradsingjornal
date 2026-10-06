@@ -26,7 +26,7 @@ import { riskTierAmounts } from '../../lib/trading/risk-tiers';
 import { SyncStatusBadge, SyncStatus } from '../layout/SyncStatusBadge';
 import { ModalOverlay } from '../common/ModalOverlay';
 import { StorageHealthRow, formatMegabytes } from '../common/StorageWarningBanner';
-import { measureJournalBytes, storage } from '../../lib/storage';
+import { measureJournalBytes, storage, type RecoveryCopy } from '../../lib/storage';
 import type { CsvImportSummary } from '../../lib/trading/tradovate-import';
 
 /**
@@ -99,18 +99,19 @@ interface SettingsViewProps {
 }
 
 /**
- * The copy a sync replaced, offered for download so that a sync choosing one side is never
+ * The copies a sync replaced, offered for download so that a sync choosing one side is never
  * the last word on the other.
  *
- * Rendered only when there is something set aside — in ordinary use, where both devices
- * agree, this never appears. It is not a second sync notice: it is the receipt for work a
- * sync moved out of the way.
+ * Rendered only when something is set aside — in ordinary use, where both devices agree, this
+ * never appears. It is not a second sync notice: it is the receipt for work a sync moved out of
+ * the way. A short history is listed rather than one copy, because a device that syncs twice in
+ * a row would otherwise have lost the earlier copy to the later one, newest first.
  */
 const RecoveryCopyRow: React.FC = () => {
-  const [copy, setCopy] = useState(() => storage.getRecoveryCopy());
-  if (!copy) return null;
+  const [copies, setCopies] = useState(() => storage.getRecoveryCopies());
+  if (copies.length === 0) return null;
 
-  const download = () => {
+  const download = (copy: RecoveryCopy) => {
     const blob = new Blob([copy.json], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -120,46 +121,58 @@ const RecoveryCopyRow: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
-  const savedAt = copy.savedAt ? new Date(copy.savedAt) : null;
-  const when =
-    savedAt && !Number.isNaN(savedAt.getTime())
+  const whenOf = (copy: RecoveryCopy) => {
+    const savedAt = copy.savedAt ? new Date(copy.savedAt) : null;
+    return savedAt && !Number.isNaN(savedAt.getTime())
       ? savedAt.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
       : 'a recent sync';
+  };
 
   return (
     <div
       id="recovery-copy-row"
-      className="rounded-xl border border-amber-800/60 bg-amber-950/30 p-3 space-y-2"
+      className="rounded-xl border border-amber-800/60 bg-amber-950/30 p-3 space-y-3"
     >
       <div className="flex items-start gap-2">
         <Download className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" />
         <p className="text-[11px] leading-relaxed text-amber-200/90">
-          A sync on {when} replaced this device&apos;s journal, so that copy was set aside
-          rather than deleted. Nothing was lost — download it if it holds work you want back.
+          A sync replaced this device&apos;s journal, so the copy it moved out of the way was
+          set aside rather than deleted. Nothing was lost — download the one holding work you
+          want back.
         </p>
       </div>
-      <div className="flex flex-wrap gap-2 pl-5">
-        <button
-          type="button"
-          id="download-recovery-copy"
-          onClick={download}
-          className="flex items-center gap-1.5 rounded-lg bg-amber-500 px-2.5 py-1.5 text-[11px] font-bold text-zinc-950 transition-colors hover:bg-amber-400"
+      {copies.map((copy, index) => (
+        <div
+          key={copy.id}
+          className="space-y-2 rounded-lg border border-amber-900/40 bg-amber-950/20 p-2.5"
         >
-          <Download className="h-3.5 w-3.5" />
-          Download it
-        </button>
-        <button
-          type="button"
-          id="dismiss-recovery-copy"
-          onClick={() => {
-            storage.clearRecoveryCopy();
-            setCopy(null);
-          }}
-          className="rounded-lg border border-amber-700/60 bg-amber-950/40 px-2.5 py-1.5 text-[11px] font-semibold text-amber-100 transition-colors hover:bg-amber-900/40"
-        >
-          Discard it
-        </button>
-      </div>
+          <p className="text-[11px] leading-relaxed text-amber-200/80">
+            Set aside {whenOf(copy)}
+            {copy.reason ? ` — ${copy.reason}` : ''}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              // The newest keeps the original id so the existing spec and muscle memory still
+              // point at the copy a trader most likely wants.
+              id={index === 0 ? 'download-recovery-copy' : `download-recovery-copy-${index}`}
+              onClick={() => download(copy)}
+              className="flex items-center gap-1.5 rounded-lg bg-amber-500 px-2.5 py-1.5 text-[11px] font-bold text-zinc-950 transition-colors hover:bg-amber-400"
+            >
+              <Download className="h-3.5 w-3.5" />
+              Download it
+            </button>
+            <button
+              type="button"
+              id={index === 0 ? 'dismiss-recovery-copy' : `dismiss-recovery-copy-${index}`}
+              onClick={() => setCopies(storage.discardRecoveryCopy(copy.id))}
+              className="rounded-lg border border-amber-700/60 bg-amber-950/40 px-2.5 py-1.5 text-[11px] font-semibold text-amber-100 transition-colors hover:bg-amber-900/40"
+            >
+              Discard it
+            </button>
+          </div>
+        </div>
+      ))}
     </div>
   );
 };

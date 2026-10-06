@@ -147,6 +147,8 @@ const STORAGE_KEYS = {
  * trying to happen.
  */
 export interface RecoveryCopy {
+  /** Stable handle for this copy, so one can be discarded without disturbing the others. */
+  id: string;
   /** The whole journal, exactly as it was held, ready to import again. */
   json: string;
   savedAt: string;
@@ -161,6 +163,59 @@ export interface RecoveryCopy {
  * likely to fill the browser (and so break every later write) than to save anyone.
  */
 const RECOVERY_COPY_LIMIT_BYTES = 2_000_000;
+
+/**
+ * How many displaced journals are held at once.
+ *
+ * One copy only protects against the sync that just ran: a device that syncs twice in a
+ * row replaces the first copy with the second, and the trade that went missing earlier is
+ * gone with it. A couple more copies cover that without turning a whole journal — often
+ * carrying base64 chart screenshots — into an unbounded version history.
+ */
+const MAX_RECOVERY_COPIES = 3;
+
+/** One stored copy, shape-validated. A copy with no journal behind it is not a copy. */
+function normaliseRecoveryCopy(raw: unknown): RecoveryCopy | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const copy = raw as Partial<RecoveryCopy>;
+  if (typeof copy.json !== 'string' || !copy.json) return null;
+  const savedAt = typeof copy.savedAt === 'string' ? copy.savedAt : '';
+  return {
+    // Older builds had no id, and their one copy was identified by its timestamp.
+    id: typeof copy.id === 'string' && copy.id ? copy.id : savedAt,
+    json: copy.json,
+    savedAt,
+    reason: typeof copy.reason === 'string' ? copy.reason : '',
+  };
+}
+
+/**
+ * Every copy set aside, newest first.
+ *
+ * Reads the single-object shape older builds wrote as well as the list this one writes, so
+ * a journal set aside before an upgrade still shows up rather than vanishing from Settings.
+ */
+function readRecoveryCopies(): RecoveryCopy[] {
+  const raw = getItem<unknown>(STORAGE_KEYS.RECOVERY, null);
+  const list = Array.isArray(raw) ? raw : raw ? [raw] : [];
+  return list
+    .map(normaliseRecoveryCopy)
+    .filter((copy): copy is RecoveryCopy => copy !== null)
+    .sort((a, b) => b.savedAt.localeCompare(a.savedAt));
+}
+
+/** Persists the list, or removes the key entirely when there is nothing left to hold. */
+function writeRecoveryCopies(copies: RecoveryCopy[]): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    if (copies.length === 0) localStorage.removeItem(STORAGE_KEYS.RECOVERY);
+    else localStorage.setItem(STORAGE_KEYS.RECOVERY, JSON.stringify(copies));
+    return true;
+  } catch (err) {
+    console.warn('Could not write the recovery copies:', err);
+    return false;
+  }
+}
 
 /**
  * How many picture searches are kept.
@@ -990,9 +1045,11 @@ export const storage = {
   /**
    * Sets aside a journal copy a sync is about to replace. Returns whether it was kept.
    *
-   * Only the most recent copy is held: this is a safety net for the work that was just
-   * displaced, not a version history, and keeping several copies of a journal full of
-   * base64 charts would be what fills the browser up.
+   * A short history is held rather than only the latest copy. Keeping one meant a device
+   * that synced twice in a row replaced the first displaced copy with the second, so the
+   * work that went missing earlier had nothing left to recover from. The list stays small
+   * on purpose — each entry is a whole journal, and keeping many would be what fills the
+   * browser up — with the oldest dropping off first once the cap is reached.
    */
   saveRecoveryCopy(json: string, reason: string): boolean {
     if (typeof window === 'undefined') return false;
@@ -1000,38 +1057,45 @@ export const storage = {
       console.warn('Skipped the recovery copy: the journal is too large to hold twice.');
       return false;
     }
-    const copy: RecoveryCopy = { json, savedAt: new Date().toISOString(), reason };
-    try {
-      localStorage.setItem(STORAGE_KEYS.RECOVERY, JSON.stringify(copy));
-      return true;
-    } catch (err) {
+    const copy: RecoveryCopy = {
+      // Random enough to keep two copies saved in the same millisecond apart, so discarding
+      // one never takes its neighbour with it.
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      json,
+      savedAt: new Date().toISOString(),
+      reason,
+    };
+    const next = [copy, ...readRecoveryCopies()].slice(0, MAX_RECOVERY_COPIES);
+    if (!writeRecoveryCopies(next)) {
       // Deliberately not reported through the storage-failure banner: the trader did not
       // lose anything here, they simply have no extra copy, and a failed write is already
       // reported by whatever was writing.
-      console.warn('Could not set aside a recovery copy:', err);
+      console.warn('Could not set aside a recovery copy.');
       return false;
     }
+    return true;
   },
 
-  /** The copy set aside by the last sync, or null when there is none. */
+  /** The copy set aside by the most recent sync, or null when there is none. */
   getRecoveryCopy(): RecoveryCopy | null {
-    const copy = getItem<RecoveryCopy | null>(STORAGE_KEYS.RECOVERY, null);
-    if (!copy || typeof copy.json !== 'string' || !copy.json) return null;
-    return {
-      json: copy.json,
-      savedAt: typeof copy.savedAt === 'string' ? copy.savedAt : '',
-      reason: typeof copy.reason === 'string' ? copy.reason : '',
-    };
+    return readRecoveryCopies()[0] ?? null;
   },
 
-  /** Remembers that the trader has seen the recovery copy. */
+  /** Every copy a sync has set aside, newest first. */
+  getRecoveryCopies(): RecoveryCopy[] {
+    return readRecoveryCopies();
+  },
+
+  /** Drops one set-aside copy by its id, leaving the rest. Returns what remains. */
+  discardRecoveryCopy(id: string): RecoveryCopy[] {
+    const remaining = readRecoveryCopies().filter((copy) => copy.id !== id);
+    writeRecoveryCopies(remaining);
+    return remaining;
+  },
+
+  /** Forgets every copy set aside. */
   clearRecoveryCopy(): void {
-    if (typeof window === 'undefined') return;
-    try {
-      localStorage.removeItem(STORAGE_KEYS.RECOVERY);
-    } catch (err) {
-      console.warn('Could not clear the recovery copy:', err);
-    }
+    writeRecoveryCopies([]);
   },
 
   getLessonAck(): LessonAcknowledgement | null {

@@ -2902,7 +2902,7 @@ function readCoachImages(raw, max = MAX_COACH_IMAGES, maxTotalChars = MAX_COACH_
 }
 
 // src/api/coach.ts
-var ENDPOINT_VERSION = 20;
+var ENDPOINT_VERSION = 21;
 var REQUEST_BUDGET_MS = 45e3;
 var DEFAULT_MODEL_CHAIN = [
   "gemini-flash-lite-latest",
@@ -3076,6 +3076,90 @@ function createRateLimiter(options = {}) {
   };
 }
 var coachRateLimiter = createRateLimiter();
+function createInFlightGuard() {
+  const inFlight = /* @__PURE__ */ new Map();
+  return {
+    acquire(key, max) {
+      const active = inFlight.get(key) ?? 0;
+      if (active >= max) {
+        return { ok: false, reason: "too_many_in_flight", retryAfterSeconds: 20 };
+      }
+      inFlight.set(key, active + 1);
+      let released = false;
+      return {
+        ok: true,
+        remaining: 0,
+        release() {
+          if (released) return;
+          released = true;
+          const current = inFlight.get(key) ?? 0;
+          if (current <= 1) inFlight.delete(key);
+          else inFlight.set(key, current - 1);
+        }
+      };
+    },
+    reset() {
+      inFlight.clear();
+    }
+  };
+}
+var coachInFlight = createInFlightGuard();
+var sharedQuotaState = "unknown";
+function getSharedQuotaState() {
+  return sharedQuotaState;
+}
+async function consumeSharedQuota(config, token, rule, fetchImpl = fetch) {
+  let status = 0;
+  let text = "";
+  try {
+    const res = await fetchImpl(`${config.url}/rest/v1/rpc/coach_consume_quota`, {
+      method: "POST",
+      headers: {
+        apikey: config.anonKey,
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        p_limit: rule.limit,
+        p_window_seconds: Math.max(1, Math.round(rule.windowMs / 1e3))
+      })
+    });
+    status = res.status;
+    text = await res.text();
+  } catch (err) {
+    sharedQuotaState = "unavailable";
+    console.warn(
+      "[coach] shared quota store unreachable:",
+      err instanceof Error ? err.message : err
+    );
+    return { status: "unavailable" };
+  }
+  if (status < 200 || status >= 300) {
+    sharedQuotaState = "unavailable";
+    console.warn(`[coach] shared quota store refused the call (HTTP ${status}): ${text.slice(0, 200)}`);
+    return { status: "unavailable" };
+  }
+  let row = null;
+  try {
+    const parsed = JSON.parse(text);
+    const single = Array.isArray(parsed) ? parsed[0] : parsed;
+    if (single && typeof single === "object") row = single;
+  } catch {
+    row = null;
+  }
+  if (!row || typeof row.allowed !== "boolean") {
+    sharedQuotaState = "unavailable";
+    console.warn("[coach] shared quota store returned an unreadable row.");
+    return { status: "unavailable" };
+  }
+  sharedQuotaState = "available";
+  if (row.allowed) {
+    const remaining = typeof row.remaining === "number" ? row.remaining : 0;
+    return { status: "allowed", remaining: Math.max(0, remaining) };
+  }
+  const retryAfterSeconds = typeof row.retry_after_seconds === "number" && row.retry_after_seconds > 0 ? Math.ceil(row.retry_after_seconds) : 60;
+  return { status: "exhausted", retryAfterSeconds };
+}
 async function authorize(req, env = process.env) {
   const config = supabaseAuthConfig(env);
   const rules = rateLimitRules(env);
@@ -3105,6 +3189,36 @@ async function authorize(req, env = process.env) {
     limitKey: `user:${check.userId}`,
     rule: rules.user
   };
+}
+async function admitRequest(req, auth, rules, env = process.env) {
+  const config = supabaseAuthConfig(env);
+  const token = auth.identity === "user" ? bearerToken(req) : null;
+  if (config && token) {
+    const slot = coachInFlight.acquire(auth.limitKey, rules.maxInFlight);
+    if (!slot.ok) return slot;
+    const shared = await consumeSharedQuota(config, token, auth.rule);
+    if (shared.status === "allowed") {
+      return { ok: true, remaining: shared.remaining, release: slot.release };
+    }
+    if (shared.status === "exhausted") {
+      slot.release();
+      return { ok: false, reason: "rate_limited", retryAfterSeconds: shared.retryAfterSeconds };
+    }
+    const local = coachRateLimiter.acquire(auth.limitKey, auth.rule, rules.maxInFlight);
+    if (!local.ok) {
+      slot.release();
+      return local;
+    }
+    return {
+      ok: true,
+      remaining: local.remaining,
+      release: () => {
+        local.release();
+        slot.release();
+      }
+    };
+  }
+  return coachRateLimiter.acquire(auth.limitKey, auth.rule, rules.maxInFlight);
 }
 async function runCoachModels(params) {
   const { apiKey, mode, digest, trade, marketBrief, extras, imageParts } = params;
@@ -3337,8 +3451,11 @@ async function handler(req, res) {
         perUserPerHour: rules.user.limit,
         anonymousPerHour: rules.anon.limit,
         maxInFlight: rules.maxInFlight,
-        // These counters are this instance's memory, not a shared ledger.
-        countersArePerInstance: true
+        // With no project to share counts with, the ceiling really is this instance's alone.
+        // With one, an authenticated caller's allowance is spent in the shared store, and
+        // `sharedQuota` below says whether that store answered the last time it was asked.
+        countersArePerInstance: !config,
+        sharedQuota: config ? getSharedQuotaState() : "not-configured"
       },
       ...config ? {} : {
         warning: "SUPABASE_URL and SUPABASE_ANON_KEY are not set on this deployment, so a signed-in session cannot be required. Requests are limited per IP instead."
@@ -3477,7 +3594,7 @@ async function handler(req, res) {
     });
     return;
   }
-  const admission = coachRateLimiter.acquire(auth.limitKey, auth.rule, rules.maxInFlight);
+  const admission = await admitRequest(req, auth, rules);
   if (!admission.ok) {
     const busy = admission.reason === "too_many_in_flight";
     res.setHeader("Retry-After", String(admission.retryAfterSeconds));
@@ -3507,12 +3624,17 @@ async function handler(req, res) {
 }
 export {
   ENDPOINT_VERSION,
+  admitRequest,
   authorize,
   bearerToken,
   clientIp,
+  coachInFlight,
   coachRateLimiter,
+  consumeSharedQuota,
+  createInFlightGuard,
   createRateLimiter,
   handler as default,
+  getSharedQuotaState,
   isRetryable,
   modelChain,
   rateLimitRules,

@@ -1,9 +1,11 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from 'react';
+import { useState, useEffect, useMemo, useCallback, lazy, Suspense } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import {
   AppShell,
   NavTab,
 } from './components/layout/AppShell';
+import { AuthScreen } from './components/layout/AuthScreen';
+import { LocalOnlyNotice, SessionLoader, TabLoading } from './components/layout/AppNotices';
 import { YesterdayFocusBanner } from './components/today/YesterdayFocusBanner';
 import { DrawdownRoomStrip } from './components/today/DrawdownRoomStrip';
 import { realizedPnL } from './lib/analytics/realized-pnl';
@@ -89,10 +91,8 @@ import {
   TradingDay,
   Trade,
   DailyReview,
-  LessonAcknowledgement,
   Setup,
   UserProfile,
-  Instrument,
   TradeExecutionReview,
   TradeManagement,
   PatternStudy,
@@ -107,15 +107,15 @@ import {
   MarkedLevel,
   LevelOutlook,
 } from './types';
-import type { SyncStatus } from './components/layout/SyncStatusBadge';
 import { storage, dismissStorageFailure, measureJournalBytes } from './lib/storage';
 import { FOCUS_SETUP_NAMES } from './lib/playbook/focus-setups';
 import type { StorageState } from './lib/storage';
 import { useStorageFailure } from './lib/storage/use-storage-failure';
 import { StorageWarningBanner } from './components/common/StorageWarningBanner';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
-import { loadOrMigrateJournal, overwriteJournal } from './lib/cloud-sync';
-import { countLocalOnlyRecords, createJournalSaver } from './lib/journal-sync';
+import { useJournalStore } from './lib/journal/use-journal-store';
+import { useCloudSync } from './lib/journal/use-cloud-sync';
+import { readPatternFromHash } from './lib/playbook/pattern-hash';
 import { migrateJournalMedia, uploadImageDataUrl } from './lib/media/media-utils';
 import { parseTradovateCSV } from './lib/trading/tradovate-import';
 import type { CsvImportSummary } from './lib/trading/tradovate-import';
@@ -132,62 +132,7 @@ import {
   estimateStopDistance,
 } from './lib/analytics/risk-capacity';
 import { findInstrument, trackedLevelInstruments } from './lib/trading/instruments';
-import { Plus, Award, Sparkles, Layers, Activity, Target, Cloud, CloudOff, Loader2 } from 'lucide-react';
-
-function AuthScreen() {
-  const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-
-  const submit = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!supabase) return;
-    setBusy(true);
-    setMessage(null);
-    const result = mode === 'sign-in'
-      ? await supabase.auth.signInWithPassword({ email, password })
-      : await supabase.auth.signUp({ email, password });
-    setBusy(false);
-    if (result.error) setMessage(result.error.message);
-    else if (mode === 'sign-up' && !result.data.session) setMessage('Check your email to confirm your account, then sign in.');
-  };
-
-  return (
-    <div className="flex min-h-dvh items-center justify-center bg-zinc-950 p-4 text-zinc-100">
-      <form onSubmit={submit} className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900/80 p-6 shadow-2xl space-y-5">
-        <div>
-          <div className="flex items-center gap-2 text-emerald-400 mb-3"><Cloud className="w-5 h-5" /><span className="text-xs font-mono uppercase tracking-wider">Private cloud journal</span></div>
-          <h1 className="text-2xl font-bold">{mode === 'sign-in' ? 'Welcome back' : 'Create your account'}</h1>
-          <p className="text-sm text-zinc-400 mt-1">Your journal syncs securely across your phone and computer.</p>
-        </div>
-        {message && <div className="rounded-xl border border-amber-800/70 bg-amber-950/40 p-3 text-xs text-amber-200">{message}</div>}
-        <label className="block text-xs text-zinc-400">Email<input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required className="mt-1 w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-emerald-600" /></label>
-        <label className="block text-xs text-zinc-400">Password<input value={password} onChange={(e) => setPassword(e.target.value)} type="password" minLength={6} required className="mt-1 w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2.5 text-sm text-zinc-100 outline-none focus:border-emerald-600" /></label>
-        <button disabled={busy} className="w-full rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-bold text-zinc-950 hover:bg-emerald-400 disabled:opacity-50 flex items-center justify-center gap-2">{busy && <Loader2 className="w-4 h-4 animate-spin" />}{mode === 'sign-in' ? 'Log in' : 'Sign up'}</button>
-        <button type="button" onClick={() => { setMode(mode === 'sign-in' ? 'sign-up' : 'sign-in'); setMessage(null); }} className="w-full text-xs text-zinc-400 hover:text-zinc-200">{mode === 'sign-in' ? 'Need an account? Sign up' : 'Already have an account? Log in'}</button>
-      </form>
-    </div>
-  );
-}
-
-/**
- * The one deep link this app has: a chart pattern's stable URL.
- *
- * Deliberately a string in and a string out, with no pattern data involved — the id is
- * validated in the playbook chunk, which is loaded on demand. Importing the pattern list
- * here would drag all 20 patterns' prose into the first paint to check a hash.
- */
-const PATTERN_HASH_PREFIX = '#chart-patterns/';
-
-function readPatternFromHash(): string | null {
-  if (typeof window === 'undefined') return null;
-  const hash = window.location.hash;
-  if (!hash.startsWith(PATTERN_HASH_PREFIX)) return null;
-  const id = decodeURIComponent(hash.slice(PATTERN_HASH_PREFIX.length)).trim();
-  return id || null;
-}
+import { Plus, Award, Sparkles, Layers, Activity, Target } from 'lucide-react';
 
 interface JournalAppProps {
   userId: string;
@@ -199,36 +144,51 @@ interface JournalAppProps {
 function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   const cloudEnabled = isSupabaseConfigured;
 
-  const [profile, setProfile] = useState<UserProfile>(() => ({ ...storage.getProfile(), id: userId }));
-  // The catalog is merged on read, so a contract added since this journal was created
-  // arrives here instead of only on a fresh install.
-  const [instruments, setInstruments] = useState<Instrument[]>(() =>
-    storage.ensureInstrumentCatalog()
-  );
-  // The catalog is merged on read, so built-in setups added since this journal was created
-  // arrive here instead of only on a fresh install.
-  const [setups, setSetups] = useState<Setup[]>(() => storage.ensureSetupCatalog());
-  const [tradingDays, setTradingDays] = useState<TradingDay[]>(() => storage.getTradingDays());
-  const [trades, setTrades] = useState<Trade[]>(() => storage.getTrades());
-  const [reviews, setReviews] = useState<DailyReview[]>(() => storage.getReviews());
-  // The lesson the trader has accepted. Held in state so the banner and the review trend
-  // below it react to the click, and persisted so a reload does not undo it.
-  const [lessonAck, setLessonAck] = useState<LessonAcknowledgement | null>(() =>
-    storage.getLessonAck()
-  );
-  const [patternStudies, setPatternStudies] = useState<PatternStudy[]>(() =>
-    storage.getPatternStudies()
-  );
-  // The break-and-run journal. Held with the rest of the state so every touch is
-  // persisted locally and carried to the cloud by the same debounced save.
-  const [levelTouches, setLevelTouches] = useState<LevelTouch[]>(() =>
-    storage.getLevelTouches()
-  );
-  // The levels the trader marked before any of them was touched. Held with the journal so a
-  // marked line is saved and carried between devices by the same debounced write.
-  const [markedLevels, setMarkedLevels] = useState<MarkedLevel[]>(() =>
-    storage.getMarkedLevels()
-  );
+  /**
+   * The journal's own records live in a hook, so this file composes views rather than holding
+   * eighteen pieces of data and the sync plumbing at once. The state and the one adoption path
+   * are unchanged — they moved, they did not change shape.
+   */
+  const {
+    profile,
+    instruments,
+    setups,
+    tradingDays,
+    trades,
+    reviews,
+    lessonAck,
+    patternStudies,
+    levelTouches,
+    markedLevels,
+    levelOutlooks,
+    sessionExtremes,
+    chartSearches,
+    lessons,
+    mindsetNotes,
+    coachPlans,
+    feedback,
+    setProfile,
+    setInstruments,
+    setSetups,
+    setTradingDays,
+    setTrades,
+    setReviews,
+    setLessonAck,
+    setPatternStudies,
+    setLevelTouches,
+    setMarkedLevels,
+    setLevelOutlooks,
+    setSessionExtremes,
+    setChartSearches,
+    setLessons,
+    setMindsetNotes,
+    setCoachPlans,
+    setFeedback,
+    currentState,
+    currentStateRef,
+    applyJournalState,
+  } = useJournalStore(userId);
+
   /**
    * The most recent change to the marked-level record, and how to take it back.
    *
@@ -239,35 +199,6 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
    * exact and memory-cheap. Kept at the app level because that is where the record is written.
    */
   const [levelUndo, setLevelUndo] = useState<{ label: string; run: () => void } | null>(null);
-  // What the trader expects each instrument to do today, written beside the levels. Held with
-  // the journal so a written lean is saved and carried between devices by the same write.
-  const [levelOutlooks, setLevelOutlooks] = useState<LevelOutlook[]>(() =>
-    storage.getLevelOutlooks()
-  );
-  // Where each session's extremes printed on the clock. The trader's own record, held with
-  // the rest of the state so it is saved and synced by the same debounced write.
-  const [sessionExtremes, setSessionExtremes] = useState<SessionExtreme[]>(() =>
-    storage.getSessionExtremes()
-  );
-  // The saved picture searches: which charts the trader uploaded and what they matched.
-  // Held with the rest of the state so it is saved and synced by the same debounced write.
-  const [chartSearches, setChartSearches] = useState<ChartSearch[]>(() =>
-    storage.getChartSearches()
-  );
-  // The lessons the trader wrote for themselves: their own notes, tags and media, held with
-  // the rest of the state so they are saved and synced by the same debounced write.
-  const [lessons, setLessons] = useState<Lesson[]>(() => storage.getLessons());
-  // What the trader was thinking and feeling through the day, in their own words. Held with
-  // the journal so a note is saved and carried between devices by the same debounced write.
-  const [mindsetNotes, setMindsetNotes] = useState<MindsetNote[]>(() => storage.getMindsetNotes());
-  // The plans the coach made on its own, with the trader's grades and feedback. Held with
-  // the journal so a plan and its grade are saved and carried between devices by the same
-  // debounced write.
-  const [coachPlans, setCoachPlans] = useState<CoachPlan[]>(() => storage.getCoachPlans());
-  // The trader's own notes about what needs fixing in the app. Held with the journal so they
-  // are saved and carried between devices by the same debounced write as everything else.
-  const [feedback, setFeedback] = useState<FeedbackNote[]>(() => storage.getFeedback());
-
   const [activeTab, setActiveTab] = useState<NavTab>('today');
 
   // Theme state: default to dark, supports light mode toggle
@@ -321,10 +252,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   const [viewingTradeId, setViewingTradeId] = useState<string | null>(null);
   const [isRiskFixupOpen, setIsRiskFixupOpen] = useState(false);
   const [importNotification, setImportNotification] = useState<string | null>(null);
-  const [cloudReady, setCloudReady] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
-  const [syncStatus, setSyncStatus] = useState<SyncStatus>(cloudEnabled ? 'loading' : 'local');
-  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
 
   // A failed localStorage write is invisible otherwise: the app keeps working
   // while nothing is being recorded. Surface it on every tab.
@@ -334,203 +262,27 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     [storageFailure]
   );
 
-  const currentState = useMemo<StorageState>(
-    () => ({
-      profile,
-      instruments,
-      // Kept with the instruments it describes, so a cloud copy carries the version the
-      // list was brought to and the adopting device does not re-run a merge that skips it.
-      instrumentCatalogVersion: storage.getInstrumentCatalogVersion(),
-      setups,
-      tradingDays,
-      trades,
-      reviews,
-      patternStudies,
-      levelTouches,
-      markedLevels,
-      levelOutlooks,
-      sessionExtremes,
-      chartSearches,
-      lessons,
-      coachPlans,
-      feedback,
-      lessonAck,
-    }),
-    [
-      profile,
-      instruments,
-      setups,
-      tradingDays,
-      trades,
-      reviews,
-      patternStudies,
-      levelTouches,
-      markedLevels,
-      levelOutlooks,
-      sessionExtremes,
-      chartSearches,
-      lessons,
-      coachPlans,
-      feedback,
-      lessonAck,
-    ]
-  );
-
-  // Keep the latest state reachable from the sign-out handler without re-running effects.
-  const currentStateRef = useRef(currentState);
-  currentStateRef.current = currentState;
-
-  // The cloud revision this device last read or wrote. Kept in a ref, not state,
-  // because a successful save changing state would re-run the save effect and
-  // loop forever.
-  const cloudRevisionRef = useRef<number | null>(null);
-
   /**
-   * Adopts a snapshot as the whole journal, local storage included, so a reload
-   * or a cloud copy taken in a conflict cannot leave the two disagreeing.
+   * A cloud copy failing to load is reported through the same one-line notice the CSV import
+   * uses, so there is a single place a sync problem shows up on Today.
    */
-  const applyJournalState = useCallback(
-    (next: StorageState) => {
-      storage.importData(JSON.stringify(next));
-      setProfile({ ...next.profile, id: userId });
-      // Re-runs the catalog merge against the snapshot just adopted, for the same reason
-      // as the setups below: a copy taken before this release would otherwise reintroduce
-      // the same missing contract.
-      setInstruments(storage.ensureInstrumentCatalog());
-      // Re-runs the catalog merge against the snapshot just adopted: a cloud copy taken
-      // before this release would otherwise reintroduce the same missing setups.
-      setSetups(storage.ensureSetupCatalog());
-      setTradingDays(next.tradingDays);
-      setTrades(next.trades);
-      setReviews(next.reviews);
-      setPatternStudies(next.patternStudies ?? []);
-      setLevelTouches(next.levelTouches ?? []);
-      setMarkedLevels(next.markedLevels ?? []);
-      setLevelOutlooks(next.levelOutlooks ?? []);
-      setSessionExtremes(next.sessionExtremes ?? []);
-      setChartSearches(next.chartSearches ?? []);
-      setLessons(next.lessons ?? []);
-      setCoachPlans(next.coachPlans ?? []);
-      setFeedback(next.feedback ?? []);
-      setLessonAck(next.lessonAck ?? null);
-    },
-    [userId]
-  );
+  const handleLoadError = useCallback((message: string) => setImportNotification(message), []);
 
-  useEffect(() => {
-    if (!cloudEnabled) return;
-    let active = true;
-    (async () => {
-      try {
-        const snapshot = await loadOrMigrateJournal(userId, currentStateRef.current);
-        if (!active) return;
-        // Adopting the cloud copy is the one moment a sync can overwrite work this
-        // device is holding, so anything the cloud does not already have is set aside
-        // first. It costs a check on sign-in and nothing in normal use, where the two
-        // copies agree.
-        const localOnly = countLocalOnlyRecords(currentStateRef.current, snapshot.state);
-        if (localOnly > 0) {
-          storage.saveRecoveryCopy(
-            JSON.stringify(currentStateRef.current),
-            `This device was holding ${localOnly} ${
-              localOnly === 1 ? 'record' : 'records'
-            } the cloud copy did not have when it signed in and downloaded the cloud copy over them.`
-          );
-        }
-        cloudRevisionRef.current = snapshot.revision;
-        applyJournalState(snapshot.state);
-        setSyncStatus('saved');
-        setLastSyncedAt(new Date());
-      } catch (error) {
-        console.error('Cloud journal load failed:', error);
-        setSyncStatus('error');
-        setImportNotification(
-          describeSyncFailure(error, 'Cloud sync is unavailable. Your local journal is still available.')
-        );
-      } finally {
-        if (active) setCloudReady(true);
-      }
-    })();
-    return () => { active = false; };
-  }, [cloudEnabled, userId, applyJournalState]);
-
-  /**
-   * The one path the journal takes to the cloud.
-   *
-   * Writes are serialised rather than fired in parallel: the debounce below does not
-   * cancel a write already in flight, so two saves could both carry the revision this
-   * device last read and the second was refused by the first — reported to the trader as
-   * another device's change when it was this device refusing itself.
-   *
-   * A refusal that survives that (a genuine write from another device) is resolved here
-   * by saving this device's copy, which is the one being typed into. The copy it replaces
-   * is set aside first, so resolving is never the reason work is gone.
-   */
-  const persistJournal = useMemo(
-    () =>
-      createJournalSaver({
-        userId,
-        readState: () => currentStateRef.current,
-        readRevision: () => cloudRevisionRef.current,
-        writeRevision: (revision) => {
-          cloudRevisionRef.current = revision;
-        },
-        onRemoteReplaced: (remote) => {
-          if (!remote) return;
-          storage.saveRecoveryCopy(
-            JSON.stringify(remote),
-            'A save from this device replaced it while syncing — it had been written by another device.'
-          );
-        },
-      }),
-    [userId]
-  );
-
-  // `currentState` is not read in the body: it is the trigger. Any journal edit
-  // produces a new object here and schedules the debounced save below.
-  useEffect(() => {
-    if (!cloudEnabled || !cloudReady) return;
-    setSyncStatus('saving');
-    const timeout = window.setTimeout(async () => {
-      const result = await persistJournal();
-      if (result === 'saved') {
-        setSyncStatus('saved');
-        setLastSyncedAt(new Date());
-      } else {
-        setSyncStatus('error');
-      }
-    }, 350);
-    return () => window.clearTimeout(timeout);
-  }, [cloudEnabled, cloudReady, persistJournal, currentState]);
-
-  const retrySave = useCallback(async () => {
-    if (!cloudEnabled) return;
-    setSyncStatus('saving');
-    const result = await persistJournal();
-    if (result === 'saved') {
-      setSyncStatus('saved');
-      setLastSyncedAt(new Date());
-    } else {
-      setSyncStatus('error');
-    }
-  }, [cloudEnabled, persistJournal]);
+  const { cloudReady, syncStatus, lastSyncedAt, retrySave, flushPendingSave, overwriteCloud } =
+    useCloudSync({
+      userId,
+      cloudEnabled,
+      currentState,
+      currentStateRef,
+      applyJournalState,
+      onLoadError: handleLoadError,
+    });
 
   const handleSignOut = async () => {
     setSigningOut(true);
-    let flushed = true;
-    if (cloudEnabled && cloudReady) {
-      setSyncStatus('saving');
-      const result = await persistJournal();
-      if (result === 'saved') {
-        setSyncStatus('saved');
-        setLastSyncedAt(new Date());
-      } else {
-        // A failed final save must not clear the local copy: that is the only place
-        // this session's work would still exist.
-        flushed = false;
-        setSyncStatus('error');
-      }
-    }
+    // A failed final save must not clear the local copy: that is the only place this
+    // session's work would still exist.
+    const flushed = await flushPendingSave();
     // Only wipe the local journal once the cloud copy is safely up to date,
     // so a second account on this device can never inherit this user's data.
     if (cloudEnabled && flushed) storage.clearJournal();
@@ -1520,12 +1272,9 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       chartSearches: [],
     };
 
-    if (cloudEnabled && cloudReady) {
-      // Deliberate and destructive, so it takes the unconditional write: the
-      // emptied journal must not sit locally while the cloud still holds
-      // everything the trader just wiped.
-      cloudRevisionRef.current = await overwriteJournal(userId, fresh);
-    }
+    // Deliberate and destructive, so it takes the unconditional write: the emptied journal
+    // must not sit locally while the cloud still holds everything the trader just wiped.
+    await overwriteCloud(fresh);
 
     setTrades([]);
     setReviews([]);
@@ -1539,8 +1288,6 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     // Recreate today's (empty) planning day so the app has somewhere to land.
     storage.getOrCreateToday();
     setTradingDays(storage.getTradingDays());
-    setSyncStatus(cloudEnabled ? 'saved' : 'local');
-    setLastSyncedAt(cloudEnabled ? new Date() : null);
   };
 
   /**
@@ -2397,69 +2144,6 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       />
 
     </AppShell>
-  );
-}
-
-/**
- * Keeps the app's plain-language fallback for cloud failures, unless the error
- * itself carries instructions worth reading (a missing schema column, an
- * unconfigured client). Those are more useful than "sync is unavailable".
- */
-function describeSyncFailure(error: unknown, fallback: string): string {
-  const message = error instanceof Error ? error.message : '';
-  if (/schema\.sql|is not configured/i.test(message)) return message;
-  return fallback;
-}
-
-/**
- * Shown when the build has no Supabase credentials. Without this the app just
- * quietly runs local-only and there is no way to discover why there is no
- * sign-in, or what to do about it.
- */
-function LocalOnlyNotice() {
-  return (
-    <div className="mb-4 rounded-2xl border border-amber-800/60 bg-amber-950/30 p-3 sm:p-4">
-      <div className="flex items-start gap-2.5">
-        <CloudOff className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
-        <div className="min-w-0 space-y-1">
-          <p className="text-xs font-semibold text-amber-200">
-            Cloud sync is off — this journal is saved in this browser only
-          </p>
-          <p className="text-[11px] leading-relaxed text-amber-200/80">
-            Signing in and syncing across devices are disabled because this build
-            has no Supabase credentials. Add{' '}
-            <code className="rounded bg-amber-900/50 px-1 py-0.5 font-mono">
-              VITE_SUPABASE_URL
-            </code>{' '}
-            and{' '}
-            <code className="rounded bg-amber-900/50 px-1 py-0.5 font-mono">
-              VITE_SUPABASE_ANON_KEY
-            </code>{' '}
-            to this environment, then rebuild. For local development they belong
-            in <span className="font-mono">.env.local</span>.
-          </p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/** Placeholder while a tab's code arrives, sized so the layout does not jump. */
-function TabLoading() {
-  return (
-    <div className="flex flex-col items-center justify-center gap-2 py-16 text-zinc-400">
-      <Loader2 className="h-5 w-5 animate-spin text-emerald-400" />
-      <p className="text-xs font-mono">Loading…</p>
-    </div>
-  );
-}
-
-function SessionLoader() {
-  return (
-    <div className="flex min-h-dvh flex-col items-center justify-center gap-3 bg-zinc-950 text-zinc-100">
-      <Loader2 className="w-6 h-6 animate-spin text-emerald-400" />
-      <p className="text-xs font-mono text-zinc-400">Restoring your session…</p>
-    </div>
   );
 }
 

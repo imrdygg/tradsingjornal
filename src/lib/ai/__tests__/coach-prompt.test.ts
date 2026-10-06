@@ -758,8 +758,36 @@ describe('the level-touch record in the prompt', () => {
     const text = formatDigestForPrompt(digestFor({ levelTouches: held(5) }));
 
     expect(text).toContain('LEVEL TOUCHES');
-    expect(text).toContain('Hold rate: 100% of 5 decided touch(es).');
-    expect(text).toContain('Overnight support: 100% hold over 5 decided touch(es)');
+    // The rate is quoted with the sample behind it. Five decided touches clears the floor, so
+    // there is a rate to read — and the tier says how much weight it carries.
+    expect(text).toContain('Hold rate: 100% of 5 decided touch(es) — early read.');
+    expect(text).toContain(
+      'Overnight support: 100% hold over 5 decided touch(es) (0 still watching) — early read'
+    );
+  });
+
+  /**
+   * The whole point of carrying the tier: the same percentage at two sample sizes.
+   *
+   * Before this, the prompt handed the model "100% of 5 decided" and "100% of 25 decided" with
+   * nothing to say which of the two it was safe to lean on — and asked it not to over-read
+   * either.
+   */
+  it('names the sample behind a rate, so five touches cannot sound like twenty-five', () => {
+    const early = formatDigestForPrompt(digestFor({ levelTouches: held(5) }));
+    const settled = formatDigestForPrompt(digestFor({ levelTouches: held(25) }));
+
+    expect(early).toContain('Hold rate: 100% of 5 decided touch(es) — early read.');
+    expect(settled).toContain('Hold rate: 100% of 25 decided touch(es) — settled.');
+    expect(settled).not.toContain('— early read');
+    expect(early).not.toContain('— settled');
+  });
+
+  it('tells the model what the tiers mean, and to carry them into its answer', () => {
+    const text = formatDigestForPrompt(digestFor({ levelTouches: held(5) }));
+
+    expect(text).toContain('Carry that word into anything you say about the rate.');
+    expect(text).toContain('an early read is a sample that has only just reached the floor');
   });
 
   it('reports a thin record as counts and refuses to quote a rate', () => {
@@ -791,6 +819,12 @@ describe('the level-touch record in the prompt', () => {
     expect(systemInstruction).toContain('ONLY READ A RATE THAT IS MARKED READABLE');
     expect(systemInstruction).toContain('A HOLD IS NOT A PROFIT');
     expect(systemInstruction).toContain('THE BREAK DIRECTION IS THE TRADER');
+    // Readable is not the same as trustworthy, and the rule says so in the same breath as
+    // every other rule about this record.
+    expect(systemInstruction).toContain(
+      'A RATE IS ONLY AS STRONG AS THE SAMPLE BEHIND IT, AND THE SAMPLE IS NAMED'
+    );
+    expect(systemInstruction).toContain('quote a rate without its tier');
   });
 
   it('states the recorded break direction and renders a direction condition', () => {
@@ -1061,6 +1095,9 @@ describe('edge mode', () => {
     expect(shape).toContain('"notYetReadable"');
     expect(shape).toContain('Never quote a rate for a condition listed as not yet readable');
     expect(shape).toContain('A hold means price never came back, not that the trade paid');
+    // The answer has to carry the sample tier, or a five-touch rate comes back looking settled.
+    expect(shape).toContain('and its sample tier — an early read, building, or settled');
+    expect(shape).toContain('Name the sample tier on every rate you quote');
 
     const { userPrompt } = buildCoachPrompt('edge', digestFor());
     expect(userPrompt).toContain("Find this trader's break-and-run edge");

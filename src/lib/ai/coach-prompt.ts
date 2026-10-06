@@ -18,6 +18,10 @@ import type {
   TodayLevelsRead,
 } from './journal-digest';
 import { hourLabel } from '../analytics/session-extremes';
+// One shared vocabulary for how much is behind a rate. Imported rather than re-worded here so
+// the prompt and the cards the trader reads cannot drift apart, and so a rate the coach quotes
+// is qualified in the same words it was qualified in on screen.
+import { RATE_STRENGTH_LABEL, type RateStrength } from '../analytics/level-edge';
 import type { SetupDirection, SetupVerdict, SetupWeek } from '../analytics/setup-week';
 import type { BehaviorBucket as DigestBehaviorBucket } from '../analytics/behavior';
 import type {
@@ -388,7 +392,15 @@ L12. THE BREAK DIRECTION IS THE TRADER'S OWN OBSERVATION. When a touch says whic
     left, that is what they recorded — never assume it from the level's side, and never state
     a direction for a touch that did not record one. A support that broke upward is a real
     recorded fact, not an error to correct, and the direction read is a count of what happened,
-    never a prediction of which way the next break goes.`;
+    never a prediction of which way the next break goes.
+L13. A RATE IS ONLY AS STRONG AS THE SAMPLE BEHIND IT, AND THE SAMPLE IS NAMED. Every rate in
+    this record carries a tier — an EARLY READ, BUILDING, or SETTLED — set from how many decided
+    touches stand behind it. Readable is not the same as trustworthy: an early read has only
+    just cleared the floor, and its true rate could honestly sit almost anywhere. When you
+    quote a rate, name its tier in the same sentence, and never let an early read be described
+    as an edge, a pattern, a rule or something they can rely on. Never upgrade a tier, never
+    quote a rate without its tier, and never compare an early read against a settled one as
+    though the two percentages meant the same thing.`;
 
 /**
  * The rules for reading one prospective entry against the trader's own marked lines.
@@ -663,6 +675,16 @@ function touchOutcomeWord(outcome: DigestLevelTouch['outcome']): string {
 }
 
 /**
+ * The tier a rate carries, as a clause to hang off the number — or nothing when there is no rate.
+ *
+ * Optional on the way in because an older client's digest will not carry a tier at all, and the
+ * endpoint must degrade to the unqualified sentence rather than print "undefined".
+ */
+function strengthClause(strength: RateStrength | null | undefined): string {
+  return strength ? ` — ${RATE_STRENGTH_LABEL[strength]}` : '';
+}
+
+/**
  * The level-touch record, rendered so the hold rate cannot be read as a forecast.
  *
  * Two things are stated in the text rather than left to the model: what "held" means, and
@@ -700,7 +722,10 @@ function formatLevelEdgeForPrompt(edge: LevelEdge | undefined): string[] {
         'hold rate may be read as an edge. Report the counts, not a percentage.'
     );
   } else {
-    lines.push(`Hold rate: ${rate(edge.holdRate)} of ${edge.decided} decided touch(es).`);
+    lines.push(
+      `Hold rate: ${rate(edge.holdRate)} of ${edge.decided} decided touch(es)` +
+        `${strengthClause(edge.strength)}.`
+    );
   }
   if (edge.avgExcursionPoints !== null) {
     lines.push(
@@ -711,10 +736,17 @@ function formatLevelEdgeForPrompt(edge: LevelEdge | undefined): string[] {
   if (edge.conditions.length) {
     lines.push('');
     lines.push('Conditions with a readable hold rate (enough decided touches), best first:');
+    lines.push(
+      'Each rate says how much is behind it: an early read is a sample that has only just ' +
+        'reached the floor and whose true rate could sit almost anywhere, building is one that is ' +
+        'getting there, and settled is one big enough that another touch cannot move it much. ' +
+        'Carry that word into anything you say about the rate.'
+    );
     for (const bucket of edge.conditions) {
       lines.push(
         `- ${bucket.label}: ${rate(bucket.stats.holdRate)} hold over ${bucket.stats.decided} ` +
-          `decided touch(es) (${bucket.stats.watching} still watching)`
+          `decided touch(es) (${bucket.stats.watching} still watching)` +
+          strengthClause(bucket.stats.strength)
       );
     }
   } else {
@@ -801,7 +833,8 @@ function formatLevelTimeframesForPrompt(read: LevelTimeframesRead | undefined): 
         row.decided === 0
           ? 'no decided touch yet'
           : row.enoughData
-          ? `held ${row.holdRate ?? 0}% of ${row.decided} decided`
+          ? `held ${row.holdRate ?? 0}% of ${row.decided} decided` +
+            strengthClause(row.strength)
           : `${row.decided} decided so far — NOT yet a rate (${read.minDecided} are needed)`;
       lines.push(
         `- ${row.symbol} ${frame} ${row.kind}: ${row.marked} marked, ${row.tested} tested, ` +
@@ -841,11 +874,17 @@ function formatLevelRecurrenceForPrompt(read: LevelRecurrenceRead | undefined): 
     read.byWeekday.length === 0;
   if (empty) return lines;
 
-  const rateWord = (bucket: { decided: number; holdRate: number | null; enoughData: boolean }) =>
+  const rateWord = (bucket: {
+    decided: number;
+    holdRate: number | null;
+    enoughData: boolean;
+    strength?: RateStrength | null;
+  }) =>
     bucket.decided === 0
       ? 'no decided touch yet'
       : bucket.enoughData
-      ? `held ${bucket.holdRate ?? 0}% of ${bucket.decided} decided`
+      ? `held ${bucket.holdRate ?? 0}% of ${bucket.decided} decided` +
+        strengthClause(bucket.strength)
       : `${bucket.decided} decided so far — NOT yet a rate (${read.minDecided} are needed)`;
 
   lines.push('');
@@ -866,7 +905,12 @@ function formatLevelRecurrenceForPrompt(read: LevelRecurrenceRead | undefined): 
       lines.push(
         `- ${row.symbol} ${row.kind} at ${row.price}: reached on ${row.days} day(s), ` +
           `${row.touches} touch(es) total, across ${row.weekdays.join(', ') || 'no weekday recorded'}` +
-          ` — ${rateWord({ decided: row.decided, holdRate: row.holdRate, enoughData: row.enoughData })}`
+          ` — ${rateWord({
+            decided: row.decided,
+            holdRate: row.holdRate,
+            enoughData: row.enoughData,
+            strength: row.strength,
+          })}`
       );
     }
     if (read.repeatedOmitted > 0) {
@@ -1172,7 +1216,8 @@ function formatSetupWeekForPrompt(week: SetupWeek | undefined): string[] {
         `  Levels for this setup: ${touch.touches} touch(es), ${touch.decided} decided, ` +
           `${touch.neverReturned} held, ${touch.returned} came back` +
           (touch.decided >= week.minDecided
-            ? ` — hold rate ${touch.holdRate}% of ${touch.decided} decided`
+            ? ` — hold rate ${touch.holdRate}% of ${touch.decided} decided` +
+              strengthClause(touch.strength)
             : ` — TOO THIN to quote a hold rate (${week.minDecided} decided touches needed)`)
       );
     } else if (touch) {
@@ -2342,16 +2387,16 @@ When the two windows are too thin to compare, say exactly that in trendRead, lea
   edge: `Return exactly this JSON:
 {
   "headline": "one sentence, under 16 words, on what the level-touch record shows",
-  "bestCondition": "the condition with the strongest readable hold rate, quoting its rate and the decided and watching counts behind it. When nothing is readable yet, say exactly that instead of picking one",
+  "bestCondition": "the condition with the strongest readable hold rate, quoting its rate, the decided and watching counts behind it, and the sample tier the record gives it. When nothing is readable yet, say exactly that instead of picking one",
   "conditions": [
-    { "condition": "a session, level kind or named level with a readable rate", "holdRate": "the rate and the counts it came from", "evidence": "the held / came-back / watching numbers behind it" }
+    { "condition": "a session, level kind or named level with a readable rate", "holdRate": "the rate, the counts it came from, and its sample tier — an early read, building, or settled", "evidence": "the held / came-back / watching numbers behind it" }
   ],
   "notYetReadable": ["conditions that are logged but still too thin to read, each with its counts. Empty array when every condition has enough"],
   "whatItMeans": "2-3 sentences on what their own record shows about their break-and-run setups, stated as what has happened, not what will",
   "nextStep": "one concrete, checkable thing to log or watch that would sharpen this record",
   "motivation": "2 sentences. Specific to this trader and earned by their data. No slogans."
 }
-Rank only conditions with a readable hold rate. Never quote a rate for a condition listed as not yet readable. A hold means price never came back, not that the trade paid.`,
+Rank only conditions with a readable hold rate. Never quote a rate for a condition listed as not yet readable. Name the sample tier on every rate you quote: an early read is a rate that may be read and not one that may be leaned on, so it is never evidence for an edge and never a reason to act. A hold means price never came back, not that the trade paid.`,
   extremes: `Return exactly this JSON:
 {
   "headline": "one sentence, under 16 words, on what the session-extreme log shows",

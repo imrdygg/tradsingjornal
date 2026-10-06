@@ -35,6 +35,7 @@ import {
   summarizeMarkedLevels,
   summarizeTouches,
   type LevelEdgeBucket,
+  type RateStrength,
 } from '../analytics/level-edge';
 import { summarizeTimeframeEdges, type TimeframeEdgeBucket } from '../analytics/level-timeframes';
 import {
@@ -172,6 +173,14 @@ export interface LevelEdge {
   holdRate: number | null;
   /** True once `decided` reaches {@link minDecided}, so `holdRate` may be read as an edge. */
   enoughData: boolean;
+  /**
+   * How much is behind `holdRate`: an early read, one still building, or settled.
+   *
+   * Carried so the prompt can qualify the rate it is handed. A rate that clears the floor is
+   * readable and not yet trustworthy, and without this the model has nothing to tell those two
+   * apart — five decided touches and twenty-five would reach it as the same sentence.
+   */
+  strength: RateStrength | null;
   /** Decided touches a bucket needs before its rate means anything. */
   minDecided: number;
   /** Average run away from the level across decided touches, in points. */
@@ -209,6 +218,8 @@ export interface LevelTimeframeRow {
   holdRate: number | null;
   /** True once `decided` reaches the readability floor, so `holdRate` may be quoted as a rate. */
   enoughData: boolean;
+  /** How much is behind `holdRate`, so an early read cannot be quoted as a settled one. */
+  strength: RateStrength | null;
   watching: number;
 }
 
@@ -231,6 +242,8 @@ export interface LevelRecurrenceBucketRead {
   holdRate: number | null;
   /** True once `decided` reaches the readability floor, so `holdRate` may be quoted as a rate. */
   enoughData: boolean;
+  /** How much is behind `holdRate`, so an early read cannot be quoted as a settled one. */
+  strength: RateStrength | null;
 }
 
 /** One line reached on more than one day, as the coach reads it. */
@@ -246,6 +259,8 @@ export interface LevelRecurrenceRowRead {
   decided: number;
   holdRate: number | null;
   enoughData: boolean;
+  /** How much is behind `holdRate`, so an early read cannot be quoted as a settled one. */
+  strength: RateStrength | null;
 }
 
 /**
@@ -1196,6 +1211,7 @@ function buildLevelEdge(
     invalid: stats.invalid,
     holdRate: stats.holdRate,
     enoughData: stats.enoughData,
+    strength: stats.strength,
     minDecided: MIN_DECIDED,
     avgExcursionPoints: stats.avgExcursionPoints,
     conditions,
@@ -1235,6 +1251,8 @@ function buildLevelTimeframes(
     // Carried explicitly so the prompt can withhold a rate from a row whose sample is too
     // thin, instead of every renderer having to re-derive the floor.
     enoughData: bucket.stats.enoughData,
+    // And carried so a rate it may quote is quoted with the sample behind it.
+    strength: bucket.stats.strength,
     watching: bucket.stats.watching,
   }));
 
@@ -1274,6 +1292,7 @@ function buildLevelRecurrence(
     decided: read.stats.decided,
     holdRate: read.stats.holdRate,
     enoughData: read.stats.enoughData,
+    strength: read.stats.strength,
   });
 
   const rows: LevelRecurrenceRowRead[] = report.repeatedLevels.map((row) => ({
@@ -1286,6 +1305,7 @@ function buildLevelRecurrence(
     decided: row.stats.decided,
     holdRate: row.stats.holdRate,
     enoughData: row.stats.enoughData,
+    strength: row.stats.strength,
   }));
 
   return {

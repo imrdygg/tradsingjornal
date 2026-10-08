@@ -20,6 +20,7 @@ import type {
   PlanFieldName,
 } from './coach-types';
 import type { InstrumentQuote } from './market-data';
+import type { LevelRecord as MesLevelRecord } from '../mes/types';
 
 /**
  * The plan-side half of the coach, for the browser.
@@ -75,6 +76,11 @@ export interface PlanCoachContext {
    * the trader wants a plan written, and nowhere else needs it.
    */
   coachPlans?: CoachPlan[];
+  /**
+   * The trader's MES indicator-level record, so a plan-side read can weigh the levels they
+   * actually marked on their charts and how those held, not only the touch journal.
+   */
+  mesLevels?: MesLevelRecord[];
 }
 
 export function buildPlanCoachDigest(context: PlanCoachContext): JournalDigest {
@@ -91,6 +97,7 @@ export function buildPlanCoachDigest(context: PlanCoachContext): JournalDigest {
     markedLevels: context.markedLevels,
     levelOutlooks: context.levelOutlooks,
     coachPlans: context.coachPlans,
+    mesLevels: context.mesLevels,
   });
 }
 

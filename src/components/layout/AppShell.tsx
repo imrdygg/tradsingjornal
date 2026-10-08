@@ -27,15 +27,17 @@ import { RiskMode, DayStatus } from '../../types';
 export type NavTab =
   | 'today'
   | 'trades'
-  // The coach's own calls, which took the tab slot the day archive used to hold.
-  | 'calls'
+  // The MES indicator level tracker, which took the tab slot the coach's own calls used to
+  // hold. The calls themselves are still recorded and shown where they belong (the trade
+  // they were made against, and the coach's grade trend), just not as their own tab.
+  | 'mes'
   | 'analytics'
   | 'insights'
   | 'coach'
   | 'markets'
   | 'playbook'
   // Reachable through the avatar menu, not the tab bars — they were out of room. History
-  // moved here when Calls took its slot: it is still the day archive, just not a tab.
+  // moved here when the tab bars filled up: it is still the day archive, just not a tab.
   | 'history'
   | 'settings';
 
@@ -57,13 +59,6 @@ interface AppShellProps {
   syncStatus?: SyncStatus;
   lastSyncedAt?: Date | null;
   onRetrySync?: () => void;
-  /**
-   * Coach calls waiting on the trader — ungraded or with no result marked.
-   *
-   * Shown as a count on the Calls tab so a call made and forgotten about is visible from any
-   * other tab, which is the whole point of keeping them as drafts. Zero hides the badge.
-   */
-  pendingCalls?: number;
   /** Opens the trader's own notes about what needs fixing in the app. */
   onOpenFeedback?: () => void;
   /** How many of those notes are still open — shown as a small badge. Zero hides it. */
@@ -88,7 +83,6 @@ export const AppShell: React.FC<AppShellProps> = ({
   syncStatus,
   lastSyncedAt,
   onRetrySync,
-  pendingCalls = 0,
   onOpenFeedback,
   feedbackCount = 0,
   children,
@@ -103,7 +97,7 @@ export const AppShell: React.FC<AppShellProps> = ({
   const navItems: Array<{ id: NavTab; label: string; icon: React.ComponentType<{ className?: string }> }> = [
     { id: 'today', label: 'Today', icon: Calendar },
     { id: 'trades', label: 'Trades', icon: Layers },
-    { id: 'calls', label: 'Calls', icon: Target },
+    { id: 'mes', label: 'MES', icon: Target },
     { id: 'analytics', label: 'Analytics', icon: BarChart3 },
     { id: 'insights', label: 'Insights', icon: Lightbulb },
     { id: 'coach', label: 'Coach', icon: Sparkles },
@@ -231,7 +225,6 @@ export const AppShell: React.FC<AppShellProps> = ({
             {navItems.map((item) => {
               const Icon = item.icon;
               const isActive = currentTab === item.id;
-              const badge = item.id === 'calls' ? pendingCalls : 0;
               return (
                 <button
                   key={item.id}
@@ -245,15 +238,6 @@ export const AppShell: React.FC<AppShellProps> = ({
                 >
                   <Icon className="h-3.5 w-3.5" />
                   {item.label}
-                  {badge > 0 && (
-                    <span
-                      id={`nav-badge-${item.id}`}
-                      title={`${badge} call(s) waiting to be graded or marked`}
-                      className="rounded-full bg-sky-500/20 px-1.5 py-0.5 font-mono text-[10px] font-bold text-sky-300"
-                    >
-                      {badge}
-                    </span>
-                  )}
                 </button>
               );
             })}
@@ -415,7 +399,6 @@ export const AppShell: React.FC<AppShellProps> = ({
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = currentTab === item.id;
-            const badge = item.id === 'calls' ? pendingCalls : 0;
             return (
               <button
                 key={item.id}
@@ -429,15 +412,6 @@ export const AppShell: React.FC<AppShellProps> = ({
               >
                 <span className="relative mb-0.5">
                   <Icon className={`h-4 w-4 ${isActive ? 'text-zinc-100' : 'text-zinc-400'}`} />
-                  {badge > 0 && (
-                    <span
-                      id={`mobile-nav-badge-${item.id}`}
-                      title={`${badge} call(s) waiting to be graded or marked`}
-                      className="absolute -right-2 -top-1.5 rounded-full bg-sky-500 px-1 font-mono text-[8px] font-bold leading-tight text-zinc-950"
-                    >
-                      {badge}
-                    </span>
-                  )}
                 </span>
                 <span className="w-full truncate text-center">{item.label}</span>
               </button>

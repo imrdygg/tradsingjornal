@@ -60,6 +60,16 @@ import {
   findLessonRecurrence,
   type LessonRecurrenceLevel,
 } from '../analytics/lesson-recurrence';
+import {
+  directionStats as mesDirectionStats,
+  statsByKind as mesStatsByKind,
+  statsBySetup as mesStatsBySetup,
+  statsByTimeframe as mesStatsByTimeframe,
+  statsFor as mesStatsFor,
+  type DirectionStats as MesDirectionStats,
+  type GroupStats as MesGroupStats,
+} from '../mes/analytics';
+import type { LevelRecord as MesLevelRecord } from '../mes/types';
 
 /**
  * The journal digest is the *only* factual basis the AI coach is allowed to use.
@@ -816,6 +826,16 @@ export interface JournalDigest {
    * open kept it?".
    */
   extremeRead: ExtremeRead;
+  /**
+   * The MES indicator level tracker's own record, read back as reliability per chart, per
+   * side and per setup.
+   *
+   * This is the only place the coach can answer a question like "does my 30m support hold?"
+   * from the trader's own logged levels, as opposed to the marked-level / touch journal
+   * above. Every figure is shrunk strength with its sample size, never a raw rate on a thin
+   * sample, and the untested levels are kept as a count rather than folded into a rate.
+   */
+  mesRead: MesLevelsRead;
   /**
    * The lessons the trader wrote for themselves, with notes, tags and media counts. Read
    * only by the dedicated lessons mode; other reads are not shown them.
@@ -1721,6 +1741,53 @@ function buildCoachPlanRead(plans: CoachPlan[]): CoachPlanRead {
   };
 }
 
+/**
+ * The MES level tracker read back for the coach.
+ *
+ * Groups are only carried when they hold something, so a journal that has never logged a
+ * level does not add six empty chart rows to every prompt. `direction.unknown` is included
+ * deliberately: it is the count of breaks the trader has not tagged a direction for, which
+ * is a real and useful thing for the coach to point at.
+ */
+export interface MesLevelsRead {
+  records: number;
+  sessions: number;
+  tested: number;
+  /** 0..1, null when nothing logged. */
+  hitRate: number | null;
+  /** 0..1, null when nothing decisive. */
+  reliability: number | null;
+  /** 0..100 shrunk strength, null when nothing decisive. */
+  strength: number | null;
+  grade: MesGroupStats['grade'];
+  confidence: MesGroupStats['confidence'];
+  /** holds + breaks */
+  sampleSize: number;
+  byTimeframe: MesGroupStats[];
+  byKind: MesGroupStats[];
+  bySetup: MesGroupStats[];
+  direction: MesDirectionStats;
+}
+
+function buildMesRead(records: MesLevelRecord[]): MesLevelsRead {
+  const overall = mesStatsFor('mes', 'MES levels', records);
+  return {
+    records: overall.logged,
+    sessions: new Set(records.map((record) => record.date)).size,
+    tested: overall.tested,
+    hitRate: overall.hitRate,
+    reliability: overall.reliability,
+    strength: overall.strength,
+    grade: overall.grade,
+    confidence: overall.confidence,
+    sampleSize: overall.sampleSize,
+    byTimeframe: mesStatsByTimeframe(records).filter((group) => group.logged > 0),
+    byKind: mesStatsByKind(records).filter((group) => group.logged > 0),
+    bySetup: mesStatsBySetup(records),
+    direction: mesDirectionStats(records),
+  };
+}
+
 export function buildJournalDigest(input: {
   trades: Trade[];
   tradingDays: TradingDay[];
@@ -1779,6 +1846,14 @@ export function buildJournalDigest(input: {
    * the self-plan mode; absent is read as "no plans made yet".
    */
   coachPlans?: CoachPlan[];
+  /**
+   * The trader's MES indicator-level record: one row per level marked on a session, across
+   * the six charts, with what price did when it reached the level.
+   *
+   * Optional so a caller with no tracker data — and every older test — still builds a
+   * digest; absent is read as "nothing logged", never as a rate of zero.
+   */
+  mesLevels?: MesLevelRecord[];
   /**
    * How many per-trade rows the digest carries, newest first.
    *
@@ -2113,6 +2188,8 @@ export function buildJournalDigest(input: {
     );
   }
 
+  const mesRead = buildMesRead(input.mesLevels ?? []);
+
   return {
     generatedFor: todayTradeDate,
     dataSufficiency: {
@@ -2198,6 +2275,7 @@ export function buildJournalDigest(input: {
     todayLevels,
     levelOutlooks,
     extremeRead,
+    mesRead,
     lessonRead,
     mindsetRead,
     coachPlanRead,

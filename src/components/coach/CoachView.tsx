@@ -23,6 +23,7 @@ import {
   TradingDay,
 } from '../../types';
 import { buildJournalDigest } from '../../lib/ai/journal-digest';
+import type { LevelRecord as MesLevelRecord } from '../../lib/mes/types';
 import type {
   BriefResponse,
   CoachExtras,
@@ -81,6 +82,8 @@ interface CoachViewProps {
   markedLevels?: MarkedLevel[];
   /** What the trader expected each instrument to do today, written beside its levels. */
   levelOutlooks?: LevelOutlook[];
+  /** The MES indicator-level record, so a read can quote the trader's own chart levels. */
+  mesLevels?: MesLevelRecord[];
   /** The session-extreme log, so the coach can read where the highs and lows printed. */
   sessionExtremes: SessionExtreme[];
   /**
@@ -168,6 +171,7 @@ export const CoachView: React.FC<CoachViewProps> = ({
   levelTouches,
   markedLevels,
   levelOutlooks,
+  mesLevels,
   sessionExtremes,
   mindsetNotes,
   onSaveMindsetNote,
@@ -204,6 +208,9 @@ export const CoachView: React.FC<CoachViewProps> = ({
         // The trader's grades of the coach's own plans travel with these reads too, so the
         // feedback shapes the brief and the reviews, not only the next self-plan.
         coachPlans,
+        // The MES tracker's levels travel with every read, so a question or a brief can
+        // quote the trader's own chart levels and how those held.
+        mesLevels,
       }),
     [
       trades,
@@ -217,6 +224,7 @@ export const CoachView: React.FC<CoachViewProps> = ({
       levelTouches,
       markedLevels,
       levelOutlooks,
+      mesLevels,
       sessionExtremes,
       mindsetNotes,
       coachPlans,
@@ -689,6 +697,7 @@ export const CoachView: React.FC<CoachViewProps> = ({
         levelTouches={levelTouches}
         markedLevels={markedLevels}
         levelOutlooks={levelOutlooks}
+        mesLevels={mesLevels}
         userId={userId}
         onSaveLesson={onSaveLesson}
         coachPlans={coachPlans}

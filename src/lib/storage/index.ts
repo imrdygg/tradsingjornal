@@ -19,6 +19,8 @@ import {
   LevelOutlook,
   MindsetNote,
 } from '../../types';
+import type { LevelRecord as MesLevelRecord } from '../mes/types';
+import { normalizeMesLevel } from '../mes/analytics';
 import {
   DEFAULT_INSTRUMENTS,
   INSTRUMENT_CATALOG_VERSION,
@@ -121,6 +123,7 @@ const STORAGE_KEYS = {
   LEVEL_TOUCHES: 'ptj_level_touches_v1',
   MARKED_LEVELS: 'ptj_marked_levels_v1',
   LEVEL_OUTLOOKS: 'ptj_level_outlooks_v1',
+  MES_LEVELS: 'ptj_mes_levels_v1',
   SESSION_EXTREMES: 'ptj_session_extremes_v1',
   CHART_SEARCHES: 'ptj_chart_searches_v1',
   LESSONS: 'ptj_lessons_v1',
@@ -267,6 +270,17 @@ export interface StorageState {
    * about one day's market, so a journal reset clears it with the touched levels.
    */
   levelOutlooks?: LevelOutlook[];
+  /**
+   * The MES Indicator Level Tracker's own record: one row per level per session, with what
+   * price did at it.
+   *
+   * A parallel record to the marked levels and touches above on purpose — it is its own
+   * product (reliability per chart, per side, per setup), and folding it into the touch
+   * journal would make both harder to read. Optional for the same reason as the lists
+   * around it: a snapshot saved before the tracker existed must still load, and every
+   * reader treats a missing list as empty rather than as an error.
+   */
+  mesLevels?: MesLevelRecord[];
   /**
    * The trader's own record of where each session's high and low printed on the clock,
    * for the instruments they trade.
@@ -1163,6 +1177,7 @@ export const storage = {
       levelTouches: this.getLevelTouches(),
       markedLevels: this.getMarkedLevels(),
       levelOutlooks: this.getLevelOutlooks(),
+      mesLevels: this.getMesLevels(),
       sessionExtremes: this.getSessionExtremes(),
       chartSearches: this.getChartSearches(),
       lessons: this.getLessons(),
@@ -1205,6 +1220,7 @@ export const storage = {
       if (parsed.levelTouches) setItem(STORAGE_KEYS.LEVEL_TOUCHES, parsed.levelTouches);
       if (parsed.markedLevels) setItem(STORAGE_KEYS.MARKED_LEVELS, parsed.markedLevels);
       if (parsed.levelOutlooks) setItem(STORAGE_KEYS.LEVEL_OUTLOOKS, parsed.levelOutlooks);
+      if (parsed.mesLevels) setItem(STORAGE_KEYS.MES_LEVELS, parsed.mesLevels);
       if (parsed.sessionExtremes) setItem(STORAGE_KEYS.SESSION_EXTREMES, parsed.sessionExtremes);
       if (parsed.chartSearches) setItem(STORAGE_KEYS.CHART_SEARCHES, parsed.chartSearches);
       if (parsed.lessons) setItem(STORAGE_KEYS.LESSONS, parsed.lessons);
@@ -1341,6 +1357,41 @@ export const storage = {
     const next = this.getMarkedLevels().filter((level) => level.id !== id);
     setItem(STORAGE_KEYS.MARKED_LEVELS, next);
     return next;
+  },
+
+  /**
+   * Every MES level the tracker has recorded.
+   *
+   * Normalised on the way out: a level saved before timing existed comes back with `''` for
+   * its hit and break fields rather than `undefined`, so nothing that later calls `.length`
+   * or `.includes` on them can crash the tab. When normalising changed anything the cleaned
+   * list is written back, so a legacy record is repaired once rather than on every read.
+   */
+  getMesLevels(): MesLevelRecord[] {
+    const raw = getItem<unknown>(STORAGE_KEYS.MES_LEVELS, []);
+    const list = Array.isArray(raw) ? raw : [];
+    const normalized = list
+      .map((entry) => normalizeMesLevel(entry))
+      .filter((entry): entry is MesLevelRecord => entry !== null);
+    if (JSON.stringify(normalized) !== JSON.stringify(list)) {
+      setItem(STORAGE_KEYS.MES_LEVELS, normalized);
+    }
+    return normalized;
+  },
+
+  /**
+   * Replaces the whole tracker list.
+   *
+   * One writer for every mutation: add, edit, delete, import and demo all compute the next
+   * list and hand it here (through the journal store's state setter), so there is exactly
+   * one path that can write the record and the screen can never disagree with storage.
+   */
+  saveMesLevels(records: MesLevelRecord[]): MesLevelRecord[] {
+    const cleaned = records
+      .map((entry) => normalizeMesLevel(entry))
+      .filter((entry): entry is MesLevelRecord => entry !== null);
+    setItem(STORAGE_KEYS.MES_LEVELS, cleaned);
+    return cleaned;
   },
 
   /** Every daily outlook the trader has written, newest first. */
@@ -1623,6 +1674,9 @@ export const storage = {
       STORAGE_KEYS.MARKED_LEVELS,
       // The outlooks describe the same day's market as the levels they were written beside.
       STORAGE_KEYS.LEVEL_OUTLOOKS,
+      // The MES tracker records the same sessions' lines, off the charts they were drawn on,
+      // so a reset clears them with the days they were taken from.
+      STORAGE_KEYS.MES_LEVELS,
       // The extremes are the same kind of thing: a record of one session, not material
       // about the trader's setups.
       STORAGE_KEYS.SESSION_EXTREMES,
@@ -1664,6 +1718,7 @@ export const storage = {
       STORAGE_KEYS.LEVEL_TOUCHES,
       STORAGE_KEYS.MARKED_LEVELS,
       STORAGE_KEYS.LEVEL_OUTLOOKS,
+      STORAGE_KEYS.MES_LEVELS,
       STORAGE_KEYS.SESSION_EXTREMES,
       STORAGE_KEYS.CHART_SEARCHES,
       STORAGE_KEYS.LESSONS,

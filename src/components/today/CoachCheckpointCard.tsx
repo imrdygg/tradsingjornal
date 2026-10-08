@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Sparkles, Clock, Info, ArrowLeftRight } from 'lucide-react';
 import { DailyReview, Instrument, Setup, Trade, TradingDay } from '../../types';
 import { buildJournalDigest } from '../../lib/ai/journal-digest';
+import type { LevelRecord as MesLevelRecord } from '../../lib/mes/types';
 import type { PostCloseResponse, PrepResponse } from '../../lib/ai/coach-types';
 import { CoachErrorCode, requestCoach } from '../../lib/ai/coach-client';
 import {
@@ -40,6 +41,8 @@ interface CoachCheckpointCardProps {
   timezone: string;
   /** The account drawdown the trader has agreed to, so the note can weigh today's risk. */
   maxDrawdown?: number | null;
+  /** The trader's MES indicator-level record, so a note can quote their own chart levels. */
+  mesLevels?: MesLevelRecord[];
 }
 
 /** Runtime guards so a cached note from an older build cannot break rendering. */
@@ -58,6 +61,7 @@ export const CoachCheckpointCard: React.FC<CoachCheckpointCardProps> = ({
   todayTradeDate,
   timezone,
   maxDrawdown,
+  mesLevels,
 }) => {
   // Which checkpoint applies now, refreshed as the clock crosses a boundary. The
   // trader can always switch manually, so a timezone quirk never blocks them.
@@ -88,8 +92,19 @@ export const CoachCheckpointCard: React.FC<CoachCheckpointCardProps> = ({
         todayTradeDate,
         timezone,
         maxDrawdown,
+        mesLevels,
       }),
-    [trades, tradingDays, reviews, setups, instruments, todayTradeDate, timezone, maxDrawdown]
+    [
+      trades,
+      tradingDays,
+      reviews,
+      setups,
+      instruments,
+      todayTradeDate,
+      timezone,
+      maxDrawdown,
+      mesLevels,
+    ]
   );
 
   const fingerprint = useMemo(

@@ -9,7 +9,6 @@ import { LocalOnlyNotice, SessionLoader, TabLoading } from './components/layout/
 import { YesterdayFocusBanner } from './components/today/YesterdayFocusBanner';
 import { DrawdownRoomStrip } from './components/today/DrawdownRoomStrip';
 import { realizedPnL } from './lib/analytics/realized-pnl';
-import { summariseCoachPlanPending } from './lib/analytics/coach-plan-grades';
 import { TodaySummary } from './components/today/TodaySummary';
 import { ImportantLevelsEditor } from './components/today/ImportantLevelsEditor';
 import { GlobalSearch } from './components/common/GlobalSearch';
@@ -55,13 +54,13 @@ const CoachView = lazy(() =>
   import('./components/coach/CoachView').then((m) => ({ default: m.CoachView }))
 );
 /**
- * The coach's own calls load on demand like the other views.
+ * The MES indicator level tracker loads on demand like the other views.
  *
- * It carries the grade trend chart, so pulling recharts into the first paint to render a tab
+ * It carries four Recharts charts, so pulling recharts into the first paint to render a tab
  * the trader has not opened would undo the reason the views are split up.
  */
-const CallsView = lazy(() =>
-  import('./components/coach/CallsView').then((m) => ({ default: m.CallsView }))
+const MesView = lazy(() =>
+  import('./components/mes/MesView').then((m) => ({ default: m.MesView }))
 );
 /**
  * Markets loads on demand like the other tab views. Besides the bytes, the point is the
@@ -110,6 +109,7 @@ import {
 import { storage, dismissStorageFailure, measureJournalBytes } from './lib/storage';
 import { FOCUS_SETUP_NAMES } from './lib/playbook/focus-setups';
 import type { StorageState } from './lib/storage';
+import type { LevelRecord as MesLevelRecord } from './lib/mes/types';
 import { useStorageFailure } from './lib/storage/use-storage-failure';
 import { StorageWarningBanner } from './components/common/StorageWarningBanner';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
@@ -161,6 +161,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     levelTouches,
     markedLevels,
     levelOutlooks,
+    mesLevels,
     sessionExtremes,
     chartSearches,
     lessons,
@@ -178,6 +179,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     setLevelTouches,
     setMarkedLevels,
     setLevelOutlooks,
+    setMesLevels,
     setSessionExtremes,
     setChartSearches,
     setLessons,
@@ -330,15 +332,16 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   const levelInstruments = useMemo(() => trackedLevelInstruments(instruments), [instruments]);
 
   /**
-   * Coach calls still waiting on the trader — ungraded, or with no result marked.
+   * Writes the MES tracker's record.
    *
-   * Held here rather than in the shell so the header only learns a number, and derived from
-   * the same state the Calls tab renders, so the badge can never disagree with the page.
+   * One path for every mutation: storage holds the record and the state setter is what
+   * carries it to the cloud by the same debounced write as the rest of the journal, so the
+   * tracker's levels follow the account rather than the browser.
    */
-  const pendingCoachCalls = useMemo(
-    () => summariseCoachPlanPending(coachPlans).pending,
-    [coachPlans]
-  );
+  const persistMesLevels = useCallback((next: MesLevelRecord[]) => {
+    storage.saveMesLevels(next);
+    setMesLevels(next);
+  }, []);
 
   /** How many feedback notes are still open — the number the header badge shows. */
   const openFeedbackCount = useMemo(
@@ -512,6 +515,9 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       levelTouches,
       markedLevels,
       levelOutlooks,
+      // The MES tracker's levels travel with every plan-side request, so a draft can quote
+      // the lines the trader actually marked on their charts.
+      mesLevels,
     }),
     [
       todayTradingDay,
@@ -524,6 +530,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       levelTouches,
       markedLevels,
       levelOutlooks,
+      mesLevels,
     ]
   );
 
@@ -1019,20 +1026,6 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   const handleMarkLessonsRead = (lessonIds: string[], at: string) => {
     if (!lessonIds.length) return;
     setLessons(storage.markLessonsRead(lessonIds, at));
-  };
-
-  /**
-   * Records one of the coach's own plans, new or newly graded.
-   *
-   * Storage upserts by id, so grading re-writes the plan that was on screen rather than
-   * adding a second copy — the grade attaches to the levels and reasoning it judged.
-   */
-  const handleSaveCoachPlan = (plan: CoachPlan) => {
-    setCoachPlans(storage.saveCoachPlan(plan));
-  };
-
-  const handleDeleteCoachPlan = (planId: string) => {
-    setCoachPlans(storage.deleteCoachPlan(planId));
   };
 
   /**
@@ -1824,6 +1817,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             levelTouches={levelTouches}
             markedLevels={markedLevels}
             levelOutlooks={levelOutlooks}
+            mesLevels={mesLevels}
             sessionExtremes={sessionExtremes}
             // What the trader was thinking and feeling, written in their own words.
             mindsetNotes={mindsetNotes}
@@ -1843,36 +1837,8 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
           />
         );
 
-      case 'calls':
-        return (
-          <CallsView
-            context={{
-              day: todayTradingDay,
-              maxDrawdown: profile.maxDrawdown ?? null,
-              instruments,
-              setups,
-              trades,
-              tradingDays,
-              reviews,
-              timezone: profile.timezone,
-              levelTouches,
-              // The self-plan read gets the trader's marked levels and per-instrument outlooks,
-              // so its independent call can still weigh the lines the trader is watching.
-              markedLevels,
-              levelOutlooks,
-              coachPlans,
-            }}
-            plans={coachPlans}
-            defaultSymbol={instrumentSymbol(instruments, todayTradingDay.primaryInstrument)}
-            instruments={instruments}
-            userId={userId}
-            onSavePlan={handleSaveCoachPlan}
-            onDeletePlan={handleDeleteCoachPlan}
-            timezone={profile.timezone}
-            setupCount={setups.length}
-            reviewCount={reviews.length}
-          />
-        );
+      case 'mes':
+        return <MesView records={mesLevels} persist={persistMesLevels} />;
 
       case 'markets':
         return (
@@ -1890,6 +1856,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             planLocked={!!todayTradingDay.lockedAt}
             theme={theme}
             coachPlans={coachPlans}
+            mesLevels={mesLevels}
           />
         );
 
@@ -2037,7 +2004,6 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
       syncStatus={syncStatus}
       lastSyncedAt={lastSyncedAt}
       onRetrySync={retrySave}
-      pendingCalls={pendingCoachCalls}
       onOpenFeedback={() => setIsFeedbackOpen(true)}
       feedbackCount={openFeedbackCount}
     >

@@ -12,6 +12,7 @@ import type {
   LessonRead,
   LevelEdge,
   LevelRecurrenceRead,
+  MesLevelsRead,
   LevelOutlookRead,
   LevelTimeframesRead,
   MindsetRead,
@@ -208,7 +209,8 @@ export function coachGuardrails(
   withSelfPlan = false,
   withPlanGrades = false,
   withEntryEdge = false,
-  withMindset = false
+  withMindset = false,
+  withMesLevels = false
 ): string {
   let text = COACH_GUARDRAILS;
   if (withLearn) text += LEARN_GUARDRAILS_SUFFIX;
@@ -225,6 +227,7 @@ export function coachGuardrails(
   if (withMindset) text += MINDSET_GUARDRAILS_SUFFIX;
   if (withLevelEdge) text += LEVEL_EDGE_GUARDRAILS_SUFFIX;
   if (withExtremes) text += EXTREMES_GUARDRAILS_SUFFIX;
+  if (withMesLevels) text += MES_LEVELS_GUARDRAILS_SUFFIX;
   if (withMarketData) text += MARKET_GUARDRAILS_SUFFIX;
   // The self-plan is an opinion mode, but it is the one placed where a called-off answer is
   // not allowed: the trader asked for a plan to grade. The general opinion suffix makes
@@ -450,6 +453,33 @@ E8. NAME WHAT THE RECORD CANNOT SETTLE. Whether the line will hold this time, wh
  * a question about a time of day. The risk is a model turning "the 3am high held in 4 of 5
  * sessions" into "3am highs usually hold", which is the one thing the record cannot say.
  */
+/**
+ * The MES tracker's own honesty rules, appended whenever its record is in the prompt.
+ *
+ * A reliability rate is the most tempting thing in the whole digest to read as an edge, so
+ * this states in the prompt itself that it is a count of what happened, that it excludes the
+ * untested levels, and that strength is a shrunk figure carrying its sample.
+ */
+const MES_LEVELS_GUARDRAILS_SUFFIX = `
+
+THE MES INDICATOR-LEVEL TRACKER - SPECIAL RULES FOR THIS REQUEST ONLY.
+The digest includes MES LEVELS: the levels the trader marked on their own charts (1m to 1h),
+with what price did when it reached them, read back as reliability per chart, per side and
+per setup.
+
+M1. THESE ARE THE TRADER'S OWN ENTRIES, NOT MARKET DATA. The prices, times and outcomes are
+    what they logged. You have no live market read and must not add one.
+M2. RELIABILITY IS A COUNT OF WHAT ALREADY HAPPENED, NEVER A FORECAST. A level that held 70%
+    of the time is a tally of its past tests; it says nothing about the next test and is never
+    a reason to take a trade. Never name an expected win rate.
+M3. QUOTE THE SHRUNK STRENGTH WITH ITS SAMPLE, NOT THE RAW RATE. Strength is pulled toward 50%
+    until there is a sample behind it, so a single hold reads about 60, not 100. When a group
+    has no decisive tests the figure is absent; say so rather than reading it as zero.
+M4. UNTESTED LEVELS ARE NEITHER WINS NOR FAILURES. A level price never reached is excluded
+    from reliability and reported as its own count. Never fold it into a rate either way.
+M5. A THIN SAMPLE IS A TALLY, NOT A PATTERN. Say how many decisive tests sit behind a figure,
+    and do not rank two groups against each other when either is thin.`;
+
 const EXTREMES_GUARDRAILS_SUFFIX = `\n\nTHE SESSION-EXTREME LOG — SPECIAL RULES FOR THIS REQUEST ONLY.
 The digest includes SESSION EXTREMES: clock times the trader logged for where each session's
 high and low printed — overnight (6pm ET to 9:30am ET) and in the regular session (9:30am to
@@ -994,6 +1024,78 @@ function formatLevelOutlooksForPrompt(read: LevelOutlookRead | undefined): strin
  * are, what "held" means, and which hours are still too thin to carry a rate. Everything
  * else is the trader's own counts, quoted back.
  */
+/**
+ * The MES tracker, rendered so a reliability rate cannot be read as a forecast.
+ *
+ * Strength (the shrunk rate) is quoted rather than the raw hold rate, and always beside the
+ * decisive-test count it rests on — the two mistakes a small journal invites are reading a
+ * one-test level as a wall and reading a rate as a prediction.
+ */
+export function formatMesReadForPrompt(read: MesLevelsRead | undefined): string[] {
+  const lines: string[] = [];
+  if (!read || read.records <= 0) return lines;
+
+  const pct = (value: number | null) =>
+    value === null ? 'not readable yet' : `${Math.round(value * 1000) / 10}%`;
+
+  lines.push('');
+  lines.push("=== MES LEVELS — THE TRADER'S OWN CHART LEVELS (their own log) ===");
+  lines.push(
+    'The levels the trader marked on their own MES charts (1m, 3m, 5m, 15m, 30m, 1h), with what ' +
+      'price did when it reached each. HELD means a test where price respected the level; BROKE ' +
+      'means price went through it. Reliability is holds / (holds + breaks) and EXCLUDES levels ' +
+      'price never reached — an untested level is neither a win nor a failure. STRENGTH is the ' +
+      'same rate shrunk toward 50% with a small prior, so a one-test level reads about 60, not ' +
+      '100; quote it with the decisive-test count behind it. This is a count of what already ' +
+      'happened, never a forecast and never a reason to trade.'
+  );
+  lines.push(
+    `${read.records} level(s) across ${read.sessions} session(s). ${read.tested} were reached. ` +
+      `Hit rate ${pct(read.hitRate)}. Overall strength ` +
+      `${read.strength === null ? 'not readable yet' : read.strength} (grade ${read.grade}) ` +
+      `from ${read.sampleSize} decisive test(s).`
+  );
+
+  const renderGroup = (group: MesLevelsRead['byKind'][number]) => {
+    lines.push(
+      `- [${group.label}] ${
+        group.strength === null ? 'no rate yet' : `${group.strength} strength (${group.grade})`
+      }; raw reliability ${pct(group.reliability)} on ${group.sampleSize} decisive test(s); ` +
+        `${group.logged} logged, ${group.tested} reached, held ${group.holds}, broke ${group.breaks}` +
+        (group.avgTouches === null
+          ? ''
+          : `; ${Math.round(group.avgTouches * 10) / 10} tests per reached level`)
+    );
+  };
+
+  if (read.byKind.length) {
+    lines.push('By side:');
+    read.byKind.forEach(renderGroup);
+  }
+  if (read.byTimeframe.length) {
+    lines.push('By chart:');
+    read.byTimeframe.forEach(renderGroup);
+  }
+  if (read.bySetup.length) {
+    lines.push('By setup tag:');
+    read.bySetup.forEach(renderGroup);
+  }
+
+  const d = read.direction;
+  lines.push(
+    `Break direction: ${d.up} upside, ${d.down} downside` +
+      (d.total > 0
+        ? ` (${Math.round((d.upShare ?? 0) * 1000) / 10}% upside across ${d.total} tagged break(s))`
+        : '') +
+      '. ' +
+      (d.unknown > 0
+        ? `${d.unknown} break(s) have no direction tagged yet and are not counted in that split.`
+        : 'Every logged break has a direction tagged.')
+  );
+
+  return lines;
+}
+
 export function formatExtremeReadForPrompt(read: ExtremeRead | undefined): string[] {
   const lines: string[] = [];
   // Optional because the endpoint only shallow-checks the digest a client sends: an older
@@ -1712,6 +1814,12 @@ export function formatDigestForPrompt(digest: JournalDigest, mode?: CoachMode): 
   // Emitted whenever the log holds anything, in every mode, so an extreme count is never
   // quoted in a prompt whose guardrails did not cover it.
   for (const line of formatExtremeReadForPrompt(digest.extremeRead)) lines.push(line);
+
+  // ---- The MES indicator-level tracker ------------------------------------
+  // The same rule as the sections above: emitted whenever the tracker holds anything, in
+  // every mode, so a reliability rate is never quoted in a prompt whose guardrails did not
+  // say what it is and is not.
+  for (const line of formatMesReadForPrompt(digest.mesRead)) lines.push(line);
 
   // ---- The setup learner's raw material -----------------------------------
   // The picture search reads the same rows: it names the trades that resemble the uploaded
@@ -3016,7 +3124,12 @@ export function buildCoachPrompt(
       mode === 'entryedge',
       // And the mindset rules, gated on the one mode that reads the trader's own report of
       // how they felt and could otherwise drift into diagnosing them or trading a mood.
-      mode === 'mindset'
+      mode === 'mindset',
+      // Appended whenever the tracker's record is in the prompt, in every mode, the same way
+      // the level-touch and extreme rules are: a reliability rate over the trader's own
+      // marked levels reads like a prediction, so it is never quoted in a mode whose
+      // guardrails did not say what it is and is not.
+      (digest.mesRead?.records ?? 0) > 0
     ),
     userPrompt,
   };

@@ -24,6 +24,7 @@ import { requestCoach, CoachErrorCode, CoachResult } from '../../lib/ai/coach-cl
 import { buildJournalDigest } from '../../lib/ai/journal-digest';
 import type { PlanReviewResponse } from '../../lib/ai/coach-types';
 import type { MarketBrief, SectorQuote } from '../../lib/ai/market-data';
+import type { LevelRecord as MesLevelRecord } from '../../lib/mes/types';
 import { heatBand, heatBandStyle, formatSignedPercent } from '../../lib/ai/market-data';
 import {
   assessPlannedSize,
@@ -54,6 +55,8 @@ interface PlanLockPreviewModalProps {
   timezone: string;
   /** The account drawdown the trader has agreed to, so the review can weigh the plan's risk. */
   maxDrawdown?: number | null;
+  /** The trader's MES indicator-level record, so the review can quote their own chart levels. */
+  mesLevels?: MesLevelRecord[];
   /** The trader's risk ladder, so the lock shows what each Trade # risks. */
   riskTiers?: number[];
   onConfirm: () => void;
@@ -104,6 +107,7 @@ export const PlanLockPreviewModal: React.FC<PlanLockPreviewModalProps> = ({
   setups,
   timezone,
   maxDrawdown,
+  mesLevels,
   riskTiers = DEFAULT_RISK_TIER_AMOUNTS,
   onConfirm,
   onBack,
@@ -125,8 +129,9 @@ export const PlanLockPreviewModal: React.FC<PlanLockPreviewModalProps> = ({
         todayTradeDate: day.tradeDate,
         timezone,
         maxDrawdown,
+        mesLevels,
       }),
-    [trades, day, reviews, setups, instruments, timezone, maxDrawdown]
+    [trades, day, reviews, setups, instruments, timezone, maxDrawdown, mesLevels]
   );
 
   /**

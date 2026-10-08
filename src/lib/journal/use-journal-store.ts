@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { storage } from '../storage';
 import type { StorageState } from '../storage';
+import type { LevelRecord as MesLevelRecord } from '../mes/types';
 import {
   ChartSearch,
   CoachPlan,
@@ -66,6 +67,10 @@ export function useJournalStore(userId: string) {
   const [levelOutlooks, setLevelOutlooks] = useState<LevelOutlook[]>(() =>
     storage.getLevelOutlooks()
   );
+  // The MES Indicator Level Tracker's own record: one row per level per session, with what
+  // price did at it. Held with the journal so a level is saved locally and carried to the
+  // cloud by the same debounced write, and travels in the app's own backup.
+  const [mesLevels, setMesLevels] = useState<MesLevelRecord[]>(() => storage.getMesLevels());
   // Where each session's extremes printed on the clock. The trader's own record, held with
   // the rest of the state so it is saved and synced by the same debounced write.
   const [sessionExtremes, setSessionExtremes] = useState<SessionExtreme[]>(() =>
@@ -105,6 +110,7 @@ export function useJournalStore(userId: string) {
       levelTouches,
       markedLevels,
       levelOutlooks,
+      mesLevels,
       sessionExtremes,
       chartSearches,
       lessons,
@@ -123,6 +129,7 @@ export function useJournalStore(userId: string) {
       levelTouches,
       markedLevels,
       levelOutlooks,
+      mesLevels,
       sessionExtremes,
       chartSearches,
       lessons,
@@ -158,6 +165,7 @@ export function useJournalStore(userId: string) {
       setLevelTouches(next.levelTouches ?? []);
       setMarkedLevels(next.markedLevels ?? []);
       setLevelOutlooks(next.levelOutlooks ?? []);
+      setMesLevels(next.mesLevels ?? []);
       setSessionExtremes(next.sessionExtremes ?? []);
       setChartSearches(next.chartSearches ?? []);
       setLessons(next.lessons ?? []);
@@ -180,6 +188,7 @@ export function useJournalStore(userId: string) {
     levelTouches,
     markedLevels,
     levelOutlooks,
+    mesLevels,
     sessionExtremes,
     chartSearches,
     lessons,
@@ -197,6 +206,7 @@ export function useJournalStore(userId: string) {
     setLevelTouches,
     setMarkedLevels,
     setLevelOutlooks,
+    setMesLevels,
     setSessionExtremes,
     setChartSearches,
     setLessons,

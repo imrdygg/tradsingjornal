@@ -13,8 +13,9 @@ import { expect, test, type Page } from '@playwright/test';
  */
 
 /**
- * The coach's own calls used to have a card here. They moved to their own Calls tab, which
- * `e2e/calls.spec.ts` covers; what is asserted here is that they are no longer on this tab.
+ * The coach's own calls used to have a card here, and later a tab of their own. That tab is
+ * gone now that the MES tracker holds the slot; what is asserted here is that the calls are
+ * no longer on this tab.
  */
 async function gotoTab(page: Page, tab: string, heading: RegExp) {
   const desktop = page.locator(`#nav-btn-${tab}`);
@@ -65,8 +66,9 @@ test.describe('Coach tab', () => {
   test('no longer hosts the coach’s own calls, which moved to their own tab', async ({ page }) => {
     await gotoTab(page, 'coach', /Coach/i);
 
-    // The self-plan card lived here, beside the writing about the trader's process. It now has
-    // its own tab — Calls — so this tab is only the reads about their trading.
+    // The self-plan card lived here, beside the writing about the trader's process. It moved to
+    // its own tab, which has since been replaced by the MES tracker; this tab is only the reads
+    // about their trading.
     await expect(page.locator('#coach-self-plan')).toHaveCount(0);
     await expect(page.locator('#coach-self-plan-generate')).toHaveCount(0);
   });

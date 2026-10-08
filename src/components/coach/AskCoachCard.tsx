@@ -13,6 +13,7 @@ import {
   TradingDay,
 } from '../../types';
 import { buildJournalDigest } from '../../lib/ai/journal-digest';
+import type { LevelRecord as MesLevelRecord } from '../../lib/mes/types';
 import type { AskResponse } from '../../lib/ai/coach-types';
 import { CoachErrorCode, CoachResult, requestCoach } from '../../lib/ai/coach-client';
 import {
@@ -56,6 +57,11 @@ interface AskCoachCardProps {
   markedLevels?: MarkedLevel[];
   /** The daily outlooks, so the answer can weigh what the trader expected against the record. */
   levelOutlooks?: LevelOutlook[];
+  /**
+   * The MES indicator-level record, so a question like "does my 30m support hold?" is
+   * answerable from the levels the trader actually marked on their charts.
+   */
+  mesLevels?: MesLevelRecord[];
   /** The account a saved lesson belongs to. */
   userId?: string;
   /**
@@ -103,6 +109,7 @@ export const AskCoachCard: React.FC<AskCoachCardProps> = ({
   levelTouches = NO_TOUCHES,
   markedLevels,
   levelOutlooks,
+  mesLevels,
   userId,
   onSaveLesson,
   coachPlans,
@@ -130,6 +137,7 @@ export const AskCoachCard: React.FC<AskCoachCardProps> = ({
         markedLevels,
         levelOutlooks,
         coachPlans,
+        mesLevels,
       }),
     [
       trades,
@@ -144,6 +152,7 @@ export const AskCoachCard: React.FC<AskCoachCardProps> = ({
       markedLevels,
       levelOutlooks,
       coachPlans,
+      mesLevels,
     ]
   );
 

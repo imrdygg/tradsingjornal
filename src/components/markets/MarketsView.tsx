@@ -29,6 +29,7 @@ import {
   formatQuotePrice,
 } from '../../lib/ai/plan-coach';
 import type { InstrumentQuote } from '../../lib/ai/market-data';
+import type { LevelRecord as MesLevelRecord } from '../../lib/mes/types';
 import type {
   CoachPlan,
   DailyReview,
@@ -77,9 +78,16 @@ interface MarketsViewProps {
    *
    * Carried into the digest so the chart read learns from what the trader keeps telling the
    * coach about how it plans; the guardrails keep a grade from being read as market data.
+   */  coachPlans?: CoachPlan[];
+  /**
+   * The trader's MES indicator-level record, so the chart read can quote the levels they
+   * actually marked and how those held.
    */
-  coachPlans?: CoachPlan[];
+  mesLevels?: MesLevelRecord[];
 }
+
+
+
 
 const GROUP_LABELS: Record<ChartSymbol['group'], string> = {
   index: 'Index futures',
@@ -132,6 +140,7 @@ export const MarketsView: React.FC<MarketsViewProps> = ({
   planLocked = false,
   theme,
   coachPlans,
+  mesLevels,
 }) => {
   const [symbolId, setSymbolId] = useState<string>(() => findChartSymbol(primaryInstrument).id);
   const symbol = findChartSymbol(symbolId);
@@ -179,6 +188,7 @@ export const MarketsView: React.FC<MarketsViewProps> = ({
         maxDrawdown,
         timezone,
         coachPlans,
+        mesLevels,
       }),
     [
       trades,
@@ -190,6 +200,7 @@ export const MarketsView: React.FC<MarketsViewProps> = ({
       timezone,
       maxDrawdown,
       coachPlans,
+      mesLevels,
     ]
   );
 

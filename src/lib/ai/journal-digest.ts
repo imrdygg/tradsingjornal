@@ -62,12 +62,14 @@ import {
 } from '../analytics/lesson-recurrence';
 import {
   directionStats as mesDirectionStats,
+  notableLevels as mesNotableLevels,
   statsByKind as mesStatsByKind,
   statsBySetup as mesStatsBySetup,
   statsByTimeframe as mesStatsByTimeframe,
   statsFor as mesStatsFor,
   type DirectionStats as MesDirectionStats,
   type GroupStats as MesGroupStats,
+  type NotableLevel as MesNotableLevel,
 } from '../mes/analytics';
 import type { LevelRecord as MesLevelRecord } from '../mes/types';
 
@@ -1748,6 +1750,12 @@ function buildCoachPlanRead(plans: CoachPlan[]): CoachPlanRead {
  * level does not add six empty chart rows to every prompt. `direction.unknown` is included
  * deliberately: it is the count of breaks the trader has not tagged a direction for, which
  * is a real and useful thing for the coach to point at.
+ *
+ * `notable` is the other half of the read. The groups answer "how do the 5-minute lines do",
+ * which is a statement about a bucket; a list of the individual lines with the most decided
+ * tests behind them is what lets the coach say WHICH line it means. A rate quoted about a bucket
+ * can only be checked by going and finding the lines underneath it, and a read that names the
+ * line it is talking about is both more useful and easier to hold to account.
  */
 export interface MesLevelsRead {
   records: number;
@@ -1767,6 +1775,17 @@ export interface MesLevelsRead {
   byKind: MesGroupStats[];
   bySetup: MesGroupStats[];
   direction: MesDirectionStats;
+  /**
+   * The individual lines worth naming, busiest sample first.
+   *
+   * Only lines with something decisive on them, because a rate needs a decided test to exist at
+   * all; a line price never reached carries no figure to quote and is already counted in
+   * `records - tested`.
+   *
+   * Optional so a digest built by an older client — which carries the groups but not the lines
+   * underneath them — still renders a prompt rather than crashing it.
+   */
+  notable?: MesNotableLevel[];
 }
 
 function buildMesRead(records: MesLevelRecord[]): MesLevelsRead {
@@ -1785,6 +1804,7 @@ function buildMesRead(records: MesLevelRecord[]): MesLevelsRead {
     byKind: mesStatsByKind(records).filter((group) => group.logged > 0),
     bySetup: mesStatsBySetup(records),
     direction: mesDirectionStats(records),
+    notable: mesNotableLevels(records),
   };
 }
 

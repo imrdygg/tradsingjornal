@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useMemo } from 'react';
 import type { JournalFile, LevelPatch, LevelRecord, NewLevelInput } from '../../lib/mes/types';
+import type { MesPlaybookBridge } from '../../lib/mes/playbook-bridge';
 import { normalizeMesLevel, sanitizeLevel } from '../../lib/mes/analytics';
 import { buildDemoLevels } from '../../lib/mes/demo';
 import { newId } from '../../lib/mes/utils';
@@ -24,6 +25,13 @@ export interface MesJournal {
   loadDemo(): void;
   /** Replaces the whole record from a backup file; resolves to the number imported. */
   importFile(file: File): Promise<number>;
+  /**
+   * The way across to the playbook, when the app handed one over.
+   *
+   * Optional so a screen can still be rendered — in a test, or by a caller with no playbook —
+   * without the cross-record card: absent hides it rather than breaking the tab.
+   */
+  bridge?: MesPlaybookBridge;
 }
 
 const MesJournalContext = createContext<MesJournal | null>(null);
@@ -38,12 +46,15 @@ interface MesJournalProviderProps {
   records: LevelRecord[];
   /** Writes the next list through storage and updates the app's state. */
   persist: (next: LevelRecord[]) => void;
+  /** The playbook's lines and the way across, when the app has them to hand. */
+  bridge?: MesPlaybookBridge;
   children: React.ReactNode;
 }
 
 export const MesJournalProvider: React.FC<MesJournalProviderProps> = ({
   records,
   persist,
+  bridge,
   children,
 }) => {
   const value = useMemo<MesJournal>(() => {
@@ -54,6 +65,7 @@ export const MesJournalProvider: React.FC<MesJournalProviderProps> = ({
 
     return {
       records,
+      bridge,
       addLevel(input) {
         const now = Date.now();
         const record = sanitizeLevel({
@@ -98,7 +110,7 @@ export const MesJournalProvider: React.FC<MesJournalProviderProps> = ({
         return cleaned.length;
       },
     };
-  }, [records, persist]);
+  }, [records, persist, bridge]);
 
   return <MesJournalContext.Provider value={value}>{children}</MesJournalContext.Provider>;
 };

@@ -46,6 +46,9 @@ import { CoachLessonsCard } from './CoachLessonsCard';
 import { EdgeFinderCard } from './EdgeFinderCard';
 import { CoachSetupsCard } from './CoachSetupsCard';
 import { MarkedLevelsCard } from './MarkedLevelsCard';
+import { MesTrackerCard } from './MesTrackerCard';
+import type { LevelRecord as MesLevelRecord } from '../../lib/mes/types';
+import type { BridgedLevel } from '../../lib/mes/playbook-bridge';
 import { TimeframeEdgeCard } from './TimeframeEdgeCard';
 import { LevelOddsCard } from './LevelOddsCard';
 import { isFocusSetup, splitFocusSetups } from '../../lib/playbook/focus-setups';
@@ -162,6 +165,18 @@ interface PlaybookViewProps {
     /** What the undo would reverse, or null when there is nothing to take back. */
     undoLabel: string | null;
   };
+  /**
+   * The MES indicator-level tracker's own record, and the one press that hands lines to it.
+   * Omitted hides the card, the same way `markedLevels` does.
+   */
+  mesTracker?: {
+    /** The tracker's record, so the card can say which lines are already logged there. */
+    levels: MesLevelRecord[];
+    /** The playbook instrument the tracker records. MES alone; other lines cannot cross. */
+    instrumentId: string;
+    /** Writes lines into the tracker, returning how many it actually added. */
+    onSend: (levels: BridgedLevel[]) => number;
+  };
   /** The account a lesson written from this tab belongs to. */
   userId?: string;
   /**
@@ -235,6 +250,7 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
   edgeFinder,
   coachSetups,
   markedLevels,
+  mesTracker,
   userId,
   lessons = [],
   onSaveLesson,
@@ -263,6 +279,22 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
    */
   const [levelInstrumentId, setLevelInstrumentId] = useState<string | undefined>(undefined);
   const [levelTimeframe, setLevelTimeframe] = useState<LevelTimeframe | undefined>(undefined);
+
+  /**
+   * The instrument the marked-level card below is actually on.
+   *
+   * The shared selection starts undefined so each level card can fall back to the day's own
+   * primary instrument. The cross-record card cannot work from the raw selection: it has to
+   * decide whether the tracker's instrument is the one on screen, and "not chosen yet" is not an
+   * answer to that. This resolves the same default the marked-level card makes for itself.
+   */
+  const openLevelInstrumentId = (() => {
+    if (levelInstrumentId) return levelInstrumentId;
+    const list = markedLevels?.instruments ?? [];
+    const wanted = (markedLevels?.todayTradingDay.primaryInstrument ?? '').trim().toLowerCase();
+    const primary = list.find((inst) => inst.symbol.toLowerCase() === wanted);
+    return primary?.id ?? list[0]?.id ?? '';
+  })();
 
   // The pair, and the rest of the catalog. A deep link or a watched setup outside the pair
   // has to open the full list, or the card it points at would not exist; and a journal
@@ -571,6 +603,24 @@ export const PlaybookView: React.FC<PlaybookViewProps> = ({
           onInstrumentChange={setLevelInstrumentId}
           timeframe={levelTimeframe}
           onTimeframeChange={setLevelTimeframe}
+        />
+      )}
+
+      {/*
+        The same lines as the tracker's own record. The lines are written down in two places for
+        two different reasons, and typing them out twice is the only thing this card removes — it
+        hands them over in one press, with every touch already logged against them.
+      */}
+      {markedLevels && mesTracker && (
+        <MesTrackerCard
+          levels={markedLevels.levels}
+          touches={markedLevels.touches}
+          mesLevels={mesTracker.levels}
+          instruments={markedLevels.instruments}
+          instrumentId={mesTracker.instrumentId}
+          openInstrumentId={openLevelInstrumentId}
+          timezone={markedLevels.timezone}
+          onSend={mesTracker.onSend}
         />
       )}
 

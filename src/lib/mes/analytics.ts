@@ -33,6 +33,7 @@ import {
   GRADE_B,
   GRADE_C,
   LEVEL_KINDS,
+  NOTABLE_LEVEL_LIMIT,
   SETUP_TAGS,
   TIMEFRAMES,
   TIMEFRAME_ORDER,
@@ -509,6 +510,83 @@ export function normalizeMesLevel(raw: unknown): LevelRecord | null {
   };
 
   return sanitizeLevel(record);
+}
+
+/**
+ * One line named well enough to be quoted on its own.
+ *
+ * A rate is only meaningful beside the line it was taken from, so this carries the line's whole
+ * identity — chart, side and price — and its own counts. Nothing here is a group figure restated:
+ * every field belongs to this one level.
+ */
+export interface NotableLevel {
+  /** How the line is named in a read, e.g. '30m support 5820.00'. */
+  label: string;
+  date: string;
+  timeframe: Timeframe;
+  kind: LevelKind;
+  price: number;
+  touches: number;
+  holds: number;
+  breaks: number;
+  /** 0..1, null when this line was never decided. */
+  reliability: number | null;
+  /** 0..100 shrunk strength for this line alone. */
+  strength: number | null;
+  grade: Grade;
+  confidence: Confidence;
+  setup: SetupTag | '';
+  /** What the trader wrote against the line, or null when they wrote nothing. */
+  notes: string | null;
+}
+
+/**
+ * The lines worth naming in a read: the ones with the most decided tests behind them.
+ *
+ * A group figure — "your 5-minute lines hold 64% of the time" — is a statement about a bucket,
+ * and a reader who wants to check it has to go looking for the lines underneath. This surfaces
+ * them instead, so a read can say which line it means. Only lines with something decisive on them
+ * are listed, because a rate needs a decided test to exist at all; ties go to the line whose rate
+ * sits furthest from a coin flip, and then to the most recent session, so the list leads with the
+ * lines that say the most rather than with whatever happened to be logged first.
+ *
+ * This ranks nothing as an edge. `strength` is the same shrunk figure the screens show, and it is
+ * the caller's job — and the prompt's — never to turn a line's tally into a forecast.
+ */
+export function notableLevels(
+  records: LevelRecord[],
+  limit = NOTABLE_LEVEL_LIMIT
+): NotableLevel[] {
+  return records
+    .filter((record) => record.holds + record.breaks > 0)
+    .map((record) => {
+      const strength = strengthOf(record.holds, record.breaks);
+      const notes = record.notes.trim();
+      return {
+        label: `${record.timeframe} ${record.kind} ${record.price.toFixed(2)}`,
+        date: record.date,
+        timeframe: record.timeframe,
+        kind: record.kind,
+        price: record.price,
+        touches: record.touches,
+        holds: record.holds,
+        breaks: record.breaks,
+        reliability: reliabilityOf(record.holds, record.breaks),
+        strength,
+        grade: gradeOf(strength),
+        confidence: confidenceOf(record.holds + record.breaks),
+        setup: record.setup,
+        notes: notes || null,
+      };
+    })
+    .sort((a, b) => {
+      const decided = b.holds + b.breaks - (a.holds + a.breaks);
+      if (decided !== 0) return decided;
+      const conviction = Math.abs((b.strength ?? 50) - 50) - Math.abs((a.strength ?? 50) - 50);
+      if (conviction !== 0) return conviction;
+      return b.date.localeCompare(a.date);
+    })
+    .slice(0, Math.max(0, limit));
 }
 
 /** Sorts levels strongest-price-first, with ties broken by timeframe then id. */

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { BarChart3, CalendarDays, Database, Grid3x3, ListChecks, Timer } from 'lucide-react';
 import type { LevelRecord } from '../../lib/mes/types';
+import type { MesPlaybookBridge } from '../../lib/mes/playbook-bridge';
 import { MesJournalProvider } from './mes-store';
 import { MesDashboard } from './MesDashboard';
 import { MesDailyLog } from './MesDailyLog';
@@ -36,13 +37,21 @@ interface MesViewProps {
   records: LevelRecord[];
   /** Writes the next list through storage and updates the app's state (and so the sync). */
   persist: (next: LevelRecord[]) => void;
+  /**
+   * The playbook's lines and the way across, when the app has them to hand.
+   *
+   * Optional so the tab still renders — in a test, or for a caller with no playbook — without
+   * the cross-record card. The tracker is one record of the trader's levels either way; only the
+   * shortcut between the two records depends on this.
+   */
+  bridge?: MesPlaybookBridge;
 }
 
-export const MesView: React.FC<MesViewProps> = ({ records, persist }) => {
+export const MesView: React.FC<MesViewProps> = ({ records, persist, bridge }) => {
   const [section, setSection] = useState<MesSection>('dashboard');
 
   return (
-    <MesJournalProvider records={records} persist={persist}>
+    <MesJournalProvider records={records} persist={persist} bridge={bridge}>
       <div className="space-y-5">
         <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 backdrop-blur-sm sm:p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">

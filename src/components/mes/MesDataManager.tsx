@@ -5,6 +5,7 @@ import { totals } from '../../lib/mes/analytics';
 import { STORAGE_KEY } from '../../lib/mes/constants';
 import { downloadText, formatShortDate, recordsToCsv } from '../../lib/mes/utils';
 import { useMesJournal } from './mes-store';
+import { MesPlaybookCard } from './MesPlaybookCard';
 import { Badge, EmptyState, SectionCard, Stat } from './mes-ui';
 
 /**
@@ -14,6 +15,10 @@ import { Badge, EmptyState, SectionCard, Stat } from './mes-ui';
  * hides its sample is the single most over-read figure a trader keeps. Second, a real
  * export, because localStorage is per-browser and dies with site data — the backup here is
  * the only copy that survives a cleared profile.
+ *
+ * It is also where the record meets the playbook's own marked lines, because moving lines
+ * between the two records is a data operation like the rest of this screen: the trader decides
+ * when it happens, and it is reported the same way a restore or a clear is.
  */
 export const MesDataManager: React.FC = () => {
   const { records, clearAll, loadDemo, importFile } = useMesJournal();
@@ -176,6 +181,9 @@ export const MesDataManager: React.FC = () => {
           </span>
         </div>
       </SectionCard>
+
+      {/* The playbook's own marked lines, and the way across in each direction. */}
+      <MesPlaybookCard />
 
       <SectionCard
         title="Backup and restore"

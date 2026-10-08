@@ -88,6 +88,7 @@ const SettingsView = lazy(() =>
 );
 import {
   TradingDay,
+  TradingSession,
   Trade,
   DailyReview,
   Setup,
@@ -109,7 +110,15 @@ import {
 import { storage, dismissStorageFailure, measureJournalBytes } from './lib/storage';
 import { FOCUS_SETUP_NAMES } from './lib/playbook/focus-setups';
 import type { StorageState } from './lib/storage';
-import type { LevelRecord as MesLevelRecord } from './lib/mes/types';
+import { MES_INSTRUMENT, type LevelRecord as MesLevelRecord } from './lib/mes/types';
+import {
+  bridgeFromMes,
+  bridgeFromPlaybook,
+  markedLevelsFromBridged,
+  mesRecordsFromBridged,
+  type BridgedLevel,
+  type MesPlaybookBridge,
+} from './lib/mes/playbook-bridge';
 import { useStorageFailure } from './lib/storage/use-storage-failure';
 import { StorageWarningBanner } from './components/common/StorageWarningBanner';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
@@ -131,7 +140,11 @@ import {
   assessRiskCapacity,
   estimateStopDistance,
 } from './lib/analytics/risk-capacity';
-import { findInstrument, trackedLevelInstruments } from './lib/trading/instruments';
+import {
+  defaultLevelZonePoints,
+  findInstrument,
+  trackedLevelInstruments,
+} from './lib/trading/instruments';
 import { Plus, Award, Sparkles, Layers, Activity, Target } from 'lucide-react';
 
 interface JournalAppProps {
@@ -958,6 +971,92 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     const after = storage.deleteMarkedLevel(levelId);
     setMarkedLevels(after);
     armLevelUndo(before, after);
+  };
+
+  /**
+   * The two records the MES tracker and the Playbook each keep of the same lines, and the way
+   * across between them.
+   *
+   * The trader writes their indicator's lines down in both places for two different reasons, and
+   * this is the one press that stops the second one being typed out again. It stops there: a line
+   * crosses once and the two records are independent afterwards, because a level's tallies are the
+   * trader's own account of what happened and a silent rewrite from the other side would change a
+   * figure they had already read.
+   *
+   * The tracker's tab is handed four calls rather than the playbook's state, so nothing under that
+   * tab can write to it directly, and every line arriving from the tracker arms the playbook's own
+   * undo — a batch written by another record is exactly the change that has to be reversible. Each
+   * count is answered from storage at the moment it is asked for, so no screen can show a number
+   * that the write behind it has already moved past.
+   */
+  const mesInstrumentId = useMemo(
+    () => findInstrument(instruments, MES_INSTRUMENT).id,
+    [instruments]
+  );
+
+  /**
+   * The session a line written back from the tracker belongs to.
+   *
+   * The tracker records a date and a clock, never a session name — a level there is on one of six
+   * charts, not in one of the three sessions — so this cannot be carried across. The day's own
+   * allowed sessions are the closest thing either record has to an answer, and the regular session
+   * is the honest default: it is where a marked MES line usually lives, and the line keeps the
+   * field editable so the trader can correct it.
+   */
+  const sessionForLevelDate = (date: string): TradingSession => {
+    const allowed = tradingDays.find((entry) => entry.tradeDate === date)?.allowedSessions;
+    const sessions = allowed?.length ? allowed : todayTradingDay.allowedSessions;
+    return sessions?.includes('Regular Session') ? 'Regular Session' : sessions?.[0] ?? 'Regular Session';
+  };
+
+  /** Writes a batch of the tracker's lines into the Playbook, returning how many landed. */
+  const sendMesLevelsToPlaybook = (levels: BridgedLevel[]): number => {
+    if (levels.length === 0) return 0;
+    const before = storage.getMarkedLevels();
+    const after = storage.saveMarkedLevels(
+      markedLevelsFromBridged(levels, {
+        userId,
+        instrumentId: mesInstrumentId,
+        // The line has to belong to a session that exists, or it would point at a day History
+        // never shows — the same reason the marked-level card resolves a day when a line moves.
+        dayIdOf: (date) => storage.getOrCreateDay(date).id,
+        zonePoints: defaultLevelZonePoints(findInstrument(instruments, mesInstrumentId)),
+        sessionOf: sessionForLevelDate,
+      })
+    );
+    setMarkedLevels(after);
+    armLevelUndo(before, after);
+    return after.length - before.length;
+  };
+
+  /** The tracker's side of the bridge: what the Playbook holds that it does not, and back. */
+  const mesPlaybookBridge: MesPlaybookBridge = {
+    incoming: () =>
+      bridgeFromPlaybook(
+        storage.getMarkedLevels(),
+        storage.getLevelTouches(),
+        storage.getMesLevels(),
+        { instrumentId: mesInstrumentId, timezone: profile.timezone }
+      ),
+    accept: (levels) => {
+      const before = storage.getMesLevels();
+      // Read back from storage rather than appended here, so the count reported is what the
+      // record actually kept after normalising rather than what was handed over.
+      const cleaned = storage.saveMesLevels([...before, ...mesRecordsFromBridged(levels)]);
+      setMesLevels(cleaned);
+      return cleaned.length - before.length;
+    },
+    outgoing: () =>
+      bridgeFromMes(storage.getMesLevels(), storage.getMarkedLevels(), {
+        instrumentId: mesInstrumentId,
+      }).levels.length,
+    send: () => {
+      const { levels } = bridgeFromMes(storage.getMesLevels(), storage.getMarkedLevels(), {
+        instrumentId: mesInstrumentId,
+      });
+      const added = sendMesLevelsToPlaybook(levels);
+      return { added, skipped: levels.length - added };
+    },
   };
 
   /** Writes or edits today's outlook for one instrument. */
@@ -1838,7 +1937,11 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
         );
 
       case 'mes':
-        return <MesView records={mesLevels} persist={persistMesLevels} />;
+        return          <MesView
+            records={mesLevels}
+            persist={persistMesLevels}
+            bridge={mesPlaybookBridge}
+          />;
 
       case 'markets':
         return (
@@ -1894,6 +1997,16 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               levelOutlooks,
               levelInstruments,
               coachPlans,
+            }}
+            // The tracker's own record of the same lines, and the one press that hands them
+            // across, so the trader is not made to key the same read of the same chart twice.
+            // The press writes INTO the tracker, which is the same write the tracker's own Data
+            // screen uses for the other direction — one path per record, wherever it is pressed
+            // from.
+            mesTracker={{
+              levels: mesLevels,
+              instrumentId: mesInstrumentId,
+              onSend: mesPlaybookBridge.accept,
             }}
             coachSetups={{
               trades,

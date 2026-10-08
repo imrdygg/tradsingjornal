@@ -478,7 +478,14 @@ M3. QUOTE THE SHRUNK STRENGTH WITH ITS SAMPLE, NOT THE RAW RATE. Strength is pul
 M4. UNTESTED LEVELS ARE NEITHER WINS NOR FAILURES. A level price never reached is excluded
     from reliability and reported as its own count. Never fold it into a rate either way.
 M5. A THIN SAMPLE IS A TALLY, NOT A PATTERN. Say how many decisive tests sit behind a figure,
-    and do not rank two groups against each other when either is thin.`;
+    and do not rank two groups against each other when either is thin.
+M6. NAME THE LINE WHEN YOU CITE A FIGURE. The section lists the individual levels with the most
+    tests behind them, and they are listed so you can point at one. When a point rests on a
+    particular line, quote its chart, side and price (and its date when you are talking about one
+    session) together with that line's own counts — "the 30m support at 5820.00 held 7 of 10" —
+    rather than describing "your MES levels" in aggregate. Never generalise one line's figure into
+    a claim about levels as a class, and never rank two named lines against each other when either
+    is thin. Never invent a level that is not in the list.`;
 
 const EXTREMES_GUARDRAILS_SUFFIX = `\n\nTHE SESSION-EXTREME LOG — SPECIAL RULES FOR THIS REQUEST ONLY.
 The digest includes SESSION EXTREMES: clock times the trader logged for where each session's
@@ -1053,7 +1060,8 @@ export function formatMesReadForPrompt(read: MesLevelsRead | undefined): string[
     `${read.records} level(s) across ${read.sessions} session(s). ${read.tested} were reached. ` +
       `Hit rate ${pct(read.hitRate)}. Overall strength ` +
       `${read.strength === null ? 'not readable yet' : read.strength} (grade ${read.grade}) ` +
-      `from ${read.sampleSize} decisive test(s).`
+      `from ${read.sampleSize} decisive test(s). The individual lines with the most tests behind ` +
+      'them are listed by name at the end of this section so you can point at the one you mean.'
   );
 
   const renderGroup = (group: MesLevelsRead['byKind'][number]) => {
@@ -1079,6 +1087,35 @@ export function formatMesReadForPrompt(read: MesLevelsRead | undefined): string[
   if (read.bySetup.length) {
     lines.push('By setup tag:');
     read.bySetup.forEach(renderGroup);
+  }
+
+  /**
+   * The named lines.
+   *
+   * A group figure is a statement about a bucket, and a trader cannot act on one they cannot
+   * find. Naming the lines underneath it does two things at once: the read becomes useful — "the
+   * 30-minute support at 5820 held seven of its ten tests" rather than "your levels hold 64%" —
+   * and it becomes checkable, because every line carries its own counts beside it. Each figure is
+   * quoted with the sample it rests on, the same rule the groups are held to.
+   */
+  const notable = read.notable ?? [];
+  if (notable.length) {
+    lines.push('');
+    lines.push(
+      'Lines worth naming, busiest sample first. When a point rests on a particular line, quote it '
+        + "by its chart, side and price as listed here instead of describing 'your MES levels' in "
+        + 'general:'
+    );
+    for (const level of notable) {
+      lines.push(
+        `- ${level.label} on ${level.date}: ${level.touches} logged test(s), ${level.holds} held, `
+          + `${level.breaks} broke — raw reliability ${pct(level.reliability)}, strength `
+          + `${level.strength === null ? 'not readable yet' : level.strength} (grade ${level.grade}), `
+          + `${level.confidence} confidence`
+          + (level.setup ? `, tagged ${level.setup}` : '')
+          + (level.notes ? `, their own note: "${level.notes}"` : '')
+      );
+    }
   }
 
   const d = read.direction;

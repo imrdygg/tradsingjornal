@@ -87,6 +87,24 @@ export const CONFIDENCE_MEDIUM = 5;
 export const BUCKET_MINUTES = 30;
 
 /**
+ * The chart a line is filed on when the record it came from never named one.
+ *
+ * The playbook has always allowed a marked line without a timeframe — it was there before the
+ * trader tracked charts at all — and this tracker has no such state: a level is on one of six
+ * charts or it is not a row. Filing a chartless line here is a default the screen states out
+ * loud, rather than a chart quietly invented for it.
+ */
+export const DEFAULT_MES_TIMEFRAME: Timeframe = '5m';
+
+/**
+ * How many named lines a read carries.
+ *
+ * Enough to point at the several charts a trader actually works, short enough that the section
+ * stays a handful of quotable lines rather than a second copy of the record.
+ */
+export const NOTABLE_LEVEL_LIMIT = 8;
+
+/**
  * The versioned storage key exported in the Data tab's explainer.
  *
  * The records are stored inside the journal snapshot (`ptj_mes_levels_v1`) so they sync

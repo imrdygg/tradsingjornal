@@ -21,6 +21,7 @@ import {
   Instrument,
   Setup,
   TradingDay,
+  DayRoutine,
 } from '../../types';
 import { calculateInitialRisk } from '../../lib/trading/calculate-risk';
 import { deriveStop, hasAssumedRisk } from '../../lib/trading/risk-fixup';
@@ -40,6 +41,7 @@ import { ImageUploader } from '../common/ImageUploader';
 import { ImageLightboxModal } from '../common/ImageLightboxModal';
 import { ModalOverlay } from '../common/ModalOverlay';
 import { FOCUS_SETUP_NAMES } from '../../lib/playbook/focus-setups';
+import { RoutineGateBanner } from '../routine/RoutineGateBanner';
 
 interface TradeFormModalProps {
   isOpen: boolean;
@@ -68,6 +70,13 @@ interface TradeFormModalProps {
    * have no day list to hand.
    */
   todayTrades?: Trade[];
+  /**
+   * Today's desk-routine ticks, so the form can say whether this trade is a prepared one.
+   *
+   * Absent means the routine was never opened, which reads the same as an empty checklist: the
+   * form warns plainly rather than pretending the day was prepared.
+   */
+  routine?: DayRoutine | null;
 }
 
 /**
@@ -100,6 +109,7 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
   prefill,
   riskTiers = DEFAULT_RISK_TIER_AMOUNTS,
   todayTrades = [],
+  routine,
 }) => {
   const [instrumentId, setInstrumentId] = useState(() => planInstrumentId(day, instruments));
   const [direction, setDirection] = useState<TradeDirection>('long');
@@ -819,6 +829,19 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
               More options
             </button>
           </div>
+
+          {/*
+            The desk routine, read at the one moment it can still change anything.
+
+            Deliberately OUTSIDE the fold. The risk slot, the cap warning and everything else
+            about the plan live behind "More options", which is right for fields a trade does
+            not need to be written down — but a trader who has to open a menu to be told they
+            are unprepared is a trader who will never be told. It sits directly under the size
+            row, on the form as it opens, and it warns rather than blocks: a trade logged
+            through an unfinished routine is the most useful entry the journal can hold, since
+            it is what makes the prepared-vs-unprepared comparison on Today mean anything.
+          */}
+          <RoutineGateBanner routine={routine} />
 
           {/* Which market — only worth changing when it is not the day's primary. */}
           {moreOptions && (

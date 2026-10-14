@@ -10,6 +10,8 @@ import { YesterdayFocusBanner } from './components/today/YesterdayFocusBanner';
 import { DrawdownRoomStrip } from './components/today/DrawdownRoomStrip';
 import { realizedPnL } from './lib/analytics/realized-pnl';
 import { TodaySummary } from './components/today/TodaySummary';
+import { RoutineCard } from './components/routine/RoutineCard';
+import { buildRoutineConsistency } from './lib/routine/routine-consistency';
 import { ImportantLevelsEditor } from './components/today/ImportantLevelsEditor';
 import { GlobalSearch } from './components/common/GlobalSearch';
 import { CollapsibleSection } from './components/common/CollapsibleSection';
@@ -91,6 +93,7 @@ import {
   TradingSession,
   Trade,
   DailyReview,
+  DayRoutine,
   Setup,
   UserProfile,
   TradeExecutionReview,
@@ -145,7 +148,7 @@ import {
   findInstrument,
   trackedLevelInstruments,
 } from './lib/trading/instruments';
-import { Plus, Award, Sparkles, Layers, Activity, Target } from 'lucide-react';
+import { Plus, Award, Sparkles, Layers, Activity, Target, ClipboardCheck } from 'lucide-react';
 
 interface JournalAppProps {
   userId: string;
@@ -452,6 +455,18 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     [todayTrades, todayTradingDay.riskTierCaps]
   );
 
+  /**
+   * Whether running the desk routine has been worth anything, in the trader's own money.
+   *
+   * Built from every day that carries a routine record, not only today: one day's ticks cannot
+   * say anything about whether the process works, and the comparison only exists because the
+   * routine has been kept across a run of sessions.
+   */
+  const routineConsistency = useMemo(
+    () => buildRoutineConsistency({ tradingDays, trades }),
+    [tradingDays, trades]
+  );
+
   // Today's Review (if any)
   const todayReview = useMemo(() => {
     return reviews.find((r) => r.tradingDayId === todayTradingDay.id);
@@ -461,6 +476,17 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   const handleSaveDay = (updated: TradingDay) => {
     storage.saveTradingDay(updated);
     setTradingDays(storage.getTradingDays());
+  };
+
+  /**
+   * Writes today's desk-routine ticks.
+   *
+   * Through the day's own save path like every other field on the plan, so a tick is a normal
+   * journal write: it rides the same debounced cloud sync, it is cleared by the same reset, and
+   * it needs no new storage key or import/export handling to exist.
+   */
+  const handleSaveRoutine = (routine: DayRoutine) => {
+    handleSaveDay({ ...todayTradingDay, routine });
   };
 
   /**
@@ -1630,6 +1656,31 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             </Suspense>
 
             {/*
+              ── The desk routine ────────────────────────────────────────────────
+
+              The first of the day's own panels, and the only one that is about the trader
+              rather than about the market. It leads them because it is the step the rest of
+              the tab is the result of: a summary read without the preparation behind it
+              reports what happened rather than what was supposed to. It sits below the lesson,
+              the search and the review trend rather than above them, so the order the trader
+              asked for at the top of this tab is left exactly as it was.
+            */}
+            <section id="today-routine" className="space-y-3">
+              <h2 className="flex items-center gap-2 font-mono text-xs font-bold uppercase tracking-wider text-zinc-400">
+                <ClipboardCheck className="h-4 w-4 text-zinc-300" />
+                Desk routine ({routineConsistency.preparedDays}/{routineConsistency.trackedDays}{' '}
+                prepared days)
+              </h2>
+
+              <RoutineCard
+                routine={todayTradingDay.routine}
+                todayTradingDay={todayTradingDay}
+                onSaveRoutine={handleSaveRoutine}
+                consistency={routineConsistency}
+              />
+            </section>
+
+            {/*
               ── Today ─────────────────────────────────────────────────────────────────
 
               The day as it stands, under the lesson, the search and the trend. Nothing here
@@ -2146,6 +2197,7 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
         prefill={tradePrefill}
         riskTiers={riskTiers}
         todayTrades={todayTrades}
+        routine={todayTradingDay.routine}
       />
 
       {/* Trade Close Modal (Close + Execution Review) */}

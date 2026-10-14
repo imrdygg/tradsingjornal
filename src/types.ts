@@ -145,6 +145,13 @@ export interface TradingDay {
   waitingFor: string;
   stayOutIf: string;
   notes?: string;
+  /**
+   * The desk routine's ticks for this day. See {@link DayRoutine}.
+   *
+   * Optional so a day saved before the routine existed still loads, and every reader treats
+   * a missing record as "nothing ticked yet" rather than as an error.
+   */
+  routine?: DayRoutine;
   lockedAt?: string;
   lockedSnapshot?: PlanSnapshot;
   planChanges: PlanChange[];
@@ -1039,6 +1046,61 @@ export interface MarkedLevel {
   resolution?: LevelResolution;
   notes?: string;
   createdAt: string;
+  updatedAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// The desk routine — the operating checklist a session is run against
+//
+// Everything else in the journal records what happened. This records whether the trader
+// went through the process that is supposed to produce it, phase by phase: the morning
+// preparation, the rules held during the session, and the close-out afterwards. It is
+// stored per trading day and kept as ticks rather than as a score, because a score can be
+// argued with and a list of what was actually done cannot.
+//
+// The steps themselves are template content (src/lib/routine/routine-template.ts), the
+// same for every install, exactly like the built-in setups and instruments. Only the ticks
+// are the trader's, and only the ticks are persisted and synced.
+// ---------------------------------------------------------------------------
+
+/**
+ * Which third of the session a step belongs to, in the order they happen.
+ *
+ * Three phases rather than one flat list because they are done at different times and by a
+ * different part of the trader: preparation is deliberative, the session rules are
+ * behavioural and have to hold under pressure, and the close-out is administrative. A single
+ * list of twenty ticks reads as a chore; three short ones read as a routine.
+ */
+export type RoutineSection = 'premarket' | 'session' | 'postmarket';
+
+/**
+ * One day's ticks on the desk routine.
+ *
+ * Deliberately just the keys that are ticked. The step's wording, its phase and whether it is
+ * critical live in the template, so the checklist can be improved in a later release without
+ * rewriting every day already on the record — and a step that is later removed simply stops
+ * being counted instead of leaving a day permanently short of a hundred percent.
+ */
+export interface DayRoutine {
+  /** Keys of the template steps ticked for this day. See `ROUTINE_TEMPLATE`. */
+  done: string[];
+  /**
+   * When each phase was finished, when it was.
+   *
+   * A morning completed at 9:25 and one completed at 10:40 are different sessions, and the
+   * timestamp is the only thing that can tell them apart. Absent means the phase has not been
+   * completed in one sitting — which is the honest reading of a phase ticked one step at a
+   * time through the day.
+   */
+  phaseDoneAt?: Partial<Record<RoutineSection, string>>;
+  /**
+   * The trader's own line about a step they deliberately skipped.
+   *
+   * Optional, and the point of it is that a skip has somewhere to be explained other than in
+   * the trader's head. It is never required to complete the routine: forcing a reason for
+   * every skip is how a checklist teaches a trader to tick things they did not do.
+   */
+  note?: string;
   updatedAt: string;
 }
 

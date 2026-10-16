@@ -113,6 +113,29 @@ export function downscaleDataUrl(
 }
 
 /**
+ * The bytes behind a Blob as an inline data URL, or null when this environment cannot make one.
+ *
+ * Used wherever a picture has to leave the network behind and become the one shape the embedding
+ * endpoint and the private uploader both accept. It resolves to null rather than throwing because
+ * every caller has somewhere honest to go without it — an import reports the picture as unreadable,
+ * and an indexing run reports the one picture it could not send.
+ */
+export function readBlobAsDataUrl(blob: Blob): Promise<string | null> {
+  return new Promise((resolve) => {
+    // `FileReader` is the only portable way to do this without Node globals, and `tsconfig.json`
+    // restricts this project to `vite/client`, so there is no `Buffer` to reach for instead.
+    if (typeof FileReader === 'undefined') {
+      resolve(null);
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null);
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(blob);
+  });
+}
+
+/**
  * Extracts any image File from a browser paste event
  */
 export function getImageFromPasteEvent(event: React.ClipboardEvent | ClipboardEvent): File | null {

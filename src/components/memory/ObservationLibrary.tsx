@@ -33,7 +33,9 @@ import { instrumentSymbol } from '../../lib/trading/instruments';
 import { formatTimestamp } from '../../lib/storage/date-utils';
 import { MEMORY_OUTCOME_WINDOWS, formatMemoryRate } from '../../lib/memory/outcomes';
 import { tradeResultSample } from '../../lib/memory/results';
+import { promoteJournalImage, unlabelledImages } from '../../lib/memory/journal-import';
 import { MemoryImagePicker, MemoryImageThumb } from './MemoryImagePicker';
+import { JournalImportPanel } from './JournalImportPanel';
 
 /**
  * The library of market situations the trader has recorded.
@@ -79,6 +81,8 @@ export interface ObservationLibraryProps {
   todayTradeDate: string;
   /** Whether the trader has consented to cloud image processing. */
   consentToIndex: boolean;
+  /** False in a local-only build, where an import keeps its pictures in the browser. */
+  cloudEnabled: boolean;
   onSave: (observation: TradingObservation) => void;
   onDelete: (id: string) => void;
   onViewTrade: (trade: Trade) => void;
@@ -174,6 +178,7 @@ export const ObservationLibrary: React.FC<ObservationLibraryProps> = ({
   userId,
   todayTradeDate,
   consentToIndex,
+  cloudEnabled,
   onSave,
   onDelete,
   onViewTrade,
@@ -326,6 +331,25 @@ export const ObservationLibrary: React.FC<ObservationLibraryProps> = ({
           </div>
         ))}
       </div>
+
+      {/*
+        ---- What the journal already holds, and cannot be searched ----
+
+        Above the list rather than on the Indexing tab, because this is the screen where the trader
+        is looking at an empty library and wondering why. It is rendered even when there is nothing
+        to bring in: the boundary it explains is exactly what an empty library beside a full journal
+        needs said out loud.
+      */}
+      <JournalImportPanel
+        trades={trades}
+        observations={observations}
+        instruments={instruments}
+        userId={userId}
+        timezone={timezone}
+        consentToIndex={consentToIndex}
+        cloudEnabled={cloudEnabled}
+        onSave={onSave}
+      />
 
       {/* ---- The record form. Open only while something is being written. ---- */}
       {draft && (
@@ -709,6 +733,11 @@ export const ObservationLibrary: React.FC<ObservationLibraryProps> = ({
             const after = (observation.images ?? []).find(
               (image) => image.role === 'after-setup'
             );
+            // Pictures brought in from the journal that nobody has said anything about yet. They are
+            // deliberately not filed as either of the two above: an unlabelled picture is not a
+            // before-the-decision chart, and presenting it as one is the mistake this strip exists to
+            // prevent.
+            const unlabelledHere = unlabelledImages(observation);
             const trade = observation.linkedTradeId
               ? trades.find((candidate) => candidate.id === observation.linkedTradeId)
               : undefined;
@@ -791,12 +820,77 @@ export const ObservationLibrary: React.FC<ObservationLibraryProps> = ({
                       <span>
                         {before?.indexStatus === 'completed'
                           ? 'searchable'
-                          : before?.indexStatus === 'skipped'
-                          ? 'not sent for indexing'
+                          : before
+                          ? before.indexStatus === 'skipped'
+                            ? 'not sent for indexing'
+                            : 'not indexed yet'
+                          : unlabelledHere.length > 0
+                          ? 'not searchable until you label it'
                           : 'not indexed yet'}
                       </span>
                       {after && <span>has a what-happened-next picture</span>}
                     </div>
+
+                    {/*
+                      ---- The one question an imported picture asks ----
+
+                      Rendered here rather than behind the Edit form because it is a single
+                      answer, and because the whole reason these pictures arrived is that they
+                      were invisible: a chart in the library that nothing on screen mentions is
+                      indistinguishable from one that was dropped.
+                    */}
+                    {unlabelledHere.length > 0 && (
+                      <div
+                        id={`observation-unlabelled-${observation.id}`}
+                        className="space-y-2 rounded-xl border border-amber-900/50 bg-amber-950/20 p-2.5"
+                      >
+                        <p className="text-[10px] leading-relaxed text-amber-200/90">
+                          {unlabelledHere.length} picture
+                          {unlabelledHere.length === 1 ? '' : 's'} brought in from your journal,
+                          unlabelled. No search can use {unlabelledHere.length === 1 ? 'it' : 'them'}{' '}
+                          yet: only a chart that was in front of you before you decided may be matched
+                          on.
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {unlabelledHere.map((image) => (
+                            <div
+                              key={image.id}
+                              className="flex items-start gap-2 rounded-lg border border-zinc-800 bg-zinc-950/60 p-2"
+                            >
+                              <MemoryImageThumb
+                                image={image}
+                                alt="A chart brought in from the journal, not labelled yet"
+                              />
+                              <div className="space-y-1">
+                                <span className="inline-block rounded-md border border-amber-900/70 bg-amber-950/50 px-1.5 py-0.5 font-mono text-[9px] text-amber-300">
+                                  unlabelled
+                                </span>
+                                <button
+                                  type="button"
+                                  id={`observation-label-${image.id}`}
+                                  onClick={() =>
+                                    onSave(
+                                      promoteJournalImage(observation, image.id, {
+                                        consent: consentToIndex,
+                                      })
+                                    )
+                                  }
+                                  className="block rounded-lg border border-sky-800 px-2 py-1 text-[10px] font-semibold text-sky-300 transition-colors hover:bg-sky-950/60"
+                                >
+                                  This was the chart before my decision
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        <p className="text-[10px] leading-relaxed text-zinc-500">
+                          Saying so makes it a candidate a search can return, once indexing has given
+                          it an embedding. If this record already has a before-the-decision chart,
+                          this one takes its place — a record cannot have two pictures both claiming
+                          to be the moment of decision.
+                        </p>
+                      </div>
+                    )}
 
                     {/* Market behaviour, said apart from what the trader did with it. */}
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">

@@ -16,3 +16,6 @@ playwright-report/
 bun.lock
 bun.lockb
 .vercel
+
+# Supabase CLI local state (created by `npx supabase start`), never committed.
+supabase/.temp/

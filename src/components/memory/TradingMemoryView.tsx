@@ -23,6 +23,8 @@ import {
   clampMemoryResultCount,
 } from '../../lib/memory/settings';
 import { MEMORY_RESEMBLANCE_FLOOR } from '../../lib/memory/similarity';
+import { isPreDecisionRole } from '../../lib/memory/eligibility';
+import { countUnlabelledImages } from '../../lib/memory/journal-import';
 import { useMemoryIndexing } from '../../lib/memory/use-memory-indexing';
 import { sightingFromSearchChart } from '../../lib/memory/sighting';
 import { ObservationLibrary } from './ObservationLibrary';
@@ -175,9 +177,17 @@ export const TradingMemoryView: React.FC<TradingMemoryViewProps> = ({
   const indexedCount = observations.filter((observation) =>
     (observation.images ?? []).some((image) => image.indexStatus === 'completed')
   ).length;
+  // Only pictures that are actually queued. A picture brought in from the journal is `pending` the
+  // moment consent exists, but no run will send it while it is unlabelled, and counting it as
+  // "waiting to index" would promise work the engine is going to refuse — which is exactly the kind
+  // of number this tab is supposed to be honest about.
   const awaitingIndex = observations.filter((observation) =>
-    (observation.images ?? []).some((image) => image.indexStatus === 'pending')
+    (observation.images ?? []).some(
+      (image) => image.indexStatus === 'pending' && isPreDecisionRole(image.role)
+    )
   ).length;
+  // Pictures that are in the library but carry no role yet, so nothing can match on them.
+  const unlabelledCount = countUnlabelledImages(observations);
   const skippedCount = observations.filter((observation) =>
     (observation.images ?? []).some((image) => image.indexStatus === 'skipped')
   ).length;
@@ -394,6 +404,10 @@ export const TradingMemoryView: React.FC<TradingMemoryViewProps> = ({
           <p className="mt-3 text-[10px] leading-relaxed text-zinc-500">
             {awaitingIndex > 0
               ? `${awaitingIndex} observation${awaitingIndex === 1 ? '' : 's'} have a picture waiting to be indexed.`
+              : unlabelledCount > 0
+              ? unlabelledCount === 1
+                ? 'One picture has come in from the journal and is waiting for you to say what it shows, in the Library. Until then no run will send it.'
+                : `${unlabelledCount} pictures have come in from the journal and are waiting for you to say what they show, in the Library. Until then no run will send them.`
               : skippedCount > 0
               ? `${skippedCount} observation${skippedCount === 1 ? '' : 's'} hold a picture that was saved without consent, so nothing was sent.`
               : 'No picture has been attached to an observation yet.'}
@@ -478,6 +492,7 @@ export const TradingMemoryView: React.FC<TradingMemoryViewProps> = ({
         userId={userId}
         todayTradeDate={todayTradeDate}
         consentToIndex={consent}
+        cloudEnabled={cloudEnabled}
         onSave={onSaveObservation}
         onDelete={onDeleteObservation}
         onViewTrade={onViewTrade}
@@ -537,9 +552,11 @@ export const TradingMemoryView: React.FC<TradingMemoryViewProps> = ({
                 </strong>{' '}
                 A chart attached to a trade, a session or a lesson belongs to that record and is never
                 read here — this engine searches the observation library. That is why a journal
-                holding hundreds of screenshots can still have nothing searchable in it. Record the
-                ones worth searching as sightings, or keep the chart you are looking at from{' '}
-                <em>Find similar</em>.
+                holding hundreds of screenshots can still have nothing searchable in it.{' '}
+                <em>Find similar</em> keeps the chart you are looking at, and the Library's{' '}
+                <em>Bring in the charts your journal already has</em> copies the trade screenshots you
+                already own across — where they arrive unlabelled, and are matched on only once you
+                say which ones were in front of you before you decided.
               </span>
             </p>
 

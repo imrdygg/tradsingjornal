@@ -40,6 +40,7 @@ import type {
   TradingObservation,
 } from '../../types';
 import type { MemoryVectorMatch } from './similarity';
+import { PRE_DECISION_ROLES } from './eligibility';
 import { MEMORY_BUCKET } from './storage';
 import type { MemoryEmbeddingConfig } from './embeddings';
 import {
@@ -635,6 +636,12 @@ export async function saveImageEmbedding(
  * makes the "interruption is a state, not a crash" property of the runner actually true.
  *
  * Ordered by creation so a resumed run continues in the same order it was interrupted in.
+ *
+ * Only pre-decision roles are offered at all, whatever their status. A picture brought in from the
+ * journal is `pending` the moment consent exists, but it is not WORK: nothing may ever match on it,
+ * so sending it would spend a model call on a chart the engine has already decided it will not use,
+ * and would hand a picture to the provider that the trader has not yet said anything about. Labelling
+ * it is the one thing that changes its role, and the row becomes work on the next run.
  */
 export async function listImagesNeedingIndex(limit: number): Promise<MemoryImage[]> {
   const client = requireClient();
@@ -642,6 +649,7 @@ export async function listImagesNeedingIndex(limit: number): Promise<MemoryImage
     .from('memory_images')
     .select('*')
     .in('indexing_status', ['pending', 'failed', 'processing'])
+    .in('image_role', [...PRE_DECISION_ROLES])
     .order('created_at', { ascending: true })
     .order('id', { ascending: true })
     .limit(Math.max(1, limit));

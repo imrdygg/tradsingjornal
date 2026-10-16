@@ -302,6 +302,14 @@ never one "success rate".
 - **Unknown is a result.** A case with nothing recorded afterwards is counted as unknown and never as
 a reversal, and a rate is withheld entirely — with the counts still shown — until its sample clears
 a documented floor.
+- **The journal's own screenshots can be brought in — unlabelled.** A chart attached to a trade,
+a session or a lesson belongs to that record and is never read by the search, which is why a journal
+full of charts can sit beside a library that finds nothing. The Library offers to bring the *trade*
+screenshots across; each one arrives as `context`, stored and readable but **not searchable**,
+because a picture attached to a trade does not say whether it was taken before or after the
+decision. One click per picture — *this was the chart before my decision* — makes it `before-setup`
+and queues it for indexing. It never guesses, and an import can never create a matchable picture on
+its own.
 - **Private storage.** Screenshots go to a private `journal-memory` bucket, not the public one. The
 record keeps the object's **path**, never a signed URL (which expires), and every upload is verified
 by reading the object back before the inline copy is discarded. A failed upload never costs you the
@@ -316,8 +324,8 @@ The tab is a section switcher rather than one long scroll, in the order the work
 
 | Section | What it does |
 | --- | --- |
-| **Library** | Record, browse, filter, edit a sighting and record what happened afterwards. The consent switch and the display settings live here. |
-| **Indexing** | Move a backlog of inline screenshots into private storage and give each one an embedding. Resumable, cancellable, and honest about not having finished. |
+| **Library** | Record, browse, filter, edit a sighting and record what happened afterwards; bring the charts your journal already holds across, and label each one. The consent switch and the display settings live here. |
+| **Indexing** | Move a backlog of inline screenshots into private storage and give each one an embedding. Resumable, cancellable, and honest about not having finished — including about only reading sights, so a journal full of trade charts reads as zero until they are brought in and labelled. |
 | **Find similar** | Upload a chart, get the closest pictures in the library, and read what the market did beside what the execution did. When nothing is close, the chart can be kept as a sighting in one action — with no outcome and no vector yet, because neither is known at that moment. |
 | **Research** | How often each setup was **seen** against how often it was **taken**, with both outcome dimensions kept apart — and the setup's **whole trade log** beside them, so a setup traded far more often than it was photographed is not summarised by the two trades a sighting happens to point at. |
 | **Retrieval quality** | Whether the search is actually finding the charts you judged similar — measured against your own verdicts, not asserted. |
@@ -559,11 +567,65 @@ every cloud save.
   entries, their required sections, the geometry's direction matching each bias, and the
   timeline maths. They run in the node environment; a fake `localStorage` / `window` is
   installed per test, and cloud tests mock the Supabase client.
+- **The upload path is unit-tested over real HTTP too.** `src/lib/memory/__tests__/storage-upload.test.ts`
+  runs the real Supabase client against an in-process server that speaks the Storage API, so the
+  multipart body, the derived object path, the bearer token, the read-back verification and an
+  idempotent retry are exercised end to end — with no credentials and no network beyond loopback.
+- **The project's own side is a live suite** (`src/lib/memory/__tests__/cloud-contract.live.test.ts`,
+  `npm run test:live`): RLS on every memory table, the search being refused to the anonymous role,
+  one trader seeing none of another's rows, a second account unable to sign, download or overwrite
+  the first's object, the private bucket not being URL-readable, and a signed link dying without its
+  token (and, with `MEMORY_LIVE_EXPIRY=1`, after its second is up). A fake server cannot test any of
+  that — the fake *is* the policy, so whatever it answers the assertion holds — so this file runs
+  against a real project or is skipped, loudly, in `npm test`. See [Verifying your own
+  project](#verifying-your-own-project) for the two ways to give it one.
 - **E2E tests** (`npm run e2e`) start the dev server with `VITE_SUPABASE_URL` and
   `VITE_SUPABASE_ANON_KEY` **stripped**, so the app boots in local-only mode (no auth screen)
   and the specs drive the journal UI directly.
 - Nothing may live in `api/` except the generated bundle: the host turns every file in that
   directory into a function, so a stray test file there would be deployed as one.
+
+### Verifying your own project
+
+The live suite writes and deletes rows (`live-…`) and one object, and it needs two accounts. Point it
+at a **throwaway project or a local stack — never at the project holding your journal**, since the
+whole point of it is to behave like a second trader.
+
+**Locally, with Docker** (no hosted project, no cost, real Postgres, real Auth, real Storage):
+
+```bash
+npx supabase init                                       # once; creates supabase/config.toml
+npx supabase start                                      # the stack, in Docker
+npx supabase db query --file supabase/schema.sql --local  # apply the schema
+npx supabase status -o env                              # API_URL and ANON_KEY
+```
+
+**Or on a hosted throwaway project:** create it, paste `supabase/schema.sql` into the SQL editor, and
+read the URL and anon key from Project Settings → API.
+
+Then, with either one:
+
+```bash
+MEMORY_LIVE_URL=<url> MEMORY_LIVE_ANON_KEY=<anon key> \
+MEMORY_LIVE_CONFIRM=yes-write-test-rows npm run test:live
+```
+
+`MEMORY_LIVE_CONFIRM` is the guard: without it (or without a URL) the file is skipped, so a stray
+environment variable can never start a suite that writes. Run through **`npm run test:live`** (its
+own config) and a missing variable is a **failure** with those lines printed, not a skip — asking
+the question and getting a row of grey checks would be indistinguishable from an answer. The two
+accounts are created on the fly —
+sign-up needs no email on a local stack — so nothing has to be set up by hand. On a project with
+**email confirmations on** a fresh sign-up yields no session and the suite says so instead of
+quietly skipping the tenancy half; create two users by hand (Authentication → Add user →
+auto-confirm) and pass their credentials as `MEMORY_LIVE_USER_A_EMAIL` / `MEMORY_LIVE_USER_A_PASSWORD`
+and the same for `B`.
+
+One known gap is recorded there rather than asserted as correct: `memory_images.observation_id` is a
+single-column foreign key, so a picture row can point at another trader's observation — nothing leaks
+(the search joins on `auth.uid()`), but the key does not say what it looks like it says. The test
+carries a `.fails` marker with the two-line schema change that closes it, so it flips to a hard
+failure the moment the key exists.
 
 ---
 

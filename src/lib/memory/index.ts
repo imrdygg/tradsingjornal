@@ -14,6 +14,8 @@
  *     the migration that moves an existing library off inline base64.
  *   - `settings`    — the trader's consent and display choices, with their bounds.
  *   - `backfill`    — what an indexing run over the pictures already in the journal should send.
+ *   - `journal-import` — what of the journal's OWN screenshots can be brought into the library,
+ *     and in what role; with `journal-import-runner` as the part that reads and uploads them.
  *   - `index-runner`— the loop that gives picture after picture an embedding, and stops honestly.
  *   - `db`          — the tables, and the one similarity query, with the mappers between them.
  *   - `evaluation`  — whether retrieval actually finds anything, measured rather than asserted.
@@ -34,6 +36,8 @@ export * from './eligibility';
 export * from './eval-sources';
 export * from './evaluation';
 export * from './index-runner';
+export * from './journal-import';
+export * from './journal-import-runner';
 export * from './research';
 export * from './outcomes';
 export * from './settings';

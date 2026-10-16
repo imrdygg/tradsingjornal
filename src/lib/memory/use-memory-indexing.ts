@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MemoryImage, MemoryIndexJob, TradingObservation } from '../../types';
 import { MAX_COACH_IMAGE_DATA_CHARS } from '../ai/coach-images';
+import { readBlobAsDataUrl } from '../utils/image-utils';
 import { MEMORY_BACKFILL_PAGE_SIZE, planLibraryBackfill, type MemoryBackfillPlan } from './backfill';
 import {
   createIndexJob,
@@ -137,22 +138,6 @@ export function flattenMemoryImages(
   return images;
 }
 
-/** A blob as an inline data URL, or null when this environment cannot produce one. */
-function blobToDataUrl(blob: Blob): Promise<string | null> {
-  return new Promise((resolve) => {
-    // `FileReader` is the only portable way to do this without Node globals, and `tsconfig.json`
-    // restricts this project to `vite/client`, so there is no `Buffer` to reach for instead.
-    if (typeof FileReader === 'undefined') {
-      resolve(null);
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null);
-    reader.onerror = () => resolve(null);
-    reader.readAsDataURL(blob);
-  });
-}
-
 /**
  * The bytes of one picture, in the only form the embedding endpoint accepts.
  *
@@ -192,7 +177,7 @@ async function pictureToDataUrl(image: MemoryImage): Promise<{ dataUrl: string }
     if (!response.ok) {
       return { reason: 'That screenshot could not be read back from private storage.' };
     }
-    const dataUrl = await blobToDataUrl(await response.blob());
+    const dataUrl = await readBlobAsDataUrl(await response.blob());
     if (!dataUrl) {
       return { reason: 'That screenshot could not be turned into something the model accepts.' };
     }

@@ -564,6 +564,34 @@ describe('listImagesNeedingIndex', () => {
   it('honours the requested batch size', async () => {
     expect(await listImagesNeedingIndex(1)).toHaveLength(1);
   });
+
+  it('never offers a picture that carries no label, whatever its status says', async () => {
+    // A screenshot brought in from the journal is `pending` from the moment consent exists, and it
+    // is still not work: nothing may match on it, so sending it would spend a model call on a chart
+    // the engine has already decided it will never use.
+    fake.state.tables.memory_images = [
+      ...fake.state.tables.memory_images,
+      {
+        ...imageRow(image({ id: 'unlabelled', role: 'context', indexStatus: 'pending' }), USER, 'obs-1'),
+        created_at: '2026-09-06T10:00:00.000Z',
+      },
+    ];
+
+    const pending = await listImagesNeedingIndex(10);
+    expect(pending.some((entry) => entry.id === 'unlabelled')).toBe(false);
+  });
+
+  it('offers that picture as soon as the trader has labelled it', async () => {
+    fake.state.tables.memory_images = [
+      {
+        ...imageRow(image({ id: 'labelled', role: 'before-setup' }), USER, 'obs-1'),
+        created_at: '2026-09-06T10:00:00.000Z',
+      },
+    ];
+
+    const pending = await listImagesNeedingIndex(10);
+    expect(pending.map((entry) => entry.id)).toEqual(['labelled']);
+  });
 });
 
 describe('saveImageEmbedding', () => {

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { MemoryImage, MemoryOutcome, MemorySearch, TradingObservation } from '../../../types';
 
@@ -191,7 +192,13 @@ import {
   vectorMatchFromRow,
   listImagesNeedingIndex,
   createMemoryIndexPort,
+  createIndexJob,
+  pruneMemorySearches,
   saveImageEmbedding,
+  saveMemorySearch,
+  setMatchFeedback,
+  updateIndexJob,
+  upsertObservationOutcome,
   upsertObservations,
 } from '../db';
 
@@ -676,6 +683,16 @@ describe('explainSchemaError', () => {
     expect(error.message).toContain('supabase/schema.sql');
   });
 
+  it('says the same for a column the schema cache does not have', () => {
+    // What PostgREST returns for a write naming a column it cannot find — the code an unknown
+    // column actually arrives as, rather than the Postgres one.
+    const error = explainSchemaError({
+      message: "Could not find the 'updated_at' column of 'memory_searches' in the schema cache",
+      code: 'PGRST204',
+    });
+    expect(error.message).toContain('supabase/schema.sql');
+  });
+
   it('says the same for a missing function, which is what an un-run search gives', () => {
     expect(explainSchemaError({ message: 'Could not find the function', code: 'PGRST202' }).message).toContain(
       'supabase/schema.sql'
@@ -691,5 +708,223 @@ describe('explainSchemaError', () => {
     fake.state.missingSchema = true;
     const error = await listImagesNeedingIndex(5).catch((err: unknown) => err);
     expect((error as Error).message).toContain('supabase/schema.sql');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The schema contract
+//
+// `supabase/schema.sql` is applied by hand, in another tool, so nothing in this module can compile
+// against it: a column the client invents, or a name it spells wrong, is not a type error. It is a
+// 400 from PostgREST at the moment the trader clicks, on a write that never happens — and
+// `explainSchemaError` reads those codes as "the memory tables are missing", which is the one
+// diagnosis that is wrong. That is how `memory_searches.updated_at` survived: the table has only
+// ever had `searched_at`, every write of a saved search failed, and nothing above it noticed.
+//
+// So the schema file is the assertion's source of truth. The tables, their columns and the
+// functions' argument names are parsed out of it here, and every write and RPC this module issues is
+// checked against them. Deliberately NOT a list of column names copied into the test: a copied list
+// drifts in exactly the way the code did.
+// ---------------------------------------------------------------------------
+
+const SCHEMA_SQL = readFileSync(
+  new URL('../../../../supabase/schema.sql', import.meta.url),
+  'utf8'
+  // Comments first, so a comma inside one cannot be mistaken for a separator in a column list.
+).replace(/--[^\n]*/g, '');
+
+/** The body of the parenthesised list opening at `open`, nesting respected (`vector(768)`). */
+function parenBody(sql: string, open: number): string {
+  let depth = 0;
+  let quote: string | null = null;
+  for (let index = open; index < sql.length; index += 1) {
+    const char = sql[index];
+    if (quote) {
+      if (char === quote) quote = null;
+      continue;
+    }
+    if (char === "'") quote = char;
+    else if (char === '(') depth += 1;
+    else if (char === ')') {
+      depth -= 1;
+      if (depth === 0) return sql.slice(open + 1, index);
+    }
+  }
+  throw new Error(`Unbalanced parentheses in schema.sql at offset ${open}`);
+}
+
+/** A list's entries, split only at the commas that are not nested inside brackets. */
+function listEntries(body: string): string[] {
+  const entries: string[] = [];
+  let depth = 0;
+  let quote: string | null = null;
+  let current = '';
+  for (const char of body) {
+    if (quote) {
+      current += char;
+      if (char === quote) quote = null;
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      current += char;
+      continue;
+    }
+    if (char === '(' || char === '[') depth += 1;
+    if (char === ')' || char === ']') depth -= 1;
+    if (char === ',' && depth === 0) {
+      entries.push(current);
+      current = '';
+      continue;
+    }
+    current += char;
+  }
+  entries.push(current);
+  return entries.map((entry) => entry.trim()).filter(Boolean);
+}
+
+/** Anything that starts a table-level clause rather than a column. */
+const NOT_A_COLUMN = new Set([
+  'constraint',
+  'primary',
+  'unique',
+  'foreign',
+  'check',
+  'exclude',
+  'like',
+]);
+
+function columnsFromSchema(sql: string): Map<string, Set<string>> {
+  const tables = new Map<string, Set<string>>();
+  const add = (table: string, column: string) => {
+    const columns = tables.get(table) ?? new Set<string>();
+    columns.add(column);
+    tables.set(table, columns);
+  };
+
+  for (const match of sql.matchAll(/create table if not exists public\.(\w+)\s*\(/g)) {
+    const body = parenBody(sql, (match.index ?? 0) + match[0].length - 1);
+    for (const entry of listEntries(body)) {
+      const name = entry.split(/[\s(]/)[0];
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) continue;
+      if (NOT_A_COLUMN.has(name.toLowerCase())) continue;
+      add(match[1], name);
+    }
+  }
+
+  // Columns added in place for projects created before they existed.
+  for (const match of sql.matchAll(/alter table public\.(\w+)\s+add column if not exists\s+(\w+)/g)) {
+    add(match[1], match[2]);
+  }
+
+  return tables;
+}
+
+function parametersFromSchema(sql: string): Map<string, Set<string>> {
+  const functions = new Map<string, Set<string>>();
+  for (const match of sql.matchAll(/create or replace function public\.(\w+)\s*\(/g)) {
+    const body = parenBody(sql, (match.index ?? 0) + match[0].length - 1);
+    const names = new Set<string>();
+    for (const entry of listEntries(body)) {
+      const name = entry.split(/\s+/)[0];
+      // A mode keyword would make the first token the mode rather than the name.
+      if (/^(in|out|inout|variadic)$/i.test(name)) continue;
+      names.add(name);
+    }
+    functions.set(match[1], names);
+  }
+  return functions;
+}
+
+/** One saved search, with a verdict-ready match on it. */
+function savedSearch(): MemorySearch {
+  return {
+    id: 'search-1',
+    userId: 'somebody-else',
+    searchedAt: '2026-09-01T14:00:00.000Z',
+    queryChecksum: 'abc123',
+    filters: { instrument: 'MES' },
+    embeddingModel: 'gemini-embedding-2',
+    embeddingVersion: 1,
+    resemblanceFloor: 0.62,
+    matches: [
+      {
+        observationId: 'obs-1',
+        imageId: 'img-1',
+        role: 'entry',
+        resemblance: 0.81,
+        cosineDistance: 0.19,
+        observedAt: '2026-09-01T13:45:00.000Z',
+        instrument: 'MES',
+      },
+    ],
+  };
+}
+
+describe('the schema contract', () => {
+  const columns = columnsFromSchema(SCHEMA_SQL);
+  const parameters = parametersFromSchema(SCHEMA_SQL);
+
+  it('reads the real tables and functions out of schema.sql', () => {
+    // Without these three the assertions below could pass on an empty parse of the wrong file.
+    expect(columns.get('trading_observations')?.has('observed_at_source')).toBe(true);
+    expect(columns.get('memory_searches')?.has('searched_at')).toBe(true);
+    // Added by an `alter table`, three statements below the table it belongs to.
+    expect(columns.get('journal_snapshots')?.has('revision')).toBe(true);
+    expect(parameters.get('memory_match_images')?.has('p_cutoff')).toBe(true);
+  });
+
+  it('writes only columns that schema.sql creates', async () => {
+    // One of every write this module performs, so the check below has something to check.
+    await upsertObservations([observation({ images: [image()] })]);
+    await upsertObservationOutcome('obs-1', { status: 'unknown', source: 'unknown' });
+    await saveImageEmbedding('img-1', vector());
+    const port = createMemoryIndexPort();
+    await port.markProcessing('img-1');
+    await port.markFailed('img-1', 'HTTP 429 from the provider');
+    await saveMemorySearch(savedSearch());
+    // Recorded against the row the write above just saved, because a verdict on a search that is no
+    // longer stored cannot be recorded at all.
+    await setMatchFeedback('search-1', 'obs-1', 'partial');
+    await createIndexJob('backfill', 3);
+    await updateIndexJob('job-1', {
+      status: 'completed',
+      cursor: 'obs-9',
+      finishedAt: '2026-09-01T15:00:00.000Z',
+    });
+
+    // A run that wrote nothing would satisfy the loop below without checking anything.
+    expect(fake.state.writes.length).toBeGreaterThanOrEqual(7);
+
+    for (const write of fake.state.writes) {
+      const known = columns.get(write.table);
+      expect(known, `schema.sql creates no table public.${write.table}`).toBeDefined();
+      const rows = Array.isArray(write.payload) ? write.payload : [write.payload];
+      for (const row of rows) {
+        const unknown = Object.keys(row).filter((key) => !known?.has(key));
+        // PostgREST rejects the ENTIRE statement over one unknown column, so this is not a warning.
+        expect(
+          unknown,
+          `public.${write.table} has no column ${unknown.join(', ')} — PostgREST refuses the whole ${write.op}`
+        ).toEqual([]);
+      }
+    }
+  });
+
+  it('calls the search functions with the argument names schema.sql declares', async () => {
+    await searchMemoryImages(vector());
+    await pruneMemorySearches(90);
+
+    expect(fake.state.rpcCalls).toHaveLength(2);
+    for (const call of fake.state.rpcCalls) {
+      const declared = parameters.get(call.fn);
+      expect(declared, `schema.sql creates no function public.${call.fn}`).toBeDefined();
+      const unknown = Object.keys(call.args).filter((key) => !declared?.has(key));
+      // PostgREST matches an RPC by argument NAME, so one misspelt key is a function not found.
+      expect(
+        unknown,
+        `public.${call.fn} has no argument ${unknown.join(', ')} — PostgREST reports no such function`
+      ).toEqual([]);
+    }
   });
 });

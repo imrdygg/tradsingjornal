@@ -82,6 +82,9 @@ const MISSING_TABLE = '42P01';
 const MISSING_COLUMN = '42703';
 const UNDEFINED_FUNCTION = '42883';
 const POSTGREST_NO_FUNCTION = 'PGRST202';
+// What PostgREST actually returns for a write that names a column it cannot find. It is not 42703:
+// the column is unknown to the schema CACHE, so the statement never reaches Postgres.
+const POSTGREST_NO_COLUMN = 'PGRST204';
 
 /**
  * Turns an error that means "schema.sql has not been run" into that sentence.
@@ -97,6 +100,7 @@ export function explainSchemaError(error: { message?: string; code?: string } | 
     error?.code === MISSING_COLUMN ||
     error?.code === UNDEFINED_FUNCTION ||
     error?.code === POSTGREST_NO_FUNCTION ||
+    error?.code === POSTGREST_NO_COLUMN ||
     /does not exist|schema cache/i.test(message);
 
   if (missing) {
@@ -765,11 +769,16 @@ export async function searchMemoryImages(
 // Saved searches
 // ---------------------------------------------------------------------------
 
-/** Keeps a search and what it returned, so retrieval can be judged later. */
-export async function saveMemorySearch(
-  search: MemorySearch,
-  now: string = new Date().toISOString()
-): Promise<void> {
+/**
+ * Keeps a search and what it returned, so retrieval can be judged later.
+ *
+ * There is deliberately no `updated_at` in this payload. `memory_searches` has no such column —
+ * `searched_at` is its only timestamp, and the row is written once — and PostgREST refuses a write
+ * naming a column it cannot find, so sending one failed the whole insert and `explainSchemaError`
+ * then reported it as "run schema.sql again" over a schema that was already correct. The same
+ * contract is asserted against the schema file itself in `db.test.ts`.
+ */
+export async function saveMemorySearch(search: MemorySearch): Promise<void> {
   const client = requireClient();
   const userId = await requireUserId();
 
@@ -789,10 +798,7 @@ export async function saveMemorySearch(
         resemblanceFloor: search.resemblanceFloor,
         matches: search.matches,
       },
-      ...(search.expiresAt
-        ? { expires_at: search.expiresAt }
-        : {}),
-      ...(now ? { updated_at: now } : {}),
+      ...(search.expiresAt ? { expires_at: search.expiresAt } : {}),
     },
     { onConflict: 'id' }
   );

@@ -369,9 +369,13 @@ but nothing reads it; the ranking is the embedding distance alone.
 - **The research dashboard does not read the existing Analytics and Insights data.** It reports from
 the observation library only, so a setup's P&L history there is what was recorded *against an
 observation*, not the whole trade log. The existing tabs are unchanged and still cover their ground.
-- **The memory schema has not been applied to any project from this repository** — see the
-limitations at the end of this file. Everything above the database is tested against fakes; the SQL
-is verified by inspection, not by execution.
+- **The memory schema has been applied, and the client is now checked against the file.** It has
+been run against the project this journal syncs to, and it stays additive and re-runnable. What this
+repository can verify on its own is that the two halves agree: `db.test.ts` parses
+`supabase/schema.sql` and asserts every column and every RPC argument the code sends really exists,
+so a name only the client knows fails a test instead of reaching the trader as a 400. Running it is
+what made that check worth having — every saved search had been writing `memory_searches.updated_at`
+to a table that has only ever had `searched_at`, and the write had been failing outright.
 - **The memory endpoint's own rate limit is per instance.** Unlike the coach's, which shares a row in
 `coach_quota`, this counter lives in the lambda's memory and resets on a cold start — a speed bump
 rather than a quota. That is a deliberate trade: indexing is cheap per call and the real protection
@@ -583,6 +587,8 @@ means re-pointing every stored video URL at a private bucket and switching the a
 a migration that has to run *before* the flag moves, which is why it is not bundled in with the new
 private bucket. Until then, any video already attached to a record is reachable by anyone holding its
 URL (paths carry a random suffix, so they cannot be guessed).
-- **The memory schema has not been applied to any project from this repository.** It is additive and
-safe to re-run, but it needs to be run before the Memory tab can offer anything beyond the local
-observation library.
+- **The memory schema is applied, but not by this repository.** It has been run against the project
+this journal syncs to. `db.test.ts` now checks every write's columns and the search's RPC arguments
+against the schema file itself, so the client and the SQL cannot drift apart unnoticed — but nothing
+here can prove that a live Supabase accepts the `vector` literal on the wire, or that the storage
+policies admit the paths the uploader builds.

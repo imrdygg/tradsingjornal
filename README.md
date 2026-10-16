@@ -319,7 +319,7 @@ The tab is a section switcher rather than one long scroll, in the order the work
 | **Library** | Record, browse, filter, edit a sighting and record what happened afterwards. The consent switch and the display settings live here. |
 | **Indexing** | Move a backlog of inline screenshots into private storage and give each one an embedding. Resumable, cancellable, and honest about not having finished. |
 | **Find similar** | Upload a chart, get the closest pictures in the library, and read what the market did beside what the execution did. |
-| **Research** | How often each setup was **seen** against how often it was **taken**, with both outcome dimensions kept apart. |
+| **Research** | How often each setup was **seen** against how often it was **taken**, with both outcome dimensions kept apart — and the setup's **whole trade log** beside them, so a setup traded far more often than it was photographed is not summarised by the two trades a sighting happens to point at. |
 | **Retrieval quality** | Whether the search is actually finding the charts you judged similar — measured against your own verdicts, not asserted. |
 
 ### The pipeline
@@ -366,9 +366,11 @@ that do nothing:
 
 - **The vision re-ranking pass** is not built. `MemoryAiSettings.rerankEnabled` exists and is stored,
 but nothing reads it; the ranking is the embedding distance alone.
-- **The research dashboard does not read the existing Analytics and Insights data.** It reports from
-the observation library only, so a setup's P&L history there is what was recorded *against an
-observation*, not the whole trade log. The existing tabs are unchanged and still cover their ground.
+- **The research dashboard reads the trade log now, but still not the Analytics and Insights screens.**
+A setup's execution figures come from the journal's own trades logged under it — the whole log, not
+only the ones a sighting points at — and the trades that cannot be joined to a sighting are counted
+and named rather than dropped. What it still does not do is reuse those screens' aggregations: it
+reads the journal directly, so its denominators are its own and are stated on the panel.
 - **The memory schema has been applied, and the client is now checked against the file.** It has
 been run against the project this journal syncs to, and it stays additive and re-runnable. What this
 repository can verify on its own is that the two halves agree: `db.test.ts` parses
@@ -396,7 +398,8 @@ src/lib/memory/
   db.ts            the tables and the one similarity query, with the row mappers between them
   evaluation.ts    retrieval-quality measurement over hand-labelled examples
   eval-sources.ts  saved searches + your own verdicts -> the evaluation harness's inputs
-  research.ts      seen against taken, per setup, with every denominator written down
+  research.ts      seen against taken, per setup, plus that setup's whole trade log, with every
+                   denominator written down
   embeddings.ts    the model, version, dimension and what makes a vector usable
   embedding-wire.ts  the request/response contract shared by the client and the handler
   embedding-api.ts the browser's half: post one picture, validate the numbers that come back

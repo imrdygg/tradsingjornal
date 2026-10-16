@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { buildSetupResearch, describeSeenVersusTaken, setupResearchKey } from '../research';
+import {
+  buildSetupResearch,
+  describeSeenVersusTaken,
+  setupResearchKey,
+  tradeResearchKey,
+} from '../research';
 import type { MemoryContinuation, MemoryImage, Trade, TradingObservation } from '../../../types';
 
 /**
@@ -563,5 +568,146 @@ describe('describeSeenVersusTaken', () => {
 
     expect(line).toContain('1 still open');
     expect(line).toContain('1 with no result recorded');
+  });
+});
+
+/**
+ * The trade-log side.
+ *
+ * These tests exist because the saw-vs-took read used to see only the trades a sighting pointed at:
+ * a setup traded thirty times and photographed twice reported a win rate over two trades, which is
+ * arithmetically correct and completely misleading. Two things are asserted throughout — that the
+ * log counts come from the journal's trades rather than from the sightings that mention them, and
+ * that whatever the match could not reach is reported as a count instead of vanishing from the
+ * screen.
+ */
+describe('the trade log side', () => {
+  /** A closed trade under the default setup, with a result. */
+  const logged = (id: string, pnl: number, overrides: Partial<Trade> = {}): Trade =>
+    makeTrade({
+      id,
+      setupId: 'setup-1',
+      status: 'closed',
+      grossPnL: pnl,
+      netPnL: pnl,
+      ...overrides,
+    });
+
+  it('keys a trade by the same rule a sighting is keyed by', () => {
+    expect(tradeResearchKey(makeTrade({ setupId: 'setup-1' }))).toBe('id:setup-1');
+    // Same key as `setupResearchKey` gives a sighting named the same way, or the two would never
+    // join: the case is deliberately identical to that function's.
+    expect(tradeResearchKey(makeTrade({ setupName: 'Opening Drive' }))).toBe(
+      setupResearchKey(makeObservation({ setupId: undefined, setupName: 'Opening Drive' }))
+    );
+    expect(tradeResearchKey(makeTrade({ setupId: '  ', setupName: '   ' }))).toBeNull();
+  });
+
+  it('counts the whole log for a setup, not only the trades a sighting points at', () => {
+    const observations = [taken('obs-1', 'trade-1', 'continuation'), seen('obs-2', 'reversal')];
+    const trades = [
+      logged('trade-1', 100),
+      logged('trade-2', 100),
+      logged('trade-3', -50),
+      logged('trade-4', -50),
+      logged('trade-5', -50),
+      logged('trade-6', 0),
+      logged('trade-7', 25),
+    ];
+
+    const { setups } = buildSetupResearch({ observations, trades });
+    const entry = setups[0];
+
+    // Two sightings, one of them taken: unchanged, and still the only denominator the sighting
+    // figures are over.
+    expect(entry.seen).toBe(2);
+    expect(entry.taken).toBe(1);
+
+    // The execution record, however, is the journal's seven trades under this setup — three wins of
+    // SIX decided (the scratch is a result and is not in the denominator), not one of one.
+    expect(entry.tradeLog.trades).toBe(7);
+    expect(entry.tradeLog.outcomes.wins).toBe(3);
+    expect(entry.tradeLog.outcomes.losses).toBe(3);
+    expect(entry.tradeLog.outcomes.breakeven).toBe(1);
+    expect(entry.tradeLog.outcomes.winRate).toBe(50);
+    expect(entry.tradeLog.untracked).toBe(6);
+
+    // The market side of the log summary is over ZERO readings, by construction: a trade says
+    // nothing about what price did. Reading `continuationRate` off it would report an absence of
+    // evidence as a market finding, so the number is pinned here as the only correct one.
+    expect(entry.tradeLog.outcomes.marketKnown).toBe(0);
+    expect(entry.tradeLog.outcomes.continuationRate).toBeNull();
+  });
+
+  it('does not cut the trade log down to the sighting window', () => {
+    // Five sightings, five linked trades, and a window of two. The window is there to bound the
+    // sighting read; applying it to the log would shrink the very record it was added to widen, and
+    // would report three trades as ones the trader never photographed.
+    const observations = Array.from({ length: 5 }, (_, index) =>
+      taken(`obs-${index}`, `trade-${index}`, 'continuation', {
+        observedAt: `2026-03-0${index + 1}T14:00:00.000Z`,
+      })
+    );
+    const trades = Array.from({ length: 5 }, (_, index) => logged(`trade-${index}`, 100));
+
+    const { setups } = buildSetupResearch({ observations, trades, limitPerSetup: 2 });
+    const entry = setups[0];
+
+    expect(entry.seen).toBe(2);
+    expect(entry.taken).toBe(2);
+    expect(entry.tradeLog.trades).toBe(5);
+    expect(entry.tradeLog.untracked).toBe(0);
+  });
+
+  it('counts the trades it cannot join rather than dropping them', () => {
+    // One sighting under `id:setup-1` and three trades the grouping cannot attach to it: one naming
+    // no setup, one under a setup with no sighting at all, and one naming only the setup's name —
+    // which will not join a sighting grouped under that setup's id. That last one is the real
+    // asymmetry between the two records, and it is a count rather than a silence.
+    const observations = [seen('obs-1', 'continuation')];
+    const trades = [
+      makeTrade({ id: 'trade-nosetup', setupId: undefined, setupName: undefined }),
+      logged('trade-other', 100, { setupId: 'setup-9' }),
+      logged('trade-nameonly', 100, { setupId: undefined, setupName: 'Opening drive' }),
+    ];
+
+    const { setups, totals, warnings } = buildSetupResearch({ observations, trades });
+
+    expect(totals.tradesInLog).toBe(3);
+    expect(totals.tradesWithoutSetup).toBe(1);
+    expect(totals.tradesWithoutSightings).toBe(2);
+    expect(setups[0].tradeLog.trades).toBe(0);
+
+    const said = warnings.join(' ');
+    expect(said).toContain('1 of 3 trades names no setup');
+    expect(said).toContain('2 trades are logged under a setup with no recorded sighting');
+  });
+
+  it('says a trade log is wider than the sightings without repeating a figure that already agrees', () => {
+    const linked = taken('obs-1', 'trade-1', 'continuation');
+
+    const alone = describeSeenVersusTaken(
+      buildSetupResearch({ observations: [linked], trades: [logged('trade-1', 100)] }).setups[0]
+    );
+    expect(alone).not.toContain('with no sighting recorded');
+
+    const withSurplus = describeSeenVersusTaken(
+      buildSetupResearch({
+        observations: [linked],
+        trades: [logged('trade-1', 100), logged('trade-2', -50)],
+      }).setups[0]
+    );
+    expect(withSurplus).toContain('A further 1 trade is logged under this setup with no sighting');
+  });
+
+  it('will not report an empty note over trades it holds but cannot group', () => {
+    const { warnings } = buildSetupResearch({
+      observations: [],
+      trades: [logged('trade-1', 100)],
+    });
+
+    // "Nothing has been recorded yet" would be true of the sightings and false of the journal.
+    expect(warnings[0]).toContain('No sighting has been recorded yet');
+    expect(warnings[0]).toContain('1 trade is in the journal');
   });
 });

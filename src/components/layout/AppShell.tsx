@@ -401,10 +401,13 @@ export const AppShell: React.FC<AppShellProps> = ({
       >
         {/* Nine tabs, one per column: Settings moved to the avatar menu, so Markets
             finally fits without the grid wrapping. Trading Memory then took the ninth slot,
-            which leaves roughly 35px per column at 320px — narrow enough that the longer
-            labels ('Analytics', 'Insights', 'Playbook', 'Memory') truncate rather than fit.
-            The icons carry the meaning at that width. A tenth tab would not fit this way: the
-            next addition has to move a tab to the avatar menu, or the row has to wrap. */}
+            which leaves roughly 35px per column at 320px — too narrow for any label longer
+            than four characters. Truncating them there was worse than dropping them: 'Analyti'
+            reads as a broken label rather than as a shorter one, and it is read at a glance,
+            mid-decision. So below `sm` the bar is icons only and the label lives in the
+            button's accessible name; from `sm` the columns are wide enough for the full word
+            and it comes back. A tenth tab still would not fit this row at 320px — the next
+            addition has to move a tab to the avatar menu, or the row has to wrap. */}
         <div className="grid grid-cols-9 gap-0.5 px-1 sm:gap-1 sm:px-2">
           {navItems.map((item) => {
             const Icon = item.icon;
@@ -413,6 +416,9 @@ export const AppShell: React.FC<AppShellProps> = ({
               <button
                 key={item.id}
                 id={`mobile-nav-${item.id}`}
+                // The label below is hidden at the narrowest widths, so the name has to come
+                // from here rather than from the button's contents.
+                aria-label={item.label}
                 onClick={() => onSelectTab(item.id)}
                 className={`relative flex flex-col items-center justify-center rounded-lg py-1 text-[9px] transition-colors ${
                   isActive
@@ -423,7 +429,7 @@ export const AppShell: React.FC<AppShellProps> = ({
                 <span className="relative mb-0.5">
                   <Icon className={`h-4 w-4 ${isActive ? 'text-zinc-100' : 'text-zinc-400'}`} />
                 </span>
-                <span className="w-full truncate text-center">{item.label}</span>
+                <span className="hidden w-full truncate text-center sm:block">{item.label}</span>
               </button>
             );
           })}

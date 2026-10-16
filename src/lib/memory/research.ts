@@ -24,6 +24,15 @@
  *      module's decisions, inherited rather than re-derived — a second implementation of a win rate
  *      here would eventually disagree with the one shown beside a search.
  *
+ * A fourth fact, and the reason this module no longer reads only half the record: the **trade log**.
+ * Sightings answer "what happened the last times I saw this", but the trades are the execution
+ * record, and a setup traded thirty times with two sightings photographed would otherwise report a
+ * win rate over two trades. So every setup also carries the whole trade log for that setup — read
+ * from the journal's trades, not from the sightings that point at them — and the trades no sighting
+ * points at are counted rather than dropped. The log is deliberately NOT windowed: the window exists
+ * to bound a sighting read, and cutting the trade log by it would shrink the very record it was
+ * added to widen.
+ *
  * The one judgement this module adds on top of those: `searchable`. An observation with no picture,
  * or with only pictures from after the decision, can never be found by a similarity search however
  * much is written on it. Reporting the record and reporting what a search could have reached are
@@ -40,6 +49,33 @@ import {
   type MemoryOutcomeSummary,
 } from './outcomes';
 import { marketOutcomeSample, tradeResultSample } from './results';
+
+/**
+ * The setup's own trade log: every trade in the journal logged under it, not only the ones a
+ * sighting points at.
+ *
+ * This is the half of the record the sightings cannot see. The two are matched on the same key the
+ * sightings are grouped by — the setup id when there is one, else the lower-cased name — and what
+ * cannot be matched is counted instead of assumed absent.
+ *
+ * **Only the trade fields of `outcomes` may be quoted.** A trade on its own carries no reading of
+ * what price did, so the market side of this summary is `unknown` for every entry by construction
+ * and its `marketKnown` is always zero. That is a fact about the source, not a finding, and reading
+ * `continuationRate` off it would report an absence of evidence as evidence.
+ */
+export interface MemorySetupTradeLog {
+  /** Trades in the journal logged under this setup, over the whole log rather than the window. */
+  trades: number;
+  /**
+   * How many of them no sighting of this setup points at.
+   *
+   * The number that says whether the log is wider than the record of having seen it — a trade the
+   * trader never photographed is execution evidence with no sighting behind it.
+   */
+  untracked: number;
+  /** Execution over the whole log. Its market fields are structurally empty; see above. */
+  outcomes: MemoryOutcomeSummary;
+}
 
 /**
  * What is known about one setup across the trader's record.
@@ -87,6 +123,9 @@ export interface MemorySetupResearch {
    */
   outcomes: MemoryOutcomeSummary;
 
+  /** The journal's own trades for this setup, which the sightings above cannot see on their own. */
+  tradeLog: MemorySetupTradeLog;
+
   /** Sightings whose own timestamp cannot be trusted, so they cannot be placed in time. */
   untrustedTime: number;
   /** Sightings a similarity search could actually have reached: a completed pre-decision picture. */
@@ -132,6 +171,12 @@ export interface MemoryResearchTotals {
   untrustedTime: number;
   /** Sightings a search could have reached. */
   searchable: number;
+  /** Every trade handed in, whether or not it could be grouped. */
+  tradesInLog: number;
+  /** Trades with no setup written on them, so no row below can hold them. */
+  tradesWithoutSetup: number;
+  /** Trades logged under a setup with no recorded sighting, so no row below holds them either. */
+  tradesWithoutSightings: number;
 }
 
 export interface MemoryResearch {
@@ -191,6 +236,21 @@ export function setupResearchKey(observation: TradingObservation): string | null
   return name ? `name:${name.toLowerCase()}` : null;
 }
 
+/**
+ * The key a TRADE is grouped under, by exactly the rule `setupResearchKey` uses for a sighting.
+ *
+ * Deliberately the same function's rule and not a looser match: a trade naming only a setup name
+ * will not join a sighting grouped under that setup's id, because nothing here knows the two are the
+ * same setup. It is the one asymmetry between the two records, and it is counted (`untracked`, and
+ * `tradesWithoutSightings`) so that a missed join reads as a number rather than as an absence.
+ */
+export function tradeResearchKey(trade: Trade): string | null {
+  const id = trade.setupId?.trim();
+  if (id) return `id:${id}`;
+  const name = trade.setupName?.trim();
+  return name ? `name:${name.toLowerCase()}` : null;
+}
+
 /** Whether a search could have reached this sighting: a completed picture from before the decision. */
 function isSearchable(observation: TradingObservation): boolean {
   return (observation.images ?? []).some(
@@ -232,6 +292,20 @@ export function buildSetupResearch(input: MemoryResearchInput): MemoryResearch {
   const tradesById = new Map<string, Trade>();
   for (const trade of trades) tradesById.set(trade.id, trade);
 
+  // The journal grouped by setup, which is the population the sightings cannot see on their own.
+  const tradesByKey = new Map<string, Trade[]>();
+  let tradesWithoutSetup = 0;
+  for (const trade of trades) {
+    const key = tradeResearchKey(trade);
+    if (!key) {
+      tradesWithoutSetup += 1;
+      continue;
+    }
+    const list = tradesByKey.get(key);
+    if (list) list.push(trade);
+    else tradesByKey.set(key, [trade]);
+  }
+
   // Insertion order is the record's own order, and the final sort is total, so nothing here
   // depends on it — but keeping the groups in encounter order makes a debug read of it match the
   // input rather than a hash bucket order.
@@ -260,6 +334,29 @@ export function buildSetupResearch(input: MemoryResearchInput): MemoryResearch {
 
     const samples = samplesFor(window, tradesById);
     const outcomes = summarizeMemoryOutcomes(samples, { minSample });
+
+    // The setup's own log, over the WHOLE group rather than the window — see the module header.
+    const logTrades = tradesByKey.get(setupKey) ?? [];
+    const logSamples: MemoryOutcomeSample[] = logTrades.map((trade) => {
+      // `unknown` rather than absent because the sample type requires a reading, and it is the
+      // honest one: a trade on its own says nothing about what price did afterwards. Every market
+      // field of the summary below is therefore over zero recorded readings.
+      const sample: MemoryOutcomeSample = { observationId: trade.id, marketOutcome: 'unknown' };
+      const result = tradeResultSample(trade);
+      if (result) sample.tradeResult = result;
+      return sample;
+    });
+    const logOutcomes = summarizeMemoryOutcomes(logSamples, { minSample });
+
+    // Which of those trades no sighting points at. Read against the whole group rather than the
+    // window: the question is what the record holds, and a trade whose sighting fell outside the
+    // last twenty would otherwise be reported as one the trader never photographed.
+    const linkedTradeIds = new Set<string>();
+    for (const observation of ordered) {
+      const tradeId = observation.linkedTradeId;
+      if (typeof tradeId === 'string' && tradeId.length > 0) linkedTradeIds.add(tradeId);
+    }
+    const untrackedTrades = logTrades.filter((trade) => !linkedTradeIds.has(trade.id)).length;
 
     // Narrowed through a local rather than by reading the property twice: a `linkedTradeId` is
     // optional, and the count must not depend on how well a type-checker follows a property access
@@ -291,6 +388,7 @@ export function buildSetupResearch(input: MemoryResearchInput): MemoryResearch {
       notTaken: window.length - taken,
       takenWithoutResult,
       outcomes,
+      tradeLog: { trades: logTrades.length, untracked: untrackedTrades, outcomes: logOutcomes },
       untrustedTime: window.filter((observation) => !hasTrustworthyObservationTime(observation))
         .length,
       searchable: window.filter(isSearchable).length,
@@ -316,6 +414,12 @@ export function buildSetupResearch(input: MemoryResearchInput): MemoryResearch {
     (a, b) => b.seen - a.seen || b.taken - a.taken || a.setupKey.localeCompare(b.setupKey)
   );
 
+  // Trades under a setup that no sighting names at all: they belong to a setup, and to no row here.
+  let tradesWithoutSightings = 0;
+  for (const [key, list] of tradesByKey) {
+    if (!groups.has(key)) tradesWithoutSightings += list.length;
+  }
+
   const totals: MemoryResearchTotals = {
     setups: setups.length,
     observations: observations.length,
@@ -326,6 +430,9 @@ export function buildSetupResearch(input: MemoryResearchInput): MemoryResearch {
     withRecordedOutcome: setups.reduce((sum, entry) => sum + entry.outcomes.marketKnown, 0),
     untrustedTime: setups.reduce((sum, entry) => sum + entry.untrustedTime, 0),
     searchable: setups.reduce((sum, entry) => sum + entry.searchable, 0),
+    tradesInLog: trades.length,
+    tradesWithoutSetup,
+    tradesWithoutSightings,
   };
 
   return { setups, totals, warnings: researchWarnings(totals, limit) };
@@ -371,10 +478,32 @@ function researchWarnings(totals: MemoryResearchTotals, limit: number | undefine
 
   if (totals.observations === 0) {
     warnings.push(
-      'Nothing has been recorded yet, so there is no history to read. Record a sighting and this ' +
-        'becomes a count of your own record rather than an empty panel.'
+      totals.tradesInLog > 0
+        ? 'No sighting has been recorded yet, so there is nothing to compare against. ' +
+          `${totals.tradesInLog} ${totals.tradesInLog === 1 ? 'trade is' : 'trades are'} in the ` +
+          'journal. Record a sighting and this becomes a comparison rather than an empty panel.'
+        : 'Nothing has been recorded yet, so there is no history to read. Record a sighting and this ' +
+          'becomes a count of your own record rather than an empty panel.'
     );
     return warnings;
+  }
+
+  if (totals.tradesWithoutSetup > 0) {
+    warnings.push(
+      `${totals.tradesWithoutSetup} of ${totals.tradesInLog} ${
+        totals.tradesWithoutSetup === 1 ? 'trades names' : 'trades name'
+      } no setup, so ${totals.tradesWithoutSetup === 1 ? 'it is' : 'they are'} in no row below. ` +
+        'The trade-log counts here are over the trades that name a setup these sightings also hold.'
+    );
+  }
+
+  if (totals.tradesWithoutSightings > 0) {
+    warnings.push(
+      `${totals.tradesWithoutSightings} ${
+        totals.tradesWithoutSightings === 1 ? 'trade is' : 'trades are'
+      } logged under a setup with no recorded sighting, so no row below holds them. Watching a ` +
+        'setup is a separate record from trading it, and this one has not been kept for those.'
+    );
   }
 
   if (limit !== undefined) {
@@ -471,6 +600,16 @@ export function describeSeenVersusTaken(entry: MemorySetupResearch): string {
     }
     parts.push(
       `Execution, over the ${taken} ${taken === 1 ? 'trade' : 'trades'}: ${execution.join(', ')}.`
+    );
+  }
+
+  // Only when it adds a fact the figures cannot: a trade with no sighting behind it is execution
+  // evidence the seen counts have no way to describe.
+  if (entry.tradeLog.untracked > 0) {
+    parts.push(
+      `A further ${entry.tradeLog.untracked} ${
+        entry.tradeLog.untracked === 1 ? 'trade is' : 'trades are'
+      } logged under this setup with no sighting recorded.`
     );
   }
 

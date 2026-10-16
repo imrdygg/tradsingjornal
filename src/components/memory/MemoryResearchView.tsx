@@ -115,6 +115,15 @@ function plural(count: number, one: string, many: string): string {
   return count === 1 ? one : many;
 }
 
+/**
+ * The trade log's win-rate denominator: wins plus losses, exactly as `summarizeMemoryOutcomes`
+ * defines it — a scratch is a result and is deliberately not in it, and an open trade has no result
+ * yet.
+ */
+function takenLogDecided(entry: MemorySetupResearch): number {
+  return entry.tradeLog.outcomes.wins + entry.tradeLog.outcomes.losses;
+}
+
 /** The flags that say a setup's window is not its whole history, or that a count is not reachable. */
 const SetupFlags: React.FC<{ entry: MemorySetupResearch }> = ({ entry }) => (
   <div className="mt-2 flex flex-wrap gap-1.5">
@@ -243,6 +252,47 @@ const SetupRow: React.FC<{
           }
           withheld={entry.taken > 0 && outcomes.winRate === null}
         />
+        {/*
+          The journal's own trades for this setup, which the sightings above cannot see on their
+          own: a setup traded thirty times and photographed twice would otherwise report a win rate
+          over two trades.
+
+          Rendered only when the log is WIDER than the sighting record. When the two agree it
+          would print the same figures twice, and a number shown twice reads as two measurements.
+        */}
+        {entry.tradeLog.trades > entry.taken && (
+          <Figure
+            id={`memory-research-trade-log-${entry.setupKey}`}
+            label="Your trade log"
+            value={formatMemoryRate(entry.tradeLog.outcomes.winRate)}
+            detail={
+              `${entry.tradeLog.outcomes.wins} won and ${entry.tradeLog.outcomes.losses} lost out of ${
+                entry.tradeLog.outcomes.wins + entry.tradeLog.outcomes.losses
+              } decided ${plural(
+                entry.tradeLog.outcomes.wins + entry.tradeLog.outcomes.losses,
+                'trade',
+                'trades'
+              )}` +
+              `${entry.tradeLog.outcomes.breakeven > 0 ? `, ${entry.tradeLog.outcomes.breakeven} broke even` : ''}` +
+              `${entry.tradeLog.outcomes.openTrades > 0 ? `, ${entry.tradeLog.outcomes.openTrades} still open` : ''}` +
+              ` — over the ${entry.tradeLog.trades} ${plural(
+                entry.tradeLog.trades,
+                'trade',
+                'trades'
+              )} logged under this setup` +
+              `${
+                entry.tradeLog.untracked > 0
+                  ? `, of which ${entry.tradeLog.untracked} ${plural(
+                      entry.tradeLog.untracked,
+                      'has',
+                      'have'
+                    )} no sighting recorded`
+                  : ''
+              }. Against the ${entry.taken} ${plural(entry.taken, 'trade', 'trades')} a sighting points at.`
+            }
+            withheld={entry.tradeLog.outcomes.winRate === null}
+          />
+        )}
       </div>
 
       <SetupFlags entry={entry} />
@@ -266,6 +316,14 @@ const SetupRow: React.FC<{
           {plural(outcomes.wins + outcomes.losses, 'trade', 'trades')} out of the {entry.taken} taken
           is below the {entry.minSample} a win rate needs, so the counts above are shown and the
           percentage is not.
+        </p>
+      )}
+      {entry.tradeLog.trades > entry.taken && entry.tradeLog.outcomes.winRate === null && (
+        <p className="mt-2 text-[10px] leading-relaxed text-amber-300/90">
+          {takenLogDecided(entry)} decided{' '}
+          {plural(takenLogDecided(entry), 'trade', 'trades')} in the trade log is below the{' '}
+          {entry.minSample} a win rate needs, so the log counts above are shown and the percentage is
+          not.
         </p>
       )}
 
@@ -325,6 +383,20 @@ export const MemoryResearchView: React.FC<MemoryResearchViewProps> = ({
           rather than from executed trades — which is what makes the comparison worth having. Record
           a sighting in the library and it appears here.
         </p>
+        {/*
+          The record's own warning is rendered here too, because the sentence above is about the
+          SIGHTINGS: a journal holding trades and no sightings at all would otherwise be told that
+          nothing has been recorded, which is false of the trades it holds.
+        */}
+        {warnings.length > 0 && (
+          <ul className="mt-2 space-y-1">
+            {warnings.map((warning) => (
+              <li key={warning} className="text-[10px] leading-relaxed text-zinc-500">
+                {warning}
+              </li>
+            ))}
+          </ul>
+        )}
       </Card>
     );
   }
@@ -338,8 +410,11 @@ export const MemoryResearchView: React.FC<MemoryResearchViewProps> = ({
         title="Seen against taken"
         icon={<BarChart3 className="h-3.5 w-3.5" />}
         subtitle={
-          'What your own record says about each setup. Sightings come from observations, including the ' +
-          'ones you never traded, and the two are counted separately everywhere below.'
+          'What your own record says about each setup. Sightings come from observations, including ' +
+          'the ones you never traded, and each setup also carries the whole trade log under its name ' +
+          '— so a setup traded far more often than it was photographed is not summarised by the two ' +
+          'trades a sighting happens to point at. Every count below is over one population or the ' +
+          'other, never both.'
         }
       >
         {/* The denominator of every market figure on this screen, stated once at the top. */}

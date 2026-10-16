@@ -65,6 +65,9 @@ test.describe('Trading Memory sections', () => {
     // The switch lives in the library, and it starts off.
     await expect(page.locator('#memory-index-run')).toBeDisabled();
     await expect(page.locator('#memory-indexing')).toContainText('Waiting on consent');
+    // And it names what this engine does not read. Without that, a journal full of screenshots
+    // beside an empty library looks the same as a broken feature — which is how it was read.
+    await expect(page.locator('#memory-indexing-scope')).toContainText('Sightings only');
   });
 
   test('with consent given, indexing names the missing cloud rather than running against nothing', async ({

@@ -379,6 +379,15 @@ different answers and the screen never renders the second for the first.
 The Memory tab states all of this on screen, derived from real state, rather than offering controls
 that do nothing:
 
+- **Nothing imports your journal's existing screenshots into the memory library.** The engine reads
+observations, so a chart attached to a trade, a session review or a lesson is never indexed — which
+is why a journal with hundreds of screenshots can hold a memory library with nothing searchable in
+it. The Indexing section says so on the panel rather than leaving the trader to conclude the feature
+is broken. Importing them is a real feature, not a wiring detail: a picture attached to a trade
+carries no statement of whether it was taken before the decision, and `before-setup`/`entry` are the
+only roles a search may match, so an import has to bring them in as something unreviewed (or ask)
+rather than assuming the chart was pre-decision. Guessing would put hindsight into the one feature
+built to keep it out.
 - **The vision re-ranking pass** is not built. `MemoryAiSettings.rerankEnabled` exists and is stored,
 but nothing reads it; the ranking is the embedding distance alone.
 - **The research dashboard reads the trade log now, but still not the Analytics and Insights screens.**

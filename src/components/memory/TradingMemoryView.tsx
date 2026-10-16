@@ -502,7 +502,11 @@ export const TradingMemoryView: React.FC<TradingMemoryViewProps> = ({
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               {[
-                { label: 'Pictures in the journal', value: indexing.plan.totalImages },
+                // NOT "in the journal". `totalImages` counts the pictures the MEMORY library holds,
+                // and the journal's own screenshots are a different collection this engine never
+                // reads — a label that said "journal" was the whole reason a journal full of charts
+                // showed zero here and read as a broken feature.
+                { label: 'Pictures in this library', value: indexing.plan.totalImages },
                 { label: 'Ready to send', value: indexing.plan.candidates.length },
                 { label: 'Already indexed', value: indexing.plan.skippedByReason['already-indexed'] },
                 { label: 'Waiting on consent', value: indexing.plan.skippedByReason['no-consent'] },
@@ -516,6 +520,28 @@ export const TradingMemoryView: React.FC<TradingMemoryViewProps> = ({
                 </div>
               ))}
             </div>
+
+            {/*
+              Says plainly what this engine does not read. The number above is the one a trader
+              compares against their journal, so without this the honest state — a brand-new
+              library sitting beside a full journal — is indistinguishable from a broken feature.
+            */}
+            <p
+              id="memory-indexing-scope"
+              className="flex items-start gap-1.5 text-[11px] leading-relaxed text-zinc-400"
+            >
+              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-500" />
+              <span>
+                <strong className="font-semibold text-zinc-300">
+                  Sightings only, not your whole journal.
+                </strong>{' '}
+                A chart attached to a trade, a session or a lesson belongs to that record and is never
+                read here — this engine searches the observation library. That is why a journal
+                holding hundreds of screenshots can still have nothing searchable in it. Record the
+                ones worth searching as sightings, or keep the chart you are looking at from{' '}
+                <em>Find similar</em>.
+              </span>
+            </p>
 
             {/*
              * A picture re-sent because the model or its output size changed. This is not a skip:

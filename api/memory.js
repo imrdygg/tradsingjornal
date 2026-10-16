@@ -403,6 +403,26 @@ async function embedWithRetries(apiKey, mimeType, base64) {
   }
   return last;
 }
+async function embedChartParts(apiKey, parts) {
+  const results = [];
+  for (const part of parts) {
+    const outcome = await embedWithRetries(apiKey, part.mimeType, part.data);
+    if (!outcome.ok) {
+      return {
+        ok: false,
+        // A failure that never reached the provider is reported as a service problem, not as a
+        // refused request: there is nothing for the caller to fix about it.
+        status: outcome.status === 0 ? 503 : outcome.status,
+        code: outcome.status === 401 || outcome.status === 403 ? "bad_key" : outcome.status === 429 ? "rate_limited" : "server",
+        message: outcome.status === 429 ? "The embedding provider is rate-limiting right now. Indexing will pause and resume." : "The embedding provider could not embed that picture, so nothing was indexed.",
+        detail: outcome.message,
+        ...outcome.retryAfterSeconds ? { retryAfterSeconds: outcome.retryAfterSeconds } : {}
+      };
+    }
+    results.push({ label: part.label, embedding: outcome.embedding });
+  }
+  return { ok: true, results };
+}
 async function handler(req, res) {
   res.setHeader("Cache-Control", "no-store");
   const apiKey = process.env.GEMINI_API_KEY?.trim();
@@ -498,20 +518,16 @@ async function handler(req, res) {
     return;
   }
   try {
-    const results = [];
-    for (const part of parts) {
-      const outcome = await embedWithRetries(apiKey, part.mimeType, part.data);
-      if (!outcome.ok) {
-        res.status(outcome.status === 0 ? 503 : outcome.status).json({
-          ok: false,
-          code: outcome.status === 401 || outcome.status === 403 ? "bad_key" : outcome.status === 429 ? "rate_limited" : "server",
-          error: outcome.status === 429 ? "The embedding provider is rate-limiting right now. Indexing will pause and resume." : "The embedding provider could not embed that picture, so nothing was indexed.",
-          detail: outcome.message,
-          ...outcome.retryAfterSeconds ? { retryAfterSeconds: outcome.retryAfterSeconds } : {}
-        });
-        return;
-      }
-      results.push({ label: part.label, embedding: outcome.embedding });
+    const embedded = await embedChartParts(apiKey, parts);
+    if (!embedded.ok) {
+      res.status(embedded.status).json({
+        ok: false,
+        code: embedded.code,
+        error: embedded.message,
+        detail: embedded.detail,
+        ...embedded.retryAfterSeconds ? { retryAfterSeconds: embedded.retryAfterSeconds } : {}
+      });
+      return;
     }
     res.status(200).json({
       ok: true,
@@ -519,7 +535,7 @@ async function handler(req, res) {
       model: MEMORY_EMBEDDING_MODEL,
       version: MEMORY_EMBEDDING_VERSION,
       dimension: MEMORY_EMBEDDING_DIMENSION,
-      results
+      results: embedded.results
     });
   } finally {
     admission.release();
@@ -530,5 +546,6 @@ export {
   MEMORY_ENDPOINT_VERSION,
   bearerToken,
   clientIp,
-  handler as default
+  handler as default,
+  embedChartParts
 };

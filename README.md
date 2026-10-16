@@ -338,7 +338,13 @@ chart -> embedding -> memory_match_images(...)  --cosine--> ranked resemblance -
 coach**, because the two spend different budgets: a backfill spends **one call per picture**, so a
 library of two hundred charts would otherwise lock you out of your own coach for the rest of the
 hour. Set `MEMORY_RATE_LIMIT` (default 600/hour) and `MEMORY_MAX_IN_FLIGHT` (default 2) to move its
-ceiling; a `GET` to the endpoint reports the limits in force and whether the key is visible.
+ceiling; a `GET` to the endpoint reports the limits in force and whether the key is visible, and
+`npm run verify:memory` makes one real embedding call per chart and reports the model, the width of
+the vector it comes back with, and how alike two charts of the same prices in opposite order turn
+out — the half of the pipeline a health check cannot reach. Note that a key fetched with
+`vercel env pull` arrives as the literal `[SENSITIVE]` (Vercel will not decrypt a Sensitive
+variable), which the check reports as a placeholder rather than letting the provider call it a bad
+key.
 - **The key stays on the server.** The browser posts a compressed picture to your own endpoint,
 which forwards it with the server's key and returns numbers. Nothing in the client ever holds a
 model key, and `src/lib/memory/embedding-wire.ts` holds the contract the two sides agree on —

@@ -13,7 +13,7 @@
  * needs nothing but the API key.
  */
 import 'dotenv/config';
-import { deflateSync } from 'node:zlib';
+import { encodePng } from './png';
 import { runCoachModels } from '../src/api/coach';
 import { buildJournalDigest, FULL_HISTORY_TRADE_SAMPLES } from '../src/lib/ai/journal-digest';
 import { toCoachImagePart } from '../src/lib/ai/coach-images';
@@ -124,48 +124,10 @@ const digest = buildJournalDigest({
 // The repo holds no chart image and no raster library, so one is drawn here: a small
 // candlestick chart shaped like the trade above — a decline into a low, a reclaim, a
 // retest that holds, then a grind higher. It is deterministic, so repeated runs ask the
-// model about the same picture. A PNG encoder is ~40 lines and keeps the check free of a
-// dependency, which matters more than the picture being pretty.
+// model about the same picture. The PNG encoder itself is `./png`, shared with
+// `check-memory-embedding.ts`, because both checks need a real picture and neither should
+// carry its own copy of one.
 // ---------------------------------------------------------------------------
-
-function crc32(buf: Buffer): number {
-  let c = ~0;
-  for (let i = 0; i < buf.length; i++) {
-    c ^= buf[i];
-    for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xedb88320 & -(c & 1));
-  }
-  return ~c >>> 0;
-}
-
-function pngChunk(type: string, data: Buffer): Buffer {
-  const len = Buffer.alloc(4);
-  len.writeUInt32BE(data.length, 0);
-  const typeBuf = Buffer.from(type, 'ascii');
-  const crc = Buffer.alloc(4);
-  crc.writeUInt32BE(crc32(Buffer.concat([typeBuf, data])), 0);
-  return Buffer.concat([len, typeBuf, data, crc]);
-}
-
-function encodePng(width: number, height: number, rgba: Buffer): Buffer {
-  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(width, 0);
-  ihdr.writeUInt32BE(height, 4);
-  ihdr[8] = 8; // bit depth
-  ihdr[9] = 6; // RGBA
-  const stride = width * 4;
-  const raw = Buffer.alloc((stride + 1) * height);
-  for (let y = 0; y < height; y++) {
-    raw[y * (stride + 1)] = 0; // no per-scanline filter
-    rgba.copy(raw, y * (stride + 1) + 1, y * stride, y * stride + stride);
-  }
-  return Buffer.concat([
-    signature,
-    pngChunk('IHDR', ihdr),
-    pngChunk('IDAT', deflateSync(raw, { level: 9 })),
-    pngChunk('IEND', Buffer.alloc(0)),
-  ]);
-}
 
 /** Draws the synthetic chart and returns it as a data URL the coach will accept. */
 function buildChartDataUrl(): string {

@@ -288,6 +288,72 @@ async function embedWithRetries(
   return last;
 }
 
+/** One picture to embed, already read and decoded by the same reader the handler uses. */
+export interface MemoryEmbedPart {
+  label: string;
+  mimeType: string;
+  data: string;
+}
+
+/**
+ * The result of embedding a set of pictures: all of them, or the one reason none of them were.
+ *
+ * Exported, and used by the handler rather than duplicated in it, so that `npm run verify:memory`
+ * exercises the real request builder and the real response reader. A diagnostic that rebuilt the
+ * request itself would pass while the endpoint was wrong, which is the only thing it must not do.
+ */
+export type MemoryEmbedOutcome =
+  | { ok: true; results: { label: string; embedding: number[] }[] }
+  | {
+      ok: false;
+      status: number;
+      code: 'bad_key' | 'rate_limited' | 'server';
+      message: string;
+      detail: string;
+      retryAfterSeconds?: number;
+    };
+
+/**
+ * Embeds every part, or fails the whole request.
+ *
+ * All-or-nothing on purpose: a partial list would be zipped up against the caller's own inputs by
+ * position, which is how a chart ends up indexed under another chart's id — the worst failure this
+ * pipeline could produce, because every later search would return a confident wrong answer.
+ */
+export async function embedChartParts(
+  apiKey: string,
+  parts: readonly MemoryEmbedPart[]
+): Promise<MemoryEmbedOutcome> {
+  const results: { label: string; embedding: number[] }[] = [];
+
+  for (const part of parts) {
+    const outcome = await embedWithRetries(apiKey, part.mimeType, part.data);
+    if (!outcome.ok) {
+      return {
+        ok: false,
+        // A failure that never reached the provider is reported as a service problem, not as a
+        // refused request: there is nothing for the caller to fix about it.
+        status: outcome.status === 0 ? 503 : outcome.status,
+        code:
+          outcome.status === 401 || outcome.status === 403
+            ? 'bad_key'
+            : outcome.status === 429
+            ? 'rate_limited'
+            : 'server',
+        message:
+          outcome.status === 429
+            ? 'The embedding provider is rate-limiting right now. Indexing will pause and resume.'
+            : 'The embedding provider could not embed that picture, so nothing was indexed.',
+        detail: outcome.message,
+        ...(outcome.retryAfterSeconds ? { retryAfterSeconds: outcome.retryAfterSeconds } : {}),
+      };
+    }
+    results.push({ label: part.label, embedding: outcome.embedding });
+  }
+
+  return { ok: true, results };
+}
+
 export default async function handler(req: ApiRequest, res: ApiResponse) {
   res.setHeader('Cache-Control', 'no-store');
 
@@ -419,31 +485,16 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   }
 
   try {
-    const results: { label: string; embedding: number[] }[] = [];
-    for (const part of parts) {
-      const outcome = await embedWithRetries(apiKey, part.mimeType, part.data);
-      if (!outcome.ok) {
-        // The whole request fails if any picture fails, rather than returning a partial list: a
-        // caller zipping a short answer against its own inputs by position is how a chart ends up
-        // indexed under another chart's id.
-        res.status(outcome.status === 0 ? 503 : outcome.status).json({
-          ok: false,
-          code:
-            outcome.status === 401 || outcome.status === 403
-              ? 'bad_key'
-              : outcome.status === 429
-              ? 'rate_limited'
-              : 'server',
-          error:
-            outcome.status === 429
-              ? 'The embedding provider is rate-limiting right now. Indexing will pause and resume.'
-              : 'The embedding provider could not embed that picture, so nothing was indexed.',
-          detail: outcome.message,
-          ...(outcome.retryAfterSeconds ? { retryAfterSeconds: outcome.retryAfterSeconds } : {}),
-        });
-        return;
-      }
-      results.push({ label: part.label, embedding: outcome.embedding });
+    const embedded = await embedChartParts(apiKey, parts);
+    if (!embedded.ok) {
+      res.status(embedded.status).json({
+        ok: false,
+        code: embedded.code,
+        error: embedded.message,
+        detail: embedded.detail,
+        ...(embedded.retryAfterSeconds ? { retryAfterSeconds: embedded.retryAfterSeconds } : {}),
+      });
+      return;
     }
 
     res.status(200).json({
@@ -452,7 +503,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       model: MEMORY_EMBEDDING_MODEL,
       version: MEMORY_EMBEDDING_VERSION,
       dimension: MEMORY_EMBEDDING_DIMENSION,
-      results,
+      results: embedded.results,
     });
   } finally {
     // Released on every path, including failures, so a failed picture cannot hold the slot.

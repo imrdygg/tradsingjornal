@@ -596,6 +596,26 @@ means re-pointing every stored video URL at a private bucket and switching the a
 a migration that has to run *before* the flag moves, which is why it is not bundled in with the new
 private bucket. Until then, any video already attached to a record is reachable by anyone holding its
 URL (paths carry a random suffix, so they cannot be guessed).
+
+  That migration is scoped rather than guessed at, and deliberately not started half-way: a stored
+  path with readers still expecting a URL would break every existing clip, which is the one outcome
+  the public bucket currently avoids. What it takes, in order:
+
+  - A private `journal-videos` bucket with the same per-user folder policies as `journal-memory`,
+    created additively. The `journal-media` insert keeps re-asserting `public = true` until the flip,
+    so a re-run cannot half-apply this.
+  - `uploadMediaFile` stores the object **path** in `media` rather than the public URL, which is what
+    lets a signature be minted per read instead of being baked into the record — the rule the memory
+    pictures already follow.
+  - Every reader of a video resolves one on demand: `TradeCard`, `TradeDetailModal`,
+    `ImageLightboxModal`, `LessonsView`, `PlaybookView`, `YesterdayFocusBanner`, `LatestReviewCard`,
+    `ImageUploader` and `journal-digest`, which excludes clips from the coach's prompt by the same
+    test. `isVideoUrl` has to keep classifying a stored value throughout, because it is what tells a
+    clip from a screenshot on all of those screens — so it must accept the old URL and the new path
+    while the two coexist.
+  - A migration routine in the shape of `migrateObservationImages` (prove the object is readable
+    before dropping the old reference, report what moved, safe to re-run), and only after it has run
+    against the real library does the bucket flag move.
 - **The memory schema is applied, but not by this repository.** It has been run against the project
 this journal syncs to. `db.test.ts` now checks every write's columns and the search's RPC arguments
 against the schema file itself, so the client and the SQL cannot drift apart unnoticed — but nothing

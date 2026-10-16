@@ -1139,3 +1139,324 @@ export interface LevelOutlook {
   createdAt: string;
   updatedAt: string;
 }
+
+// ---------------------------------------------------------------------------
+// Trading Memory — the trader's own chart observation library
+//
+// The picture search beside this already answers "which of MY TRADES looks like this chart".
+// It answers it by handing the model the whole written record and a handful of screenshots, so
+// what it can compare is bounded by what fits in one request, and the pictures are re-read from
+// scratch on every search.
+//
+// This is a different question, and it needs a different shape:
+//
+//   "Have I seen this setup before, how similar was it, and what actually happened after?"
+//
+// Answering that across thousands of screenshots means the pictures cannot travel with the
+// question. Each one gets an embedding, stored once, and a search becomes a single vector
+// lookup over the whole library rather than a request that grows with it.
+//
+// Three things in here are load-bearing and easy to get wrong:
+//
+//   1. `TradingObservation` is not a trade. Limiting the library to executed trades would
+//      make it answer only "when I took this", never "when I saw this", and those are
+//      different questions with different answers — the second is bigger and less biased.
+//   2. `MemoryImageRole` decides what may be matched against. A screenshot showing candles
+//      printed after the entry is not evidence anyone had at the entry, so it can never be a
+//      search candidate. See `isPreDecisionRole`.
+//   3. Market behaviour and trade execution are recorded separately, all the way down. The
+//      market can continue upward after a setup while the trader's own trade loses money.
+//      One number for both would be a claim about the market the journal cannot support.
+// ---------------------------------------------------------------------------
+
+/**
+ * What a screenshot shows, which is what decides whether it may be searched.
+ *
+ * The distinction that matters is BEFORE the decision against AFTER it. `before-setup` and
+ * `entry` are the two roles a trader could genuinely have been looking at when they decided;
+ * `exit` and `after-setup` show information that did not exist yet. `context` and `other` are
+ * deliberately on the after side: an unlabelled picture cannot be proven to be pre-decision,
+ * and a memory that guesses in the permissive direction is a memory that quietly uses
+ * hindsight. A trader with a pre-decision screenshot that is not a setup or an entry labels it
+ * `before-setup` — that is the one honest way to say "this was knowable then".
+ */
+export type MemoryImageRole =
+  | 'before-setup'
+  | 'entry'
+  | 'exit'
+  | 'after-setup'
+  | 'context'
+  | 'other';
+
+/**
+ * Where one screenshot is in the indexing pipeline.
+ *
+ * `skipped` is its own state rather than a flavour of `completed`, because it means something
+ * specific and true: the trader chose not to send this picture to an AI provider. Recording
+ * that as a skip keeps the count of "what is searchable and why" honest, where folding it into
+ * completed would claim an embedding that does not exist.
+ */
+export type MemoryIndexStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'skipped';
+
+/**
+ * How much the observation's timestamp can be trusted, which is what replay depends on.
+ *
+ * `upload-time` is recorded rather than forbidden because it is sometimes the only thing
+ * known, but it is explicitly NOT the decision moment: a screenshot uploaded on Sunday of a
+ * setup seen on Friday has a Sunday timestamp, and treating that as the observation time would
+ * put a record into a replay window it did not exist in. `unknown` is the honest value when
+ * even the upload time is meaningless (an imported picture).
+ */
+export type MemoryObservedAtSource = 'recorded' | 'upload-time' | 'unknown';
+
+/**
+ * One chart screenshot in the library.
+ *
+ * Exactly one of `storagePath` and `dataUrl` is expected to be present. `storagePath` is the
+ * object in the private `journal-memory` bucket — a path, never a signed URL, because a signed
+ * URL expires and an expiring string must never be the identity of a stored picture. `dataUrl`
+ * is the inline fallback for a local-only journal with no cloud to upload to, which is the same
+ * trade-off the rest of the app already makes for its screenshots.
+ *
+ * The embedding itself is NOT here. It lives in Postgres, and deliberately not in the journal
+ * snapshot: a 768-dimension vector per picture would turn a few hundred screenshots into
+ * megabytes of numbers travelling through a sync whose whole design assumes one small document.
+ * What the snapshot keeps is the *description* of the embedding — which model, which version,
+ * how many dimensions — so a client can tell whether its own copy is still comparable.
+ */
+export interface MemoryImage {
+  id: string;
+  observationId: string;
+  role: MemoryImageRole;
+  /** Object path inside `MEMORY_BUCKET`. Absent while the picture is still inline. */
+  storagePath?: string;
+  /** Inline copy, used only in a local-only journal with no bucket to upload to. */
+  dataUrl?: string;
+  /** SHA-256 of the image bytes: the dedupe key and the change detector. */
+  checksum?: string;
+  width?: number;
+  height?: number;
+  mimeType?: string;
+  /** When the picture was taken, when that is known. Never inferred from the upload. */
+  capturedAt?: string;
+  embeddingModel?: string;
+  embeddingVersion?: number;
+  embeddingDimension?: number;
+  indexStatus: MemoryIndexStatus;
+  /** Why indexing failed, kept verbatim so the trader can act on it. */
+  indexError?: string;
+  indexedAt?: string;
+  /** When this picture was moved out of the snapshot into the bucket. See `Trade.movedAt`. */
+  migratedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * What price did after the setup, when the trader actually recorded it.
+ *
+ * `unknown` is a first-class value and the default. The journal holds no continuous price
+ * history — nothing in the app can replay a chart tick by tick — so movement figures can only
+ * be filled from something the trader documented. A missing number must stay missing rather
+ * than be read as zero, which is why every field here is optional and `source` says where the
+ * reading came from.
+ */
+export type MemoryOutcomeStatus = 'unknown' | 'recorded';
+
+/** What price did relative to the setup, as the trader characterised it. */
+export type MemoryContinuation = 'continuation' | 'reversal' | 'unclear';
+
+export interface MemoryOutcome {
+  status: MemoryOutcomeStatus;
+  /** The horizon the reading is about — "30 minutes after the open", "end of session". */
+  window?: string;
+  /** The moment the setup must have existed before to count as knowable at the reading. */
+  observationCutoff?: string;
+  continuation?: MemoryContinuation;
+  /** Movement in points, only when it was actually documented. */
+  measuredMovementPoints?: number;
+  maxFavorableExcursionPoints?: number;
+  maxAdverseExcursionPoints?: number;
+  source: 'trader-recorded' | 'trade-record' | 'unknown';
+  verifiedAt?: string;
+  notes?: string;
+}
+
+/**
+ * One market situation the trader recorded, with or without a trade.
+ *
+ * The record is intentionally usable before anything else happens: a sighting with a picture,
+ * a time and a guess at the setup is enough to be worth keeping, and everything else — the
+ * outcome, the linked trade — can be filled in later or never. Requiring a completed trade to
+ * record a sighting would mean the library only ever contained the setups that were traded,
+ * which is the one kind of history that cannot tell the trader how often a setup is seen.
+ */
+export interface TradingObservation {
+  id: string;
+  userId: string;
+  /**
+   * The journal trade this was taken under, when there was one.
+   *
+   * A plain id rather than a reference, because the trade lives in the journal snapshot and
+   * this record is mirrored into its own table. It is the stable link between the two, so a
+   * snapshot sync that rewrites every trade cannot break it.
+   */
+  linkedTradeId?: string;
+  /** The decision moment, ISO 8601. */
+  observedAt: string;
+  /** How much `observedAt` can be trusted. See `MemoryObservedAtSource`. */
+  observedAtSource: MemoryObservedAtSource;
+  /** The market's timezone at the observation, so a replay reads the right session. */
+  marketTimezone: string;
+  instrumentId: string;
+  /** The symbol at the time, carried on the record so a renamed instrument cannot move it. */
+  symbol: string;
+  timeframe?: LevelTimeframe;
+  session?: TradingSession;
+  setupId?: string;
+  setupName?: string;
+  /** A wider bucket than the setup name, for grouping a growing library. */
+  setupCategory?: string;
+  /** The trend the setup was forming against, in the trader's words. */
+  previousTrend?: MarketOutlookBias;
+  /** Which way the setup pointed, or `none` for a pure observation. */
+  observedDirection?: TradeDirection | 'none';
+  marketContext?: string;
+  notes?: string;
+  images: MemoryImage[];
+  outcome?: MemoryOutcome;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** The filters a search may narrow itself with. All optional; absent means unconstrained. */
+export interface MemorySearchFilters {
+  instrument?: string;
+  timeframe?: LevelTimeframe;
+  session?: TradingSession;
+  setupName?: string;
+  /** Only matches observed on or after this date (YYYY-MM-DD). */
+  fromDate?: string;
+  /** Only matches observed on or before this date (YYYY-MM-DD). */
+  toDate?: string;
+}
+
+/** The trader's own verdict on one returned match, kept to judge retrieval quality later. */
+export type MemoryMatchFeedback = 'strong' | 'partial' | 'wrong';
+
+/**
+ * One returned match, as it stood when the search ran.
+ *
+ * Copied off the answer rather than re-resolved later, so the history stays a record of what
+ * the system actually returned even after the observation behind it is edited or deleted. The
+ * resemblance is a NORMALISED RESEMBLANCE, not a probability and not a win rate: it says how
+ * close two pictures are in the embedding space, and nothing at all about how either one
+ * turned out.
+ */
+export interface MemorySearchMatch {
+  observationId: string;
+  imageId: string;
+  role: MemoryImageRole;
+  resemblance: number;
+  cosineDistance: number;
+  observedAt: string;
+  instrument: string;
+  timeframe?: string;
+  session?: string;
+  setupName?: string;
+  linkedTradeId?: string;
+  feedback?: MemoryMatchFeedback;
+}
+
+/**
+ * One saved search.
+ *
+ * The query picture is kept as a small thumbnail because a search the trader cannot recognise
+ * at a glance is not much of a history, and capped by a retention window because a library of
+ * past query images is exactly the kind of table that grows forever. See
+ * `MEMORY_SEARCH_RETENTION_DAYS`.
+ */
+export interface MemorySearch {
+  id: string;
+  userId: string;
+  searchedAt: string;
+  /** A downscaled copy of the chart that was searched with. */
+  thumbnail?: string;
+  queryChecksum?: string;
+  filters: MemorySearchFilters;
+  matches: MemorySearchMatch[];
+  /** The embedding model and version the results were produced with. */
+  embeddingModel?: string;
+  embeddingVersion?: number;
+  /** The similarity floor in force when the search ran, so a score reads in its own context. */
+  resemblanceFloor?: number;
+  /** When this search stops being kept. See `MEMORY_SEARCH_RETENTION_DAYS`. */
+  expiresAt?: string;
+}
+
+/**
+ * The states an indexing run can be in.
+ *
+ * `cancelled` and `failed` are separate on purpose: one means the trader stopped it and the
+ * other means it broke, and a backfill that reports the wrong one sends them looking for a bug
+ * that is not there.
+ */
+export type MemoryIndexJobStatus =
+  | 'pending'
+  | 'processing'
+  | 'completed'
+  | 'failed'
+  | 'skipped'
+  | 'cancelled';
+
+/**
+ * One indexing run over the picture library.
+ *
+ * A backfill is long, interruptible and spends a rate-limited API call per picture, so it is
+ * modelled as a resumable job rather than a loop that either finishes or does not. `cursor` is
+ * how it resumes without redoing work, and the counters are what let it report honestly: a run
+ * that stopped at 40 of 300 pictures must be able to say so.
+ */
+export interface MemoryIndexJob {
+  id: string;
+  userId: string;
+  kind: 'backfill' | 'reindex';
+  status: MemoryIndexJobStatus;
+  totalItems: number;
+  processedItems: number;
+  failedItems: number;
+  skippedItems: number;
+  /** The last item handled, so a resumed run continues rather than restarting. */
+  cursor?: string;
+  embeddingModel?: string;
+  embeddingVersion?: number;
+  /** The most recent failure, kept verbatim so it is not summarised into uselessness. */
+  lastError?: string;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+}
+
+/**
+ * The trader's explicit consent for cloud AI image processing.
+ *
+ * Deliberately a separate, switchable record rather than a default-on capability. Sending a
+ * private chart to a third-party model is the trader's decision about their own material, so
+ * it is stored with the choice they made and can be turned off again — and a library of
+ * pictures with no consent on it stays perfectly usable, just not searchable by similarity.
+ */
+export interface MemoryAiSettings {
+  /** Whether new screenshots may be sent to the embedding model at all. */
+  imageProcessingConsent: boolean;
+  whenConsentedAt?: string;
+  /** Whether the optional vision re-ranking pass may run over the top candidates. */
+  rerankEnabled: boolean;
+  /** How many matches a search returns. */
+  resultCount: number;
+  /** The resemblance a match must reach to be shown as one. */
+  resemblanceFloor: number;
+  /** How long a saved search is kept, in days. See `MEMORY_SEARCH_RETENTION_DAYS`. */
+  searchRetentionDays: number;
+  updatedAt: string;
+}

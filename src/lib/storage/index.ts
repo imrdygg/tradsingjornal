@@ -18,6 +18,9 @@ import {
   MarkedLevel,
   LevelOutlook,
   MindsetNote,
+  TradingObservation,
+  MemorySearch,
+  MemoryAiSettings,
 } from '../../types';
 import type { LevelRecord as MesLevelRecord } from '../mes/types';
 import { normalizeMesLevel } from '../mes/analytics';
@@ -30,6 +33,7 @@ import { DEFAULT_RISK_TIER_AMOUNTS } from '../trading/risk-tiers';
 import { FOCUS_SETUP_NAMES } from '../playbook/focus-setups';
 import { timeframeOf } from '../analytics/session-extremes';
 import { clearCachedNotes } from '../ai/checkpoints';
+import { normaliseMemoryAiSettings } from '../memory/settings';
 import { getCurrentTradingSessionDate } from './date-utils';
 
 /**
@@ -126,6 +130,9 @@ const STORAGE_KEYS = {
   MES_LEVELS: 'ptj_mes_levels_v1',
   SESSION_EXTREMES: 'ptj_session_extremes_v1',
   CHART_SEARCHES: 'ptj_chart_searches_v1',
+  OBSERVATIONS: 'ptj_observations_v1',
+  MEMORY_SEARCHES: 'ptj_memory_searches_v1',
+  MEMORY_AI: 'ptj_memory_ai_v1',
   LESSONS: 'ptj_lessons_v1',
   MINDSET_NOTES: 'ptj_mindset_notes_v1',
   COACH_PLANS: 'ptj_coach_plans_v1',
@@ -229,6 +236,16 @@ function writeRecoveryCopies(copies: RecoveryCopy[]): boolean {
  * trader's own trades — and anything past it drops oldest-first.
  */
 const MAX_CHART_SEARCHES = 30;
+
+/**
+ * How many saved similarity searches the memory engine keeps.
+ *
+ * The same number and the same reason as the picture searches above: each row carries a
+ * thumbnail of the chart it was run against, so this is what stops the search history becoming
+ * the largest thing in storage. The database has its own retention window on these rows; this
+ * cap is what a local-only journal falls back on, where there is no database to prune them.
+ */
+const MAX_MEMORY_SEARCHES = 30;
 
 export interface StorageState {
   profile: UserProfile;
@@ -339,6 +356,34 @@ export interface StorageState {
    * Synced with the journal so acknowledging on the phone holds on the desktop: the
    * acknowledgement is about the lesson, not about the device it was read on.
    */
+  /**
+   * The trader's own chart observations: the setups they saw, whether or not they traded them.
+   *
+   * Optional for the same reason as the lists around it — a snapshot saved before this feature
+   * existed must still load, and every reader treats a missing list as empty rather than as an
+   * error. Journal material rather than playbook material: an observation is tied to the session
+   * it was seen in, so a reset clears it with the days it belongs to. The embeddings themselves
+   * are NOT here — they live in Postgres, because a 768-dimension vector per screenshot would
+   * turn a synced document that is meant to stay small into megabytes of numbers.
+   */
+  observations?: TradingObservation[];
+  /**
+   * The saved similarity searches, newest first.
+   *
+   * Each one carries a thumbnail of the chart it was run against, which is why the list is
+   * capped (see `MAX_MEMORY_SEARCHES`) and why a reset clears it with the observations it
+   * searched: a search of records that are about to be deleted has nothing left to describe.
+   */
+  memorySearches?: MemorySearch[];
+  /**
+   * The memory engine's consent and display settings.
+   *
+   * Settings rather than journal material, like the profile and the instruments: a reset keeps
+   * them, because agreeing to send charts to an AI provider is a decision about the trader's own
+   * material and not about one day's trading. Optional so a snapshot saved before the feature
+   * existed still loads, and a missing record is read as "no consent".
+   */
+  memoryAiSettings?: MemoryAiSettings;
   lessonAck?: LessonAcknowledgement | null;
   /**
    * The built-in catalog version this copy of the journal has been brought up to.
@@ -1180,6 +1225,9 @@ export const storage = {
       mesLevels: this.getMesLevels(),
       sessionExtremes: this.getSessionExtremes(),
       chartSearches: this.getChartSearches(),
+      observations: this.getObservations(),
+      memorySearches: this.getMemorySearches(),
+      memoryAiSettings: this.getMemoryAiSettings(),
       lessons: this.getLessons(),
       mindsetNotes: this.getMindsetNotes(),
       coachPlans: this.getCoachPlans(),
@@ -1223,6 +1271,11 @@ export const storage = {
       if (parsed.mesLevels) setItem(STORAGE_KEYS.MES_LEVELS, parsed.mesLevels);
       if (parsed.sessionExtremes) setItem(STORAGE_KEYS.SESSION_EXTREMES, parsed.sessionExtremes);
       if (parsed.chartSearches) setItem(STORAGE_KEYS.CHART_SEARCHES, parsed.chartSearches);
+      if (parsed.observations) setItem(STORAGE_KEYS.OBSERVATIONS, parsed.observations);
+      if (parsed.memorySearches) setItem(STORAGE_KEYS.MEMORY_SEARCHES, parsed.memorySearches);
+      // Only when the file carries it: a backup taken before the memory engine existed has no
+      // key here at all, and importing it must not reset consent the trader has since given.
+      if (parsed.memoryAiSettings) setItem(STORAGE_KEYS.MEMORY_AI, parsed.memoryAiSettings);
       if (parsed.lessons) setItem(STORAGE_KEYS.LESSONS, parsed.lessons);
       if (parsed.mindsetNotes) setItem(STORAGE_KEYS.MINDSET_NOTES, parsed.mindsetNotes);
       if (parsed.coachPlans) setItem(STORAGE_KEYS.COACH_PLANS, parsed.coachPlans);
@@ -1649,6 +1702,123 @@ export const storage = {
     return next;
   },
 
+  /** The trader's own chart observations, newest first. */
+  getObservations(): TradingObservation[] {
+    return getItem<TradingObservation[]>(STORAGE_KEYS.OBSERVATIONS, []);
+  },
+
+  /**
+   * Upserts one observation, newest first, keyed by id.
+   *
+   * Create and edit are the same write, like every other record the trader owns. An observation
+   * is filled in over time — the outcome is recorded later, a second screenshot is attached, the
+   * setup name is corrected once the day is over — and editing one must not turn it into a second
+   * sighting of the same setup. The list is not capped: this library is the point of the feature,
+   * so the oldest observation is never dropped to make room. A screenshot in it is a data URL
+   * when there is no cloud to upload to, so the pressure that puts on the browser is handled the
+   * way the rest of the app handles it — by reporting the failed write, never by silently
+   * deleting a picture.
+   */
+  saveObservation(observation: TradingObservation): TradingObservation[] {
+    const observations = this.getObservations();
+    const index = observations.findIndex((existing) => existing.id === observation.id);
+    const updated: TradingObservation = { ...observation, updatedAt: new Date().toISOString() };
+    const next =
+      index >= 0
+        ? [...observations.slice(0, index), updated, ...observations.slice(index + 1)]
+        : [updated, ...observations];
+    setItem(STORAGE_KEYS.OBSERVATIONS, next);
+    return next;
+  },
+
+  deleteObservation(id: string): TradingObservation[] {
+    const next = this.getObservations().filter((observation) => observation.id !== id);
+    setItem(STORAGE_KEYS.OBSERVATIONS, next);
+    return next;
+  },
+
+  /** The saved similarity searches, newest first. */
+  getMemorySearches(): MemorySearch[] {
+    return getItem<MemorySearch[]>(STORAGE_KEYS.MEMORY_SEARCHES, []);
+  },
+
+  /** Adds one search, newest first, and drops the oldest past the cap. */
+  saveMemorySearch(search: MemorySearch): MemorySearch[] {
+    const next = [search, ...this.getMemorySearches()].slice(0, MAX_MEMORY_SEARCHES);
+    setItem(STORAGE_KEYS.MEMORY_SEARCHES, next);
+    return next;
+  },
+
+  deleteMemorySearch(id: string): MemorySearch[] {
+    const next = this.getMemorySearches().filter((search) => search.id !== id);
+    setItem(STORAGE_KEYS.MEMORY_SEARCHES, next);
+    return next;
+  },
+
+  clearMemorySearches(): void {
+    setItem(STORAGE_KEYS.MEMORY_SEARCHES, []);
+  },
+
+  /**
+   * Drops saved searches past their own expiry, and reports what is left.
+   *
+   * The retention policy is enforced here as well as in the database, because a local-only
+   * journal has no database to enforce it against — and a saved search is a thumbnail, which is
+   * exactly the kind of record that grows forever if nothing ever removes it. An expiry that
+   * cannot be read is KEPT rather than treated as reached: a row nobody can place in time must
+   * not be deleted by a policy that cannot be checked against it.
+   */
+  pruneMemorySearches(now: string = new Date().toISOString()): MemorySearch[] {
+    const searches = this.getMemorySearches();
+    const cutoff = Date.parse(now);
+    const next = searches.filter((search) => {
+      if (!search.expiresAt) return true;
+      const expiry = Date.parse(search.expiresAt);
+      return !Number.isFinite(expiry) || expiry > cutoff;
+    });
+    if (next.length !== searches.length) setItem(STORAGE_KEYS.MEMORY_SEARCHES, next);
+    return next;
+  },
+
+  /**
+   * The memory engine's consent and display settings.
+   *
+   * Read through `normaliseMemoryAiSettings` rather than trusted as stored: these arrive from a
+   * synced journal that an older build, or another device, may have written, and a missing
+   * consent flag has to resolve to "no consent". Defaulting it the other way would be an upgrade
+   * that quietly starts uploading the trader's private charts.
+   */
+  getMemoryAiSettings(): MemoryAiSettings {
+    return normaliseMemoryAiSettings(
+      getItem<Partial<MemoryAiSettings> | null>(STORAGE_KEYS.MEMORY_AI, null),
+      new Date().toISOString()
+    );
+  },
+
+  /**
+   * Merges a settings patch and returns the whole record.
+   *
+   * The moment consent was given is stamped here rather than by the caller, so it is written in
+   * the one place that writes it and turning consent off clears it again — leaving a stale
+   * timestamp behind would make an old consent look current.
+   */
+  saveMemoryAiSettings(patch: Partial<MemoryAiSettings>): MemoryAiSettings {
+    const now = new Date().toISOString();
+    const current = this.getMemoryAiSettings();
+    const next = normaliseMemoryAiSettings(
+      {
+        ...current,
+        ...patch,
+        whenConsentedAt:
+          patch.imageProcessingConsent === true ? current.whenConsentedAt ?? now : undefined,
+        updatedAt: now,
+      },
+      now
+    );
+    setItem(STORAGE_KEYS.MEMORY_AI, next);
+    return next;
+  },
+
   /**
    * Clears every journal entry — trades, daily plans and reviews — while
    * keeping the trader's settings, instruments and playbook set-ups. This is
@@ -1683,6 +1853,13 @@ export const storage = {
       // The picture searches matched against the trades that are about to be deleted, so
       // they go with them rather than outliving the journal they describe.
       STORAGE_KEYS.CHART_SEARCHES,
+      // Observations are a record of what the market did on the days being deleted, so they go
+      // with those days rather than outliving the sessions they describe.
+      STORAGE_KEYS.OBSERVATIONS,
+      // A saved search describes the observations and trades about to be deleted, so it goes
+      // with them. The AI settings do NOT: whether the trader consents to cloud image
+      // processing is a decision about their material, not about one day's trading.
+      STORAGE_KEYS.MEMORY_SEARCHES,
       // A coach plan is tied to the day's market, so it goes with the days it was made for.
       STORAGE_KEYS.COACH_PLANS,
       // Notes about a session go with the sessions they describe, like the reviews above.
@@ -1721,6 +1898,9 @@ export const storage = {
       STORAGE_KEYS.MES_LEVELS,
       STORAGE_KEYS.SESSION_EXTREMES,
       STORAGE_KEYS.CHART_SEARCHES,
+      STORAGE_KEYS.OBSERVATIONS,
+      STORAGE_KEYS.MEMORY_SEARCHES,
+      STORAGE_KEYS.MEMORY_AI,
       STORAGE_KEYS.LESSONS,
       STORAGE_KEYS.COACH_PLANS,
       STORAGE_KEYS.MINDSET_NOTES,

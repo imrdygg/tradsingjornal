@@ -15,6 +15,7 @@ import {
   CandlestickChart,
   Target,
   MessageSquarePlus,
+  Brain,
 } from 'lucide-react';
 import {
   getCurrentTradingDate,
@@ -36,6 +37,11 @@ export type NavTab =
   | 'coach'
   | 'markets'
   | 'playbook'
+  // Trading Memory: the searchable library of the trader's own chart observations. It took the
+  // ninth tab slot, which is why the mobile grid below is nine columns rather than eight — the
+  // row was already full, and the alternative was burying the feature in the avatar menu beside
+  // Settings, which is where things go when nobody needs them often.
+  | 'memory'
   // Reachable through the avatar menu, not the tab bars — they were out of room. History
   // moved here when the tab bars filled up: it is still the day archive, just not a tab.
   | 'history'
@@ -103,6 +109,7 @@ export const AppShell: React.FC<AppShellProps> = ({
     { id: 'coach', label: 'Coach', icon: Sparkles },
     { id: 'markets', label: 'Markets', icon: CandlestickChart },
     { id: 'playbook', label: 'Playbook', icon: BookOpen },
+    { id: 'memory', label: 'Memory', icon: Brain },
   ];
 
   const pnlSign = realizedPnL > 0 ? '+' : '';
@@ -392,10 +399,13 @@ export const AppShell: React.FC<AppShellProps> = ({
         id="mobile-nav"
         className="pb-safe z-40 shrink-0 border-t border-zinc-800/90 bg-zinc-950 pt-1.5 lg:hidden"
       >
-        {/* Eight tabs, one per column: Settings moved to the avatar menu, so Markets
-            finally fits without the grid wrapping. The label size was tuned so the
-            longest label still fits at 320px without wrapping or overflowing. */}
-        <div className="grid grid-cols-8 gap-0.5 px-1 sm:gap-1 sm:px-2">
+        {/* Nine tabs, one per column: Settings moved to the avatar menu, so Markets
+            finally fits without the grid wrapping. Trading Memory then took the ninth slot,
+            which leaves roughly 35px per column at 320px — narrow enough that the longer
+            labels ('Analytics', 'Insights', 'Playbook', 'Memory') truncate rather than fit.
+            The icons carry the meaning at that width. A tenth tab would not fit this way: the
+            next addition has to move a tab to the avatar menu, or the row has to wrap. */}
+        <div className="grid grid-cols-9 gap-0.5 px-1 sm:gap-1 sm:px-2">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = currentTab === item.id;

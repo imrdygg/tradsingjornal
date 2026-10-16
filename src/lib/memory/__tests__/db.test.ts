@@ -1,0 +1,695 @@
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import type { MemoryImage, MemoryOutcome, MemorySearch, TradingObservation } from '../../../types';
+
+// ---------------------------------------------------------------------------
+// A fake Supabase that records what was asked rather than pretending to be one.
+//
+// Two things here are worth pinning down and neither can be checked by reading the code:
+//
+//   1. A write must never carry a user id the caller supplied. `user_id` is `not null` in every
+//      memory table, so it has to be written — and the test below hands `upsertObservations` a
+//      record that claims a different owner, then asserts the row that reached the request body is
+//      keyed to the SESSION's id. Row-level security would refuse the other one anyway; this says
+//      the client never knowingly asks.
+//   2. The search must not name an owner at all. `memory_match_images` reads `auth.uid()`, and the
+//      test asserts the RPC's argument list contains no user id, so a future edit cannot quietly
+//      add one back and move the boundary into the client.
+// ---------------------------------------------------------------------------
+
+const fake = vi.hoisted(() => {
+  type Row = Record<string, unknown>;
+
+  const state = {
+    tables: {} as Record<string, Row[]>,
+    /** Every rpc call, in order, with its argument object captured as given. */
+    rpcCalls: [] as { fn: string; args: Record<string, unknown> }[],
+    /** Every write, so a test can inspect exactly what would have reached the request body. */
+    writes: [] as { table: string; op: string; payload: Row | Row[] }[],
+    /** What the next rpc returns. Numbers are supported because a prune returns a count. */
+    rpcResult: undefined as unknown,
+    rpcError: null as { message: string; code?: string } | null,
+    /** The signed-in user, or null to simulate a signed-out tab. */
+    user: { id: 'session-user' } as { id: string } | null,
+    /** Simulates a project where schema.sql has never been run. */
+    missingSchema: false as boolean,
+  };
+
+  const table = (name: string): Row[] => {
+    state.tables[name] ??= [];
+    return state.tables[name];
+  };
+
+  const primaryKeyOf = (row: Row): unknown => row.id ?? row.observation_id;
+
+  const missingSchemaError = () => ({
+    message: 'relation "public.memory_images" does not exist',
+    code: '42P01',
+  });
+
+  function from(name: string) {
+    let op: 'select' | 'insert' | 'upsert' | 'update' = 'select';
+    let payload: Row | Row[] | null = null;
+    const filters: Record<string, unknown> = {};
+    const inFilters: Record<string, unknown[]> = {};
+    const orders: { column: string; ascending: boolean }[] = [];
+    let rowLimit: number | null = null;
+
+    async function run() {
+      if (state.missingSchema) return { data: null, error: missingSchemaError() };
+
+      if (op === 'select') {
+        let rows = [...table(name)];
+        rows = rows.filter((row) =>
+          Object.entries(filters).every(([column, value]) => row[column] === value)
+        );
+        rows = rows.filter((row) =>
+          Object.entries(inFilters).every(([column, values]) => values.includes(row[column]))
+        );
+        for (const order of [...orders].reverse()) {
+          rows.sort((a, b) => {
+            const left = String(a[order.column] ?? '');
+            const right = String(b[order.column] ?? '');
+            return order.ascending ? left.localeCompare(right) : right.localeCompare(left);
+          });
+        }
+        if (rowLimit !== null) rows = rows.slice(0, rowLimit);
+        return { data: rows, error: null };
+      }
+
+      const rows = Array.isArray(payload) ? payload : [payload as Row];
+      if (op === 'insert') {
+        for (const row of rows) table(name).push({ ...row });
+        return { data: rows, error: null };
+      }
+      if (op === 'upsert') {
+        for (const row of rows) {
+          const existing = table(name).findIndex(
+            (candidate) => primaryKeyOf(candidate) === primaryKeyOf(row)
+          );
+          if (existing < 0) table(name).push({ ...row });
+          else table(name)[existing] = { ...table(name)[existing], ...row };
+        }
+        return { data: rows, error: null };
+      }
+
+      // update
+      const patch = payload as Row;
+      let touched = 0;
+      for (let index = 0; index < table(name).length; index += 1) {
+        const row = table(name)[index];
+        const matches = Object.entries(filters).every(([column, value]) => row[column] === value);
+        if (!matches) continue;
+        table(name)[index] = { ...row, ...patch };
+        touched += 1;
+      }
+      return { data: touched > 0 ? [{ id: rows[0]?.id ?? patch.id }] : [], error: null };
+    }
+
+    const builder = {
+      select: () => builder,
+      eq: (column: string, value: unknown) => {
+        filters[column] = value;
+        return builder;
+      },
+      in: (column: string, values: unknown[]) => {
+        inFilters[column] = values;
+        return builder;
+      },
+      order: (column: string, options?: { ascending?: boolean }) => {
+        orders.push({ column, ascending: options?.ascending !== false });
+        return builder;
+      },
+      limit: (count: number) => {
+        rowLimit = count;
+        return builder;
+      },
+      insert: (values: Row | Row[]) => {
+        op = 'insert';
+        payload = values;
+        state.writes.push({ table: name, op, payload: values });
+        return builder;
+      },
+      upsert: (values: Row | Row[], _options?: unknown) => {
+        op = 'upsert';
+        payload = values;
+        state.writes.push({ table: name, op, payload: values });
+        return builder;
+      },
+      update: (values: Row) => {
+        op = 'update';
+        payload = values;
+        state.writes.push({ table: name, op, payload: values });
+        return builder;
+      },
+      single: async () => {
+        const result = await run();
+        const rows = (result.data ?? []) as Row[];
+        return { data: rows[0] ?? null, error: result.error };
+      },
+      maybeSingle: async () => {
+        const result = await run();
+        const rows = (result.data ?? []) as Row[];
+        return { data: rows[0] ?? null, error: result.error };
+      },
+      then: (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) =>
+        run().then(resolve, reject),
+    };
+
+    return builder;
+  }
+
+  async function rpc(fn: string, args: Record<string, unknown>) {
+    state.rpcCalls.push({ fn, args });
+    if (state.rpcError) return { data: null, error: state.rpcError };
+    return { data: state.rpcResult ?? null, error: null };
+  }
+
+  async function getUser() {
+    return { data: { user: state.user } };
+  }
+
+  return { state, from, rpc, getUser };
+});
+
+vi.mock('../../supabase', () => ({
+  supabase: { from: fake.from, rpc: fake.rpc, auth: { getUser: fake.getUser } },
+}));
+
+import {
+  explainSchemaError,
+  imageFromRow,
+  imageRow,
+  indexJobFromRow,
+  observationFromRow,
+  observationRow,
+  outcomeFromRow,
+  outcomeRow,
+  readPgVector,
+  searchFromRow,
+  searchMemoryImages,
+  toPgVector,
+  vectorMatchFromRow,
+  listImagesNeedingIndex,
+  createMemoryIndexPort,
+  saveImageEmbedding,
+  upsertObservations,
+} from '../db';
+
+const USER = 'session-user';
+
+/** A 768-wide vector of exactly-representable values, so it survives text round-tripping. */
+function vector(fill = 0.5): number[] {
+  return Array.from({ length: 768 }, (_, index) => (index % 2 === 0 ? fill : -1.25));
+}
+
+function observation(overrides: Partial<TradingObservation> = {}): TradingObservation {
+  return {
+    id: 'obs-1',
+    // Deliberately a DIFFERENT id from the session's: nothing may write this one.
+    userId: 'somebody-else',
+    linkedTradeId: 'trade-1',
+    observedAt: '2026-09-01T13:45:00.000Z',
+    observedAtSource: 'recorded',
+    marketTimezone: 'America/New_York',
+    instrumentId: 'instrument-1',
+    symbol: 'MES',
+    setupName: 'Opening drive pullback',
+    setupCategory: 'continuation',
+    marketContext: 'Gap up, first pullback held the opening range.',
+    notes: 'Watching the 20 EMA.',
+    images: [],
+    createdAt: '2026-09-01T13:45:01.000Z',
+    updatedAt: '2026-09-01T13:45:01.000Z',
+    ...overrides,
+  };
+}
+
+function image(overrides: Partial<MemoryImage> = {}): MemoryImage {
+  return {
+    id: 'img-1',
+    observationId: 'obs-1',
+    role: 'before-setup',
+    storagePath: `${USER}/obs-1/img-1.jpg`,
+    checksum: 'abc123',
+    mimeType: 'image/jpeg',
+    indexStatus: 'pending',
+    createdAt: '2026-09-01T13:45:02.000Z',
+    updatedAt: '2026-09-01T13:45:02.000Z',
+    ...overrides,
+  };
+}
+
+beforeEach(() => {
+  fake.state.tables = {};
+  fake.state.rpcCalls = [];
+  fake.state.writes = [];
+  fake.state.rpcResult = undefined;
+  fake.state.rpcError = null;
+  fake.state.user = { id: USER };
+  fake.state.missingSchema = false;
+});
+
+// ---------------------------------------------------------------------------
+
+describe('toPgVector / readPgVector', () => {
+  it('sends a vector as the text literal PostgREST can cast to vector', () => {
+    expect(toPgVector([0.5, -1.25])).toBe('[0.5,-1.25]');
+  });
+
+  it('round-trips a full-width vector exactly', () => {
+    const original = vector();
+    expect(readPgVector(toPgVector(original))).toEqual(original);
+  });
+
+  it('refuses a vector of the wrong width rather than returning a short one', () => {
+    expect(readPgVector('[1,2,3]')).toBeNull();
+  });
+
+  it('refuses a vector containing anything that is not a finite number', () => {
+    const poisoned = vector();
+    poisoned[17] = Number.NaN;
+    expect(readPgVector(toPgVector(poisoned))).toBeNull();
+  });
+
+  it('refuses null and anything that is not a vector at all', () => {
+    expect(readPgVector(null)).toBeNull();
+    expect(readPgVector('null')).toBeNull();
+    expect(readPgVector(undefined)).toBeNull();
+    expect(readPgVector('[]')).toBeNull();
+  });
+
+  it('accepts an already-parsed array of the right width', () => {
+    expect(readPgVector(vector(0.25))).toEqual(vector(0.25));
+  });
+});
+
+describe('observationRow', () => {
+  it('stores the symbol in the searchable instrument column, not the local instrument id', () => {
+    const row = observationRow(observation(), USER);
+    expect(row.instrument).toBe('MES');
+    expect(JSON.stringify(row)).not.toContain('instrument-1');
+  });
+
+  it('writes the session owner, never the one the record claims', () => {
+    expect(observationRow(observation(), USER).user_id).toBe(USER);
+  });
+
+  it('turns absent optionals into null, so a null means "not recorded"', () => {
+    const row = observationRow(
+      observation({ setupName: undefined, notes: undefined, linkedTradeId: undefined }),
+      USER
+    );
+    expect(row.setup_name).toBeNull();
+    expect(row.notes).toBeNull();
+    expect(row.linked_trade_id).toBeNull();
+  });
+
+  it('round-trips through observationFromRow with the symbol standing in for the instrument id', () => {
+    const original = observation();
+    const restored = observationFromRow(observationRow(original, USER));
+    expect(restored.id).toBe(original.id);
+    expect(restored.symbol).toBe('MES');
+    expect(restored.instrumentId).toBe('MES');
+    expect(restored.observedAt).toBe(original.observedAt);
+    expect(restored.observedAtSource).toBe('recorded');
+    expect(restored.marketContext).toBe(original.marketContext);
+    expect(restored.notes).toBe(original.notes);
+  });
+
+  it('leaves an unknown option absent rather than inventing an empty one', () => {
+    const restored = observationFromRow(observationRow(observation(), USER));
+    expect(restored.setupId).toBeUndefined();
+    expect(restored.timeframe).toBeUndefined();
+    expect(restored.session).toBeUndefined();
+    expect(restored.observedDirection).toBeUndefined();
+  });
+});
+
+describe('imageRow / imageFromRow', () => {
+  it('always stamps the private bucket, whatever the record says', () => {
+    expect(imageRow(image(), USER, 'obs-1').bucket_id).toBe('journal-memory');
+  });
+
+  it('round-trips a picture, and never carries the vector itself', () => {
+    const row = imageRow(image(), USER, 'obs-1');
+    const restored = imageFromRow({ ...row, embedding: toPgVector(vector()) });
+    expect(restored.id).toBe('img-1');
+    expect(restored.role).toBe('before-setup');
+    expect(restored.storagePath).toBe(`${USER}/obs-1/img-1.jpg`);
+    expect(restored.checksum).toBe('abc123');
+    expect(restored.embeddingModel).toBeUndefined();
+    // The vector is not part of the type at all: a 768-number array on every record would travel
+    // through the journal sync the snapshot shape cannot afford.
+    expect(JSON.stringify(restored)).not.toContain('0.5,');
+  });
+
+  it('reads a missing status as pending rather than as completed', () => {
+    const restored = imageFromRow({
+      ...imageRow(image(), USER, 'obs-1'),
+      indexing_status: undefined as unknown as string,
+    });
+    expect(restored.indexStatus).toBe('pending');
+  });
+
+  it('keeps the failure message verbatim', () => {
+    const restored = imageFromRow({
+      ...imageRow(image(), USER, 'obs-1'),
+      indexing_status: 'failed',
+      indexing_error: 'HTTP 429 from the provider',
+    });
+    expect(restored.indexError).toBe('HTTP 429 from the provider');
+  });
+});
+
+describe('outcomeRow / outcomeFromRow', () => {
+  it('round-trips a recorded outcome', () => {
+    const original: MemoryOutcome = {
+      status: 'recorded',
+      window: '30 minutes after the open',
+      continuation: 'continuation',
+      measuredMovementPoints: 12.5,
+      source: 'trader-recorded',
+      notes: 'Ran to the prior high.',
+    };
+    const restored = outcomeFromRow(outcomeRow('obs-1', USER, original, '2026-09-01T14:00:00.000Z'));
+    expect(restored.status).toBe('recorded');
+    expect(restored.continuation).toBe('continuation');
+    expect(restored.measuredMovementPoints).toBe(12.5);
+    expect(restored.notes).toBe('Ran to the prior high.');
+  });
+
+  it('keeps an unrecorded movement as absent rather than zero', () => {
+    const restored = outcomeFromRow(
+      outcomeRow('obs-1', USER, { status: 'unknown', source: 'unknown' }, 'x')
+    );
+    // A zero here would be a measurement nobody made, and averaging it in would invent a result.
+    expect(restored.measuredMovementPoints).toBeUndefined();
+    expect(restored.maxAdverseExcursionPoints).toBeUndefined();
+    expect(restored.status).toBe('unknown');
+  });
+});
+
+describe('vectorMatchFromRow', () => {
+  it('maps a ranked candidate, including its distance', () => {
+    const match = vectorMatchFromRow({
+      observation_id: 'obs-1',
+      image_id: 'img-1',
+      image_role: 'entry',
+      cosine_distance: 0.12,
+      observed_at: '2026-09-01T13:45:00.000Z',
+      instrument: 'MES',
+      timeframe: '5m',
+      session_type: 'new-york-am',
+      setup_name: 'Opening drive pullback',
+      linked_trade_id: 'trade-1',
+    });
+    expect(match.observationId).toBe('obs-1');
+    expect(match.role).toBe('entry');
+    expect(match.cosineDistance).toBeCloseTo(0.12);
+    expect(match.timeframe).toBe('5m');
+    expect(match.linkedTradeId).toBe('trade-1');
+  });
+
+  it('turns an unusable distance into the furthest one, not NaN', () => {
+    const match = vectorMatchFromRow({ observation_id: 'obs-1', cosine_distance: null });
+    // NaN would sort unpredictably; 1 is "no resemblance" and deterministic.
+    expect(match.cosineDistance).toBe(1);
+    expect(Number.isNaN(match.cosineDistance)).toBe(false);
+  });
+});
+
+describe('searchFromRow / indexJobFromRow', () => {
+  it('lifts the resemblance floor out of the stored metadata', () => {
+    const search = searchFromRow({
+      id: 'search-1',
+      user_id: USER,
+      searched_at: '2026-09-10T14:00:00.000Z',
+      query_checksum: 'abc',
+      filters: { instrument: 'MES' },
+      matched_observation_ids: ['obs-1'],
+      retrieval_model: 'gemini-embedding-2',
+      retrieval_version: 1,
+      result_metadata: { resemblanceFloor: 55, matches: [] },
+      feedback: null,
+      expires_at: '2026-12-09T14:00:00.000Z',
+    });
+    expect(search.resemblanceFloor).toBe(55);
+    expect(search.filters.instrument).toBe('MES');
+    expect(search.embeddingModel).toBe('gemini-embedding-2');
+    expect(search.matches).toEqual([]);
+  });
+
+  it('maps a job, keeping the cursor, the counters and the last error', () => {
+    const job = indexJobFromRow({
+      id: 'job-1',
+      user_id: USER,
+      kind: 'backfill',
+      status: 'cancelled',
+      total_items: 300,
+      processed_items: 41,
+      failed_items: 2,
+      skipped_items: 1,
+      cursor: 'img-41',
+      model: 'gemini-embedding-2',
+      embedding_version: 1,
+      last_error: 'HTTP 429',
+      created_at: '2026-09-01T10:00:00.000Z',
+      updated_at: '2026-09-01T10:05:00.000Z',
+      started_at: '2026-09-01T10:00:01.000Z',
+      finished_at: null,
+    });
+    expect(job.status).toBe('cancelled');
+    expect(job.cursor).toBe('img-41');
+    expect(job.processedItems).toBe(41);
+    expect(job.failedItems).toBe(2);
+    expect(job.lastError).toBe('HTTP 429');
+    expect(job.finishedAt).toBeUndefined();
+  });
+});
+
+describe('upsertObservations', () => {
+  it('writes the session owner even when the records claim another one', async () => {
+    await upsertObservations([observation()]);
+    const write = fake.state.writes.find((entry) => entry.table === 'trading_observations');
+    const rows = write?.payload as Record<string, unknown>[];
+    expect(rows[0].user_id).toBe(USER);
+  });
+
+  it('writes a picture row only for a picture that is actually in the bucket', async () => {
+    await upsertObservations([
+      observation({
+        images: [
+          image({ id: 'stored', storagePath: 'a/b/c.jpg' }),
+          // Inline only: a journal with no cloud. `memory_images.storage_path` is `not null`, so
+          // there is no row this could honestly become.
+          image({ id: 'inline', storagePath: undefined, dataUrl: 'data:image/jpeg;base64,AAAA' }),
+        ],
+      }),
+    ]);
+
+    const write = fake.state.writes.find((entry) => entry.table === 'memory_images');
+    const rows = write?.payload as Record<string, unknown>[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe('stored');
+  });
+
+  it('writes no picture rows at all when nothing is uploaded', async () => {
+    await upsertObservations([observation({ images: [image({ storagePath: undefined })] })]);
+    expect(fake.state.writes.some((entry) => entry.table === 'memory_images')).toBe(false);
+  });
+
+  it('does nothing, and asks for nothing, on an empty library', async () => {
+    expect(await upsertObservations([])).toBe(0);
+    expect(fake.state.writes).toHaveLength(0);
+  });
+
+  it('reports how many observation rows it wrote', async () => {
+    expect(await upsertObservations([observation(), observation({ id: 'obs-2' })])).toBe(2);
+  });
+
+  it('refuses to write without a signed-in session', async () => {
+    fake.state.user = null;
+    const error = await upsertObservations([observation()]).catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain('Sign in');
+  });
+});
+
+describe('listImagesNeedingIndex', () => {
+  beforeEach(() => {
+    fake.state.tables.memory_images = [
+      { ...imageRow(image({ id: 'a' }), USER, 'obs-1'), created_at: '2026-09-01T10:00:00.000Z' },
+      { ...imageRow(image({ id: 'b' }), USER, 'obs-1'), created_at: '2026-09-02T10:00:00.000Z' },
+      {
+        ...imageRow(image({ id: 'c', indexStatus: 'completed' }), USER, 'obs-1'),
+        created_at: '2026-09-03T10:00:00.000Z',
+      },
+      {
+        ...imageRow(image({ id: 'd', indexStatus: 'failed' }), USER, 'obs-1'),
+        created_at: '2026-09-04T10:00:00.000Z',
+      },
+      {
+        // Interrupted mid-flight by a closed tab: without being re-offered this row would sit in
+        // `processing` for ever while the library screen showed it as work in progress.
+        ...imageRow(image({ id: 'e', indexStatus: 'processing' }), USER, 'obs-1'),
+        created_at: '2026-09-05T10:00:00.000Z',
+      },
+    ];
+  });
+
+  it('picks up failed pictures as well as pending ones, oldest first', async () => {
+    const pending = await listImagesNeedingIndex(10);
+    // `failed` is included on purpose: a failure is usually a rate limit rather than a fact about
+    // the picture, and a run the trader restarts has to pick it up.
+    expect(pending.map((entry) => entry.id)).toEqual(['a', 'b', 'd', 'e']);
+  });
+
+  it('re-offers a picture stuck in processing, so an interrupted run can finish', async () => {
+    const pending = await listImagesNeedingIndex(10);
+    expect(pending.some((entry) => entry.id === 'e')).toBe(true);
+  });
+
+  it('leaves completed pictures alone', async () => {
+    const pending = await listImagesNeedingIndex(10);
+    expect(pending.some((entry) => entry.id === 'c')).toBe(false);
+  });
+
+  it('honours the requested batch size', async () => {
+    expect(await listImagesNeedingIndex(1)).toHaveLength(1);
+  });
+});
+
+describe('saveImageEmbedding', () => {
+  it('writes the vector and its full stamp in one statement', async () => {
+    await saveImageEmbedding('img-1', vector());
+    const write = fake.state.writes.find((entry) => entry.table === 'memory_images');
+    const patch = write?.payload as Record<string, unknown>;
+    expect(patch.embedding_model).toBe('gemini-embedding-2');
+    expect(patch.embedding_version).toBe(1);
+    expect(patch.embedding_dimension).toBe(768);
+    expect(patch.indexing_status).toBe('completed');
+    expect(patch.indexing_error).toBeNull();
+    expect(typeof patch.embedding).toBe('string');
+    // Together is the point: a vector without its stamp cannot say what it is comparable with.
+    expect(readPgVector(patch.embedding)).toHaveLength(768);
+  });
+});
+
+describe('createMemoryIndexPort', () => {
+  it('records a skip as skipped, with the reason, and not as a failure', async () => {
+    await createMemoryIndexPort().markSkipped('img-1', 'The trader declined AI processing.');
+    const patch = fake.state.writes[0].payload as Record<string, unknown>;
+    expect(patch.indexing_status).toBe('skipped');
+    expect(patch.indexing_error).toBe('The trader declined AI processing.');
+  });
+
+  it('records a failure as failed', async () => {
+    await createMemoryIndexPort().markFailed('img-1', 'HTTP 429');
+    const patch = fake.state.writes[0].payload as Record<string, unknown>;
+    expect(patch.indexing_status).toBe('failed');
+    expect(patch.indexing_error).toBe('HTTP 429');
+  });
+
+  it('records processing before the work starts', async () => {
+    await createMemoryIndexPort().markProcessing('img-1');
+    expect((fake.state.writes[0].payload as Record<string, unknown>).indexing_status).toBe(
+      'processing'
+    );
+  });
+});
+
+describe('searchMemoryImages', () => {
+  it('names no owner in the RPC arguments', async () => {
+    await searchMemoryImages(vector());
+    const call = fake.state.rpcCalls[0];
+    expect(call.fn).toBe('memory_match_images');
+    // The function reads auth.uid(). A user id here would move the boundary into the client, which
+    // is the one thing this call must never do.
+    expect(JSON.stringify(call.args)).not.toContain(USER);
+    expect(call.args.p_user_id).toBeUndefined();
+    expect(call.args.user_id).toBeUndefined();
+  });
+
+  it('searches only the roles that existed before the decision', async () => {
+    await searchMemoryImages(vector());
+    // 'after-setup' and 'exit' are excluded: a chart printed after the entry is hindsight, and
+    // matching against it would let the search "find" a setup it could not have seen.
+    expect(fake.state.rpcCalls[0].args.p_roles).toEqual(['before-setup', 'entry']);
+  });
+
+  it('stamps the query with the configuration this build stores', async () => {
+    await searchMemoryImages(vector());
+    const args = fake.state.rpcCalls[0].args;
+    expect(args.p_model).toBe('gemini-embedding-2');
+    expect(args.p_version).toBe(1);
+    expect(typeof args.p_query).toBe('string');
+  });
+
+  it('passes the filters it was given and null for the ones it was not', async () => {
+    await searchMemoryImages(vector(), {
+      filters: { instrument: 'MES', setupName: 'Opening drive pullback' },
+      limit: 5,
+    });
+    const args = fake.state.rpcCalls[0].args;
+    expect(args.p_instrument).toBe('MES');
+    expect(args.p_setup_name).toBe('Opening drive pullback');
+    expect(args.p_timeframe).toBeNull();
+    expect(args.p_session).toBeNull();
+    expect(args.p_cutoff).toBeNull();
+    expect(args.p_match_count).toBe(5);
+  });
+
+  it('reads an inclusive end date as the end of that day, not its start', async () => {
+    await searchMemoryImages(vector(), { filters: { toDate: '2026-09-30' } });
+    const cutoff = fake.state.rpcCalls[0].args.p_cutoff as string;
+    expect(cutoff.startsWith('2026-09-30')).toBe(true);
+    // Interpreting it as 00:00 would silently drop the day the trader asked to include.
+    expect(cutoff > '2026-09-30T00:00:00.000Z').toBe(true);
+  });
+
+  it('lets an explicit replay cutoff win over the date filter', async () => {
+    await searchMemoryImages(vector(), {
+      filters: { toDate: '2026-09-30' },
+      cutoff: '2026-09-15T13:00:00.000Z',
+    });
+    expect(fake.state.rpcCalls[0].args.p_cutoff).toBe('2026-09-15T13:00:00.000Z');
+  });
+
+  it('maps the returned rows into ranked candidates', async () => {
+    fake.state.rpcResult = [
+      { observation_id: 'obs-1', image_id: 'img-1', image_role: 'entry', cosine_distance: 0.2 },
+    ];
+    const matches = await searchMemoryImages(vector());
+    expect(matches).toHaveLength(1);
+    expect(matches[0].observationId).toBe('obs-1');
+  });
+
+  it('returns an empty list rather than throwing when nothing is close', async () => {
+    fake.state.rpcResult = [];
+    expect(await searchMemoryImages(vector())).toEqual([]);
+  });
+});
+
+describe('explainSchemaError', () => {
+  it('says to run schema.sql for a missing table', () => {
+    const error = explainSchemaError({ message: 'relation does not exist', code: '42P01' });
+    expect(error.message).toContain('supabase/schema.sql');
+  });
+
+  it('says the same for a missing function, which is what an un-run search gives', () => {
+    expect(explainSchemaError({ message: 'Could not find the function', code: 'PGRST202' }).message).toContain(
+      'supabase/schema.sql'
+    );
+  });
+
+  it('passes an unrelated error through with its own words', () => {
+    const error = explainSchemaError({ message: 'JWT expired', code: 'PGRST301' });
+    expect(error.message).toBe('JWT expired');
+  });
+
+  it('explains a missing memory table when the query actually ran', async () => {
+    fake.state.missingSchema = true;
+    const error = await listImagesNeedingIndex(5).catch((err: unknown) => err);
+    expect((error as Error).message).toContain('supabase/schema.sql');
+  });
+});

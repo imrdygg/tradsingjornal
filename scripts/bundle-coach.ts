@@ -15,9 +15,12 @@
  */
 import esbuild from 'esbuild';
 
+// `memory.js` is the chart-embedding endpoint. It is its own function rather than another mode on
+// the coach because the two spend different budgets — see the header of `src/api/memory.ts`.
 const functions = [
   { entryPoints: ['src/api/coach.ts'], outfile: 'api/coach.js' },
   { entryPoints: ['src/api/market.ts'], outfile: 'api/market.js' },
+  { entryPoints: ['src/api/memory.ts'], outfile: 'api/memory.js' },
 ];
 
 for (const fn of functions) {

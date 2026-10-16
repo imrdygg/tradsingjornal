@@ -266,6 +266,184 @@ Conventions that matter if you add or edit a pattern:
 
 ---
 
+## Trading Memory
+
+The **Memory** tab is the journal's own market memory. The question it exists to answer is:
+
+> **Have I seen this setup before, how similar was it, and what actually happened afterwards?**
+
+It is *not* the picture search on the Playbook tab. That one asks a narrower question — "which of
+my **trades** looks like this chart" — and answers it by handing the model the whole written record
+and up to five recent screenshots, so what it can compare is bounded by what fits in one request and
+the pictures are re-read from scratch every time. Trading Memory is built for the other question,
+which is much bigger: it is a library of **observations**, most of which were never traded, and it is
+designed to be searched by similarity over the whole collection rather than by whatever fits in a
+prompt.
+
+### What is implemented today
+
+- **The Observation library.** Record a market situation with a screenshot, a time, an instrument,
+a timeframe, a session, a setup, a free-text read and optional notes — then edit it, filter it, and
+later record **what happened afterwards**. A sighting is expected to be usable with almost none of
+that filled in, and an outcome is expected to be missing for a while: it is what price did, and it
+can only be written once you have watched it.
+- **An observation does not need a trade.** This is the point of the whole thing. Limiting the
+library to executed trades would only ever answer *"what happened the last times I took this"*,
+never *"what happened the last times I saw this"* — and the second question is both bigger and free
+of the selection bias the first carries. `no trade taken` is a first-class state, not a blank.
+- **The rules that keep hindsight out.** Screenshots carry a **role**, and only `before-setup` and
+`entry` may ever be matched against: `exit` and `after-setup` show candles that had not printed when
+the decision was made, and `context`/`other` are excluded because an unlabelled picture cannot be
+*shown* to be pre-decision. Separately, an observation is only knowable at a moment if its timestamp
+is trustworthy — `upload-time` and `unknown` are recorded but never placed into a replay.
+- **Market behaviour and execution are counted separately, always.** The market can continue upward
+after a setup while your own trade loses money. They are two numbers, from two denominators, and
+never one "success rate".
+- **Unknown is a result.** A case with nothing recorded afterwards is counted as unknown and never as
+a reversal, and a rate is withheld entirely — with the counts still shown — until its sample clears
+a documented floor.
+- **Private storage.** Screenshots go to a private `journal-memory` bucket, not the public one. The
+record keeps the object's **path**, never a signed URL (which expires), and every upload is verified
+by reading the object back before the inline copy is discarded. A failed upload never costs you the
+picture.
+- **Consent, off by default.** Nothing is sent anywhere until you turn it on, and the screen says
+plainly what turning it on means. A picture saved without consent is stored privately and marked
+`skipped`, so the library still says what is searchable and why.
+
+### The five sections
+
+The tab is a section switcher rather than one long scroll, in the order the work happens:
+
+| Section | What it does |
+| --- | --- |
+| **Library** | Record, browse, filter, edit a sighting and record what happened afterwards. The consent switch and the display settings live here. |
+| **Indexing** | Move a backlog of inline screenshots into private storage and give each one an embedding. Resumable, cancellable, and honest about not having finished. |
+| **Find similar** | Upload a chart, get the closest pictures in the library, and read what the market did beside what the execution did. |
+| **Research** | How often each setup was **seen** against how often it was **taken**, with both outcome dimensions kept apart. |
+| **Retrieval quality** | Whether the search is actually finding the charts you judged similar — measured against your own verdicts, not asserted. |
+
+### The pipeline
+
+```
+chart (browser) --compress--> POST /api/memory --> gemini-embedding-2 --> vector(768)
+                                   |                                        |
+                            GEMINI_API_KEY                          memory_images
+                          (server, never the client)                      |
+                                                                          v
+chart -> embedding -> memory_match_images(...)  --cosine--> ranked resemblance -> screen
+```
+
+- **`api/memory.js` is a generated, committed bundle** like `api/coach.js` — run
+`npm run build:function` after changing `src/api/memory.ts`. It is a **separate function from the
+coach**, because the two spend different budgets: a backfill spends **one call per picture**, so a
+library of two hundred charts would otherwise lock you out of your own coach for the rest of the
+hour. Set `MEMORY_RATE_LIMIT` (default 600/hour) and `MEMORY_MAX_IN_FLIGHT` (default 2) to move its
+ceiling; a `GET` to the endpoint reports the limits in force and whether the key is visible.
+- **The key stays on the server.** The browser posts a compressed picture to your own endpoint,
+which forwards it with the server's key and returns numbers. Nothing in the client ever holds a
+model key, and `src/lib/memory/embedding-wire.ts` holds the contract the two sides agree on —
+deliberately separate from the client module, so the handler cannot drag a Supabase session into its
+bundle.
+- **One picture per request, deliberately.** The model **aggregates several inputs into a single
+embedding** rather than returning one per input, so a batch would come back as one vector for a group
+of charts — an embedding of none of them. Concurrency across calls is where the throughput comes
+from.
+- **A vector without its stamp is refused.** Model name, version and input size travel with every
+embedding; the search passes the same triple and `memory_match_images` rejects any row that does not
+match it, so two generations of embeddings can never be silently ranked against each other.
+- **Interruption is a state, not a crash.** A run that stops — cancelled, out of patience with a
+rate limit, or a closed tab — leaves every unfinished picture pending, and `status: 'processing'` is
+treated as work to redo rather than as work in progress, so a picture cannot be stranded by an
+interrupted run.
+- **Consent gates the query too.** The chart you search *with* is your own private chart, so with
+consent off the search refuses and says so. "Not allowed to search" and "nothing similar found" are
+different answers and the screen never renders the second for the first.
+
+### What is *not* implemented yet
+
+The Memory tab states all of this on screen, derived from real state, rather than offering controls
+that do nothing:
+
+- **The vision re-ranking pass** is not built. `MemoryAiSettings.rerankEnabled` exists and is stored,
+but nothing reads it; the ranking is the embedding distance alone.
+- **The research dashboard does not read the existing Analytics and Insights data.** It reports from
+the observation library only, so a setup's P&L history there is what was recorded *against an
+observation*, not the whole trade log. The existing tabs are unchanged and still cover their ground.
+- **The memory schema has not been applied to any project from this repository** — see the
+limitations at the end of this file. Everything above the database is tested against fakes; the SQL
+is verified by inspection, not by execution.
+- **The memory endpoint's own rate limit is per instance.** Unlike the coach's, which shares a row in
+`coach_quota`, this counter lives in the lambda's memory and resets on a cold start — a speed bump
+rather than a quota. That is a deliberate trade: indexing is cheap per call and the real protection
+is the session check, and sharing the coach's ledger would reintroduce the self-inflicted outage the
+separate function exists to avoid.
+
+### Engine layout
+
+```
+src/lib/memory/
+  eligibility.ts   what may be matched, and what was knowable when (the hindsight boundary)
+  similarity.ts    distance -> normalised resemblance, banding, deterministic ranking
+  outcomes.ts      the evidence arithmetic, with every denominator written down
+  results.ts       matched cases -> the summary a screen displays
+  indexing.ts      resumable backfill arithmetic: batching, capped backoff, retry rules
+  backfill.ts      what a run over the existing library should send, and what it is leaving behind
+  index-runner.ts  the loop that gives picture after picture an embedding, and stops honestly
+  db.ts            the tables and the one similarity query, with the row mappers between them
+  evaluation.ts    retrieval-quality measurement over hand-labelled examples
+  eval-sources.ts  saved searches + your own verdicts -> the evaluation harness's inputs
+  research.ts      seen against taken, per setup, with every denominator written down
+  embeddings.ts    the model, version, dimension and what makes a vector usable
+  embedding-wire.ts  the request/response contract shared by the client and the handler
+  embedding-api.ts the browser's half: post one picture, validate the numbers that come back
+  use-memory-indexing.ts  the hook that wires the runner to the database, the bucket and the UI
+  storage.ts       the private bucket: paths, checksums, verified uploads, signed URLs, migration
+  settings.ts      consent and display settings, with their bounds
+src/components/memory/
+  TradingMemoryView.tsx       the tab: the section switcher, consent, readiness, settings
+  ObservationLibrary.tsx      record, browse, filter, edit, and record what happened after
+  MemoryImagePicker.tsx       the private-bucket screenshot picker + signed-URL preview
+  MemorySearchView.tsx        pick a chart, search, and save what came back
+  MemorySearchResults.tsx     the ranked results, the comparison view, the verdicts
+  MemoryResearchView.tsx      where each setup's history goes
+  MemoryEvaluationView.tsx    whether retrieval actually finds anything
+```
+
+The splitting follows the same rule as the rest of the app: `eligibility`, `similarity`,
+`outcomes`, `results`, `indexing`, `backfill`, `index-runner`, `evaluation`, `eval-sources`,
+`research` and `settings` are pure and unit-tested with no browser, no bucket and no model.
+`storage.ts` is the only file that talks to Supabase Storage, and it is the only file that knows what
+a memory screenshot's path looks like. `db.ts` is the only file that knows the tables' column names,
+and `embedding-api.ts` is deliberately **not** re-exported from `index.ts`: it is the one module that
+reaches the network on the browser's behalf, and keeping it out of that barrel is what stops a future
+import dragging a Supabase session into the serverless bundle.
+
+### Database
+
+`supabase/schema.sql` now also creates, additively and safe to re-run:
+
+- `journal-memory` — a **private** bucket (`on conflict ... do update set public = false`, so a
+re-run can never hand public access back), with per-user folder policies.
+- `trading_observations`, `memory_images`, `memory_outcomes`, `memory_searches`,
+`memory_index_jobs` — all RLS-scoped to `auth.uid() = user_id`, keyed on the client's own record ids
+so that a snapshot re-sync upserts instead of duplicating.
+- `memory_images.embedding` as `vector(768)` with an HNSW cosine index.
+- `memory_match_images(...)` — the similarity search, `SECURITY INVOKER` (so RLS applies to the rows
+it reads) and with **no `user_id` parameter**: a caller cannot name whose library to search, only
+supply their own embedding. Pre-decision roles, a matching model/version and a strict
+`observed_at < cutoff` are enforced *in SQL*, so the exclusion is a property of the database rather
+than of whichever screen happened to call it.
+- `memory_prune_searches(days)` — the search-history retention policy, ninety days by default,
+  matching `MEMORY_SEARCH_RETENTION_DAYS`. It is a function you call rather than a trigger: retention
+  is a decision about your own history, so it stays something you can ask for and read the result of.
+
+The embeddings themselves are deliberately **not** in the journal snapshot: a 768-dimension vector
+per screenshot would turn a synced document that is meant to stay small into megabytes of numbers.
+The snapshot keeps the *description* of an embedding — model, version, dimension, status — and the
+vector stays in Postgres.
+
+---
+
 ## Scripts
 
 | Script | What it does |
@@ -289,7 +467,7 @@ src/
   App.tsx                  view composition, modals, tab routing
   types.ts                 the data model (TradingDay, Trade, DailyReview, ...)
   components/              by feature: today, trades, history, analytics,
-                           insights, coach, playbook, settings, common, layout
+                           insights, coach, playbook, memory, settings, common, layout
   lib/
     storage/               localStorage persistence + date helpers + failure reporting
     journal/               useJournalStore (records) + useCloudSync (load/save/conflict)
@@ -297,6 +475,7 @@ src/
     trading/               P&L, R, risk, scale-in grouping, Tradovate CSV import
     analytics/             aggregations, expectancy, drawdown, discipline, insights
     ai/                    digest, prompt, response validation, checkpoint cache
+    memory/                observation eligibility, similarity, outcomes, private storage
     playbook/              chart-pattern content, registry, geometry, timeline, deep links
   api/coach.ts             the serverless handler (bundled to api/coach.js)
 supabase/schema.sql        tables, RLS policies, storage bucket, coach quota
@@ -327,6 +506,13 @@ snapshot (`src/lib/utils/image-utils.ts`), which is fine for a handful and dange
 hundred:
 browsers give a site roughly 5 MB. **Videos are uploaded to Supabase Storage** instead and
 referenced by URL (`src/lib/media/media-utils.ts`), because a clip is megabytes of base64.
+
+**Trading Memory screenshots are the exception, deliberately.** They are the one kind of picture this
+app expects to accumulate into the hundreds, so they are uploaded to the private `journal-memory`
+bucket and referenced by path (`src/lib/memory/storage.ts`) — never inlined, in either the browser or
+the snapshot. The migration helper `migrateObservationImages` moves any that were written inline
+(which is what happens with no cloud to upload to) into the bucket, verifying each object before it
+drops the original, and leaving the picture untouched when the move fails.
 
 When a write fails — quota reached, storage blocked, stored JSON unreadable — the app now
 shows a sticky warning on every tab naming what was lost and what to do, instead of failing
@@ -380,3 +566,23 @@ Any host that serves a Vite build and Node serverless functions works; the check
 rather than merging (see above). A copy replaced by a sync is downloadable from Settings,
 but only the most recent one is kept.
 - `npm run lint` is only `tsc --noEmit`; there is no ESLint config and no CI workflow.
+- **Trading Memory's pipeline has never been run end to end.** The embedding endpoint, the indexing
+runner, the vector search, the results screen, the research dashboard and the retrieval evaluation
+are all built, and every rule inside them has unit tests — but the last step of the chain is a
+network call this repository cannot make on its own. So `POST /api/memory`, `memory_match_images`,
+the private bucket and the stored vectors have been exercised **only against fakes and against the
+generated bundle's shape**, never against a live Supabase project or a live Gemini key. Expect the
+first real run to find something: the most likely candidates are the embedding model's exact name
+and its `outputDimensionality` support, the RPC's `vector` cast over PostgREST, and the storage
+policies. Each of those fails loudly and says which one it was rather than degrading quietly, and
+the endpoint's `GET` health check reports whether its key is visible before anything is sent.
+- **`journal-media` is still public-read**, and `schema.sql` re-asserts it on every run. It holds
+the videos already attached to trades and lessons, whose stored URLs are their canonical address, so
+flipping the flag would break them with no way to identify which records were affected. Closing that
+means re-pointing every stored video URL at a private bucket and switching the app to signed URLs —
+a migration that has to run *before* the flag moves, which is why it is not bundled in with the new
+private bucket. Until then, any video already attached to a record is reachable by anyone holding its
+URL (paths carry a random suffix, so they cannot be guessed).
+- **The memory schema has not been applied to any project from this repository.** It is additive and
+safe to re-run, but it needs to be run before the Memory tab can offer anything beyond the local
+observation library.

@@ -88,6 +88,18 @@ const PlaybookView = lazy(() =>
 const SettingsView = lazy(() =>
   import('./components/settings/SettingsView').then((m) => ({ default: m.SettingsView }))
 );
+/**
+ * Trading Memory loads on demand like the other tab views.
+ *
+ * It is the heaviest screen in the app after the playbook — a form, an image picker, a filtered
+ * list and a consent panel — and none of it is needed for the first paint. Splitting it out is
+ * what keeps the upload box and its preview code out of a phone's initial download.
+ */
+const TradingMemoryView = lazy(() =>
+  import('./components/memory/TradingMemoryView').then((m) => ({
+    default: m.TradingMemoryView,
+  }))
+);
 import {
   TradingDay,
   TradingSession,
@@ -109,6 +121,8 @@ import {
   FeedbackNote,
   MarkedLevel,
   LevelOutlook,
+  TradingObservation,
+  MemoryAiSettings,
 } from './types';
 import { storage, dismissStorageFailure, measureJournalBytes } from './lib/storage';
 import { FOCUS_SETUP_NAMES } from './lib/playbook/focus-setups';
@@ -180,6 +194,8 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     mesLevels,
     sessionExtremes,
     chartSearches,
+    observations,
+    memoryAiSettings,
     lessons,
     mindsetNotes,
     coachPlans,
@@ -198,6 +214,8 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     setMesLevels,
     setSessionExtremes,
     setChartSearches,
+    setObservations,
+    setMemoryAiSettings,
     setLessons,
     setMindsetNotes,
     setCoachPlans,
@@ -1127,6 +1145,33 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
 
   const handleDeleteLesson = (lessonId: string) => {
     setLessons(storage.deleteLesson(lessonId));
+  };
+
+  /**
+   * Records a sighting, whether it is a brand new one or an edit of an existing one.
+   *
+   * One write for both, because storage upserts by id. That matters more here than anywhere else
+   * in the journal: an observation is continued over time — the outcome is decided days later, a
+   * second screenshot is attached, a setup is renamed once the day is over — and every one of
+   * those is the same sighting being filled in rather than a new sighting of the same setup.
+   */
+  const handleSaveObservation = (observation: TradingObservation) => {
+    setObservations(storage.saveObservation(observation));
+  };
+
+  const handleDeleteObservation = (observationId: string) => {
+    setObservations(storage.deleteObservation(observationId));
+  };
+
+  /**
+   * Changes one of the memory engine's settings.
+   *
+   * Routed through storage rather than set in React state directly, so the normaliser decides what
+   * the stored record means: consent reads as true only when it was explicitly set, and the moment
+   * it was given is stamped in the one place that writes it.
+   */
+  const handleChangeMemoryAiSettings = (patch: Partial<MemoryAiSettings>) => {
+    setMemoryAiSettings(storage.saveMemoryAiSettings(patch));
   };
 
   /**
@@ -2112,6 +2157,26 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
               coachPlans,
               onMarkRead: handleMarkLessonsRead,
             }}
+          />
+        );
+
+      case 'memory':
+        return (
+          <TradingMemoryView
+            observations={observations}
+            instruments={instruments}
+            setups={setups}
+            trades={trades}
+            tradingDays={tradingDays}
+            timezone={profile.timezone}
+            userId={userId}
+            todayTradeDate={todayTradingDay.tradeDate}
+            aiSettings={memoryAiSettings}
+            cloudEnabled={cloudEnabled}
+            onSaveObservation={handleSaveObservation}
+            onDeleteObservation={handleDeleteObservation}
+            onChangeAiSettings={handleChangeMemoryAiSettings}
+            onViewTrade={(trade) => setViewingTradeId(trade.id)}
           />
         );
 

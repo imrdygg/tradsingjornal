@@ -2,6 +2,9 @@
   "functions": {
     "api/coach.js": {
       "maxDuration": 60
+    },
+    "api/memory.js": {
+      "maxDuration": 60
     }
   }
 }

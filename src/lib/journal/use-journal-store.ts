@@ -20,6 +20,9 @@ import {
   Trade,
   TradingDay,
   UserProfile,
+  TradingObservation,
+  MemorySearch,
+  MemoryAiSettings,
 } from '../../types';
 
 /**
@@ -81,6 +84,23 @@ export function useJournalStore(userId: string) {
   const [chartSearches, setChartSearches] = useState<ChartSearch[]>(() =>
     storage.getChartSearches()
   );
+  // The trader's own chart observations: the setups they saw, whether or not they traded them.
+  // Held with the journal so a sighting is saved locally and carried between devices by the same
+  // debounced write. The embeddings for its screenshots are NOT here — they live in Postgres,
+  // because a 768-dimension vector per picture would turn this snapshot into megabytes of numbers.
+  const [observations, setObservations] = useState<TradingObservation[]>(() =>
+    storage.getObservations()
+  );
+  // The saved similarity searches, held with the journal so a search and its results are saved
+  // and carried across by the same debounced write as everything else.
+  const [memorySearches, setMemorySearches] = useState<MemorySearch[]>(() =>
+    storage.getMemorySearches()
+  );
+  // The memory engine's consent and display settings. Read on mount like the rest of the state,
+  // so the upload box knows whether a screenshot may be sent for indexing before it draws.
+  const [memoryAiSettings, setMemoryAiSettings] = useState<MemoryAiSettings>(() =>
+    storage.getMemoryAiSettings()
+  );
   // The lessons the trader wrote for themselves: their own notes, tags and media, held with
   // the rest of the state so they are saved and synced by the same debounced write.
   const [lessons, setLessons] = useState<Lesson[]>(() => storage.getLessons());
@@ -113,6 +133,9 @@ export function useJournalStore(userId: string) {
       mesLevels,
       sessionExtremes,
       chartSearches,
+      observations,
+      memorySearches,
+      memoryAiSettings,
       lessons,
       coachPlans,
       feedback,
@@ -132,6 +155,9 @@ export function useJournalStore(userId: string) {
       mesLevels,
       sessionExtremes,
       chartSearches,
+      observations,
+      memorySearches,
+      memoryAiSettings,
       lessons,
       coachPlans,
       feedback,
@@ -168,6 +194,12 @@ export function useJournalStore(userId: string) {
       setMesLevels(next.mesLevels ?? []);
       setSessionExtremes(next.sessionExtremes ?? []);
       setChartSearches(next.chartSearches ?? []);
+      setObservations(next.observations ?? []);
+      setMemorySearches(next.memorySearches ?? []);
+      // Re-read through the normaliser rather than adopting the snapshot's copy directly: an
+      // older device's consent flag has to resolve to "no consent" on the way in, not on the
+      // first render that happens to look at it.
+      setMemoryAiSettings(storage.getMemoryAiSettings());
       setLessons(next.lessons ?? []);
       setCoachPlans(next.coachPlans ?? []);
       setFeedback(next.feedback ?? []);
@@ -191,6 +223,9 @@ export function useJournalStore(userId: string) {
     mesLevels,
     sessionExtremes,
     chartSearches,
+    observations,
+    memorySearches,
+    memoryAiSettings,
     lessons,
     mindsetNotes,
     coachPlans,
@@ -209,6 +244,9 @@ export function useJournalStore(userId: string) {
     setMesLevels,
     setSessionExtremes,
     setChartSearches,
+    setObservations,
+    setMemorySearches,
+    setMemoryAiSettings,
     setLessons,
     setMindsetNotes,
     setCoachPlans,

@@ -318,7 +318,7 @@ The tab is a section switcher rather than one long scroll, in the order the work
 | --- | --- |
 | **Library** | Record, browse, filter, edit a sighting and record what happened afterwards. The consent switch and the display settings live here. |
 | **Indexing** | Move a backlog of inline screenshots into private storage and give each one an embedding. Resumable, cancellable, and honest about not having finished. |
-| **Find similar** | Upload a chart, get the closest pictures in the library, and read what the market did beside what the execution did. |
+| **Find similar** | Upload a chart, get the closest pictures in the library, and read what the market did beside what the execution did. When nothing is close, the chart can be kept as a sighting in one action — with no outcome and no vector yet, because neither is known at that moment. |
 | **Research** | How often each setup was **seen** against how often it was **taken**, with both outcome dimensions kept apart — and the setup's **whole trade log** beside them, so a setup traded far more often than it was photographed is not summarised by the two trades a sighting happens to point at. |
 | **Retrieval quality** | Whether the search is actually finding the charts you judged similar — measured against your own verdicts, not asserted. |
 
@@ -361,6 +361,15 @@ match it, so two generations of embeddings can never be silently ranked against 
 rate limit, or a closed tab — leaves every unfinished picture pending, and `status: 'processing'` is
 treated as work to redo rather than as work in progress, so a picture cannot be stranded by an
 interrupted run.
+- **A search that finds nothing can keep the chart it was asked about.** The failure is the informative
+case — *I have never kept this* — so the chart can be recorded as a sighting from that screen, in one
+click and with nothing sent. It arrives in a `before-setup` role (the only kind a later search can
+return), with no outcome and no vector, and the screen says both of those rather than letting the
+next search silently omit it. Nothing is recorded without the click: recording every chart used as a
+query would fill the library with queries.
+- **A search that cannot answer does not run.** With nothing indexed, the button is disabled and the
+reason is stated before the click, because the answer is knowable without spending a model call — the
+trader used to learn their library was empty by waiting for an embedding to come back and say so.
 - **Consent gates the query too.** The chart you search *with* is your own private chart, so with
 consent off the search refuses and says so. "Not allowed to search" and "nothing similar found" are
 different answers and the screen never renders the second for the first.

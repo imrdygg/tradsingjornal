@@ -24,6 +24,7 @@ import {
 } from '../../lib/memory/settings';
 import { MEMORY_RESEMBLANCE_FLOOR } from '../../lib/memory/similarity';
 import { useMemoryIndexing } from '../../lib/memory/use-memory-indexing';
+import { sightingFromSearchChart } from '../../lib/memory/sighting';
 import { ObservationLibrary } from './ObservationLibrary';
 import { MemorySearchView } from './MemorySearchView';
 import { MemoryResearchView } from './MemoryResearchView';
@@ -616,6 +617,15 @@ export const TradingMemoryView: React.FC<TradingMemoryViewProps> = ({
           trades={trades}
           cloudEnabled={cloudEnabled}
           onViewTrade={onViewTrade}
+          /*
+            The one recorded action the search screen offers, and the only path by which a chart
+            held up against the library becomes part of it. `sightingFromSearchChart` owns the shape
+            of what gets recorded — the role, the absent outcome, the pending index status — so this
+            component does not have to know any of it, and the shape is unit-tested on its own.
+          */
+          onRecordSighting={({ dataUrl, filters }) =>
+            onSaveObservation(sightingFromSearchChart({ userId, timezone, dataUrl, filters }))
+          }
         />
       )}
 

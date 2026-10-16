@@ -125,4 +125,33 @@ test.describe('Trading Memory sections', () => {
     await expect(noEvidence.first()).toBeVisible();
     await expect(page.locator('#memory-eval-figures')).toHaveCount(0);
   });
+
+  test('a chart that looks like nothing can be kept, with no outcome and no vector yet', async ({
+    page,
+  }) => {
+    await openMemory(page);
+    await openSection(page, 'search');
+
+    // Nothing is offered before a chart is picked: there is no sighting to record yet.
+    await expect(page.locator('#memory-search-record')).toHaveCount(0);
+
+    await page.locator('#memory-search-input').setInputFiles({
+      name: 'chart.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        'base64'
+      ),
+    });
+
+    // Offered even though this build has no project and cannot search at all: keeping the chart is
+    // the trader's own file, not a model call.
+    await expect(page.locator('#memory-search-record')).toBeVisible();
+    await page.locator('#memory-record-query').click();
+    await expect(page.locator('#memory-search-notice')).toContainText('no outcome and no vector yet');
+
+    // And it is a real record, not a notice: the library stops being empty.
+    await openSection(page, 'library');
+    await expect(page.locator('#observation-empty')).toHaveCount(0);
+  });
 });

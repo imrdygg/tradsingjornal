@@ -58,9 +58,14 @@ import {
  *   2. **Nothing here talks to a model directly.** The key stays on the server, and this screen's
  *      only route out is `requestChartEmbeddings`.
  *
- * The picked chart is never stored and never becomes an observation. A search is a question about
- * the library, not an entry in it — recording every chart the trader happened to hold up against
- * their history would fill the library with queries.
+ * The picked chart is never stored by the search itself, and never becomes an observation on its own.
+ * A search is a question about the library, not an entry in it — recording every chart the trader
+ * happened to hold up against their history would fill the library with queries.
+ *
+ * What the screen offers instead is the deliberate version of that. When a search finds nothing to
+ * compare against, the trader can record the chart as a sighting in one action: that is the moment
+ * the search has actually told them something — *I have never kept this* — and a sighting is exactly
+ * what is missing. It is one button, on the failure, and nothing is recorded without it.
  */
 
 export interface MemorySearchViewProps {
@@ -70,6 +75,15 @@ export interface MemorySearchViewProps {
   /** True when a Supabase project is configured, which the search and the private bucket both need. */
   cloudEnabled: boolean;
   onViewTrade?: (trade: Trade) => void;
+  /**
+   * Records the searched chart as a sighting of its own.
+   *
+   * Optional, and the action is not rendered without it, for the same reason the research dashboard
+   * hides its open button: a control that promises something it cannot do is worse than no control.
+   * Recording needs no cloud and no consent — it is a local record — so it is offered even where a
+   * search cannot run.
+   */
+  onRecordSighting?: (input: { dataUrl: string; filters: MemorySearchFilters }) => void;
 }
 
 /** A generated id for one saved search. Same shape as the indexing job ids, for the same reason. */
@@ -146,11 +160,13 @@ export const MemorySearchView: React.FC<MemorySearchViewProps> = ({
   trades,
   cloudEnabled,
   onViewTrade,
+  onRecordSighting,
 }) => {
   const [queryDataUrl, setQueryDataUrl] = useState<string | null>(null);
   const [queryLabel, setQueryLabel] = useState<string | undefined>(undefined);
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [recording, setRecording] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [ranking, setRanking] = useState<MemoryRanking | null>(null);
@@ -225,6 +241,16 @@ export const MemorySearchView: React.FC<MemorySearchViewProps> = ({
       0
     );
   }, [observations]);
+
+  /**
+   * Whether the library holds nothing a search could return.
+   *
+   * The button is gated on this because the answer is knowable before a model call is spent. Without
+   * the gate the trader picked a chart, waited for an embedding and was then told the library had
+   * nothing comparable in it — a refusal dressed as a result, which is the confusion the empty-state
+   * copy exists to prevent. Saying it before the click costs nothing and is true either way.
+   */
+  const nothingIndexed = searchableCount === 0;
 
   const filtersActive = Boolean(
     filters.instrument || filters.timeframe || filters.session || filters.setupName || filters.fromDate || filters.toDate
@@ -495,6 +521,35 @@ export const MemorySearchView: React.FC<MemorySearchViewProps> = ({
     }
   }
 
+  /**
+   * Records the chart that was searched with as a sighting of its own.
+   *
+   * The notice names the two things the new record does NOT have yet, because both are the reason it
+   * will not turn up in the next search: no vector, until indexing has run over it, and no outcome,
+   * until the trader has watched what price did. Leaving that unsaid is how a trader concludes the
+   * feature is broken.
+   */
+  function handleRecordQuery() {
+    if (!onRecordSighting || !queryDataUrl) return;
+    setRecording(true);
+    setNotice(null);
+    try {
+      onRecordSighting({ dataUrl: queryDataUrl, filters });
+      setNotice(
+        'Recorded in your library, with no outcome and no vector yet. Index it from the Indexing ' +
+          'section to make it searchable, and record what price did whenever you have watched it.'
+      );
+    } catch (err) {
+      setNotice(
+        'That sighting could not be recorded: ' +
+          (err instanceof Error ? err.message : 'the write failed.') +
+          ' Nothing was changed.'
+      );
+    } finally {
+      setRecording(false);
+    }
+  }
+
   return (
     <section
       id="memory-search"
@@ -654,9 +709,9 @@ export const MemorySearchView: React.FC<MemorySearchViewProps> = ({
                   type="button"
                   id="memory-search-run"
                   onClick={() => void runSearch()}
-                  disabled={busy || !queryDataUrl || !consent || !cloudEnabled}
+                  disabled={busy || !queryDataUrl || !consent || !cloudEnabled || nothingIndexed}
                   className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[11px] font-bold transition-colors ${
-                    busy || !queryDataUrl || !consent || !cloudEnabled
+                    busy || !queryDataUrl || !consent || !cloudEnabled || nothingIndexed
                       ? 'cursor-not-allowed border border-zinc-800 bg-zinc-900 text-zinc-600'
                       : 'border border-sky-500/60 bg-sky-500/20 text-sky-200 hover:bg-sky-500/30'
                   }`}
@@ -668,9 +723,28 @@ export const MemorySearchView: React.FC<MemorySearchViewProps> = ({
                   Showing results at {floor}% resemblance or above.
                 </span>
               </div>
-            </div>
+            </div>            {/* ---- Why the search cannot run, said before it is attempted ---- */}
 
-            {/* ---- Why the search cannot run, said before it is attempted ---- */}
+            {consent && cloudEnabled && nothingIndexed && (
+              <div
+                id="memory-search-nothing-indexed"
+                className="flex items-start gap-2 rounded-xl border border-amber-900/70 bg-amber-950/30 p-3"
+              >
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+                <div className="space-y-1">
+                  <p className="text-[11px] font-semibold text-amber-200">
+                    Nothing in your library is searchable yet.
+                  </p>
+                  <p className="text-[11px] leading-relaxed text-amber-200/80">
+                    A search would spend a model call to compare against nothing, so it is not run.
+                    Indexing is what makes a chart findable: the Indexing section moves each stored
+                    picture into your private bucket and gives it a vector. Recorded pictures that
+                    were never sent to a model are still kept — they are just not comparable.
+                  </p>
+                </div>
+              </div>
+            )}
+
             {!consent && (
               <div
                 id="memory-search-consent-block"
@@ -742,6 +816,35 @@ export const MemorySearchView: React.FC<MemorySearchViewProps> = ({
                 }}
                 symbolFor={(instrumentId) => symbolByInstrument.get(instrumentId) ?? instrumentId}
               />
+            )}
+
+            {/* ---- Nothing like it? Keep the chart. ---- */}
+            {onRecordSighting && queryDataUrl && (
+              <div
+                id="memory-search-record"
+                className="space-y-2 rounded-xl border border-zinc-800 bg-zinc-950/50 p-3"
+              >
+                <p className="text-[11px] leading-relaxed text-zinc-400">
+                  Nothing in the library looks like this? Record the chart as a sighting of its own.
+                  It is kept with <em>no outcome</em>, because what price did next is not known yet,
+                  and it does not need a search to have run — recording is your own file, not a model
+                  call. It becomes findable once indexing has run over it, and the picture of what
+                  happened afterwards can be attached at any time.
+                </p>
+                <button
+                  type="button"
+                  id="memory-record-query"
+                  onClick={handleRecordQuery}
+                  disabled={recording}
+                  className={`rounded-lg px-3 py-1.5 text-[11px] font-bold transition-colors ${
+                    recording
+                      ? 'cursor-not-allowed border border-zinc-800 bg-zinc-900 text-zinc-600'
+                      : 'border border-zinc-700 bg-zinc-800/80 text-zinc-200 hover:bg-zinc-800'
+                  }`}
+                >
+                  {recording ? 'Recording…' : 'Record this chart as a sighting'}
+                </button>
+              </div>
             )}
           </div>
         </div>

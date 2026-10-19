@@ -543,3 +543,20 @@ html.light body,
   color: #94a3b8 !important;
 }
 
+
+/* ---------------------------------------------------------------------------
+   A row that swipes but shows no scrollbar.
+
+   The tab bars are longer than the screen on purpose: ten sections cannot be
+   squeezed into a phone width without shrinking every icon. A visible
+   scrollbar would sit on top of the icons it scrolls and read as damage, so it
+   is hidden on every engine while the row stays keyboard- and touch-scrollable.
+   --------------------------------------------------------------------------- */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Calendar,
   ChevronDown,
@@ -16,6 +16,7 @@ import {
   Target,
   MessageSquarePlus,
   Brain,
+  History,
   CircleHelp,
 } from 'lucide-react';
 import { FeatureGuidePanel } from '../help/FeatureGuidePanel';
@@ -44,8 +45,8 @@ export type NavTab =
   // row was already full, and the alternative was burying the feature in the avatar menu beside
   // Settings, which is where things go when nobody needs them often.
   | 'memory'
-  // Reachable through the avatar menu, not the tab bars — they were out of room. History
-  // moved here when the tab bars filled up: it is still the day archive, just not a tab.
+  // The day archive. It used to be buried in the avatar menu because nine tabs filled the row;
+  // the bottom bar scrolls now, so it is a tab again and the archive is one press away.
   | 'history'
   | 'settings';
 
@@ -104,6 +105,13 @@ export const AppShell: React.FC<AppShellProps> = ({
   // The guide follows the tab it was opened from, so a trader who is lost opens one button and
   // lands on the screen they are already looking at rather than on a contents page.
   const [guideOpen, setGuideOpen] = useState(false);
+  // The bottom row holds ten tabs and scrolls, so a tab chosen from somewhere else (a
+  // deep link, the Today search, the guide) may be off screen. Center it, and only
+  // horizontally: `block: 'nearest'` keeps this from moving the page underneath.
+  const activeMobileTabRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    activeMobileTabRef.current?.scrollIntoView({ block: 'nearest', inline: 'center' });
+  }, [currentTab]);
 
   const navItems: Array<{ id: NavTab; label: string; icon: React.ComponentType<{ className?: string }> }> = [
     { id: 'today', label: 'Today', icon: Calendar },
@@ -115,6 +123,7 @@ export const AppShell: React.FC<AppShellProps> = ({
     { id: 'markets', label: 'Markets', icon: CandlestickChart },
     { id: 'playbook', label: 'Playbook', icon: BookOpen },
     { id: 'memory', label: 'Memory', icon: Brain },
+    { id: 'history', label: 'History', icon: History },
   ];
 
   const pnlSign = realizedPnL > 0 ? '+' : '';
@@ -233,7 +242,12 @@ export const AppShell: React.FC<AppShellProps> = ({
           </div>
 
           {/* Desktop navigation - only where there is genuinely room for it */}
-          <nav className="order-last hidden w-full items-center gap-1 rounded-xl border border-zinc-800 bg-zinc-900/90 p-1 lg:order-none lg:flex lg:w-auto">
+          {/*
+            Ten tabs, so the row may scroll on a laptop as well as a phone. `flex-none` plus a
+            scroll container is deliberate: shrinking the buttons instead is what turned the
+            labels into two-line stubs at 1024px.
+          */}
+          <nav className="no-scrollbar order-last hidden w-full items-center gap-1 overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-900/90 p-1 lg:order-none lg:flex lg:w-auto">
             {navItems.map((item) => {
               const Icon = item.icon;
               const isActive = currentTab === item.id;
@@ -242,7 +256,7 @@ export const AppShell: React.FC<AppShellProps> = ({
                   key={item.id}
                   id={`nav-btn-${item.id}`}
                   onClick={() => onSelectTab(item.id)}
-                  className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-1.5 text-xs font-medium transition-all lg:flex-none ${
+                  className={`flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
                     isActive
                       ? 'border border-zinc-700/50 bg-zinc-800 text-zinc-100 shadow-sm'
                       : 'text-zinc-400 hover:bg-zinc-800/40 hover:text-zinc-200'
@@ -317,14 +331,13 @@ export const AppShell: React.FC<AppShellProps> = ({
               <span className="sm:hidden">Trade</span>
             </button>
 
-            {/* Always mounted: Settings now lives in this menu, so it exists for
+            {/* Always mounted: Settings lives in this menu, so it exists for
                 local (unsigned-in) journals too, where there is no sign-out. */}
             <AccountMenu
               email={userEmail}
               onSignOut={onSignOut}
               signingOut={signingOut}
               onOpenSettings={() => onSelectTab('settings')}
-              onOpenHistory={() => onSelectTab('history')}
             />
           </div>
         </div>
@@ -415,37 +428,47 @@ export const AppShell: React.FC<AppShellProps> = ({
         id="mobile-nav"
         className="pb-safe z-40 shrink-0 border-t border-zinc-800/90 bg-zinc-950 pt-1.5 lg:hidden"
       >
-        {/* Nine tabs, one per column: Settings moved to the avatar menu, so Markets
-            finally fits without the grid wrapping. Trading Memory then took the ninth slot,
-            which leaves roughly 35px per column at 320px — too narrow for any label longer
-            than four characters. Truncating them there was worse than dropping them: 'Analyti'
-            reads as a broken label rather than as a shorter one, and it is read at a glance,
-            mid-decision. So below `sm` the bar is icons only and the label lives in the
-            button's accessible name; from `sm` the columns are wide enough for the full word
-            and it comes back. A tenth tab still would not fit this row at 320px — the next
-            addition has to move a tab to the avatar menu, or the row has to wrap. */}
-        <div className="grid grid-cols-9 gap-0.5 px-1 sm:gap-1 sm:px-2">
+        {/*
+          Ten tabs in one swipeable row.
+
+          This was a fixed nine-column grid, which forced every icon down to 16px so ten of
+          them could fit at 320px. The row scrolls now, so each tab can keep a comfortable
+          width and a 22px icon — the reason the bar is worth tapping at all. Below `sm` the
+          label is dropped (it was unreadable in a 35px column) and stays in the accessible
+          name; from `sm` the words come back under the icons.
+        */}
+        <div
+          id="mobile-nav-row"
+          role="tablist"
+          aria-label="Sections"
+          className="no-scrollbar flex snap-x snap-mandatory gap-0.5 overflow-x-auto px-1 pb-0.5 sm:gap-1 sm:px-2"
+        >
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = currentTab === item.id;
             return (
               <button
                 key={item.id}
+                ref={isActive ? activeMobileTabRef : undefined}
                 id={`mobile-nav-${item.id}`}
+                role="tab"
+                aria-selected={isActive}
                 // The label below is hidden at the narrowest widths, so the name has to come
                 // from here rather than from the button's contents.
                 aria-label={item.label}
                 onClick={() => onSelectTab(item.id)}
-                className={`relative flex flex-col items-center justify-center rounded-lg py-1 text-[9px] transition-colors ${
+                className={`relative flex min-w-[3.9rem] shrink-0 snap-center flex-col items-center justify-center rounded-lg px-1.5 py-1.5 text-[10px] transition-colors sm:min-w-[4.6rem] ${
                   isActive
                     ? 'bg-zinc-900 font-medium text-zinc-100'
                     : 'text-zinc-400 hover:text-zinc-200'
                 }`}
               >
-                <span className="relative mb-0.5">
-                  <Icon className={`h-4 w-4 ${isActive ? 'text-zinc-100' : 'text-zinc-400'}`} />
+                <Icon
+                  className={`h-[22px] w-[22px] ${isActive ? 'text-zinc-100' : 'text-zinc-400'}`}
+                />
+                <span className="mt-0.5 hidden w-full truncate text-center sm:block">
+                  {item.label}
                 </span>
-                <span className="hidden w-full truncate text-center sm:block">{item.label}</span>
               </button>
             );
           })}

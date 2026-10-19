@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { LogOut, Loader2, Cloud, User, Settings as SettingsIcon, History } from 'lucide-react';
+import { LogOut, Loader2, Cloud, User, Settings as SettingsIcon } from 'lucide-react';
 
 interface AccountMenuProps {
   email?: string | null;
@@ -7,8 +7,6 @@ interface AccountMenuProps {
   signingOut?: boolean;
   /** Opens the Settings tab; the avatar menu is now the way to reach it. */
   onOpenSettings?: () => void;
-  /** Opens the day archive. It moved here when the Calls tab took its place in the bar. */
-  onOpenHistory?: () => void;
 }
 
 /**
@@ -16,14 +14,14 @@ interface AccountMenuProps {
  * the signed-in email, Settings, and (when signed in) Sign out. Settings moved
  * here out of the tab bars, which were out of room — the avatar keeps the
  * header narrow so it cannot overflow on laptop widths, where a full-width
- * email + button did.
+ * email + button did. History no longer lives here: the bottom bar scrolls, so
+ * the archive is a tab of its own rather than a second item behind the avatar.
  */
 export const AccountMenu: React.FC<AccountMenuProps> = ({
   email,
   onSignOut,
   signingOut = false,
   onOpenSettings,
-  onOpenHistory,
 }) => {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -91,22 +89,6 @@ export const AccountMenu: React.FC<AccountMenuProps> = ({
               {email ?? 'Saved in this browser'}
             </p>
           </div>
-
-          {onOpenHistory && (
-            <button
-              id="account-menu-history-btn"
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                setOpen(false);
-                onOpenHistory();
-              }}
-              className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-xs font-medium text-zinc-200 transition-colors hover:bg-zinc-800"
-            >
-              <History className="h-4 w-4 text-zinc-400" />
-              History
-            </button>
-          )}
 
           {onOpenSettings && (
             <button

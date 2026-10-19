@@ -1,8 +1,9 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
   BookmarkPlus,
   CalendarClock,
+  CheckCircle2,
   ChevronDown,
   ChevronUp,
   Filter,
@@ -36,6 +37,8 @@ import { tradeResultSample } from '../../lib/memory/results';
 import { promoteJournalImage, unlabelledImages } from '../../lib/memory/journal-import';
 import { MemoryImagePicker, MemoryImageThumb } from './MemoryImagePicker';
 import { JournalImportPanel } from './JournalImportPanel';
+import { ModalOverlay } from '../common/ModalOverlay';
+import { ImageLightboxModal } from '../common/ImageLightboxModal';
 
 /**
  * The library of market situations the trader has recorded.
@@ -86,6 +89,8 @@ export interface ObservationLibraryProps {
   onSave: (observation: TradingObservation) => void;
   onDelete: (id: string) => void;
   onViewTrade: (trade: Trade) => void;
+  /** A record to bring into view, set when a search result's "Open the sighting" is pressed. */
+  focusObservationId?: string;
 }
 
 const TIMEFRAMES: LevelTimeframe[] = ['1m', '3m', '5m', '15m', '30m', '1h'];
@@ -182,8 +187,34 @@ export const ObservationLibrary: React.FC<ObservationLibraryProps> = ({
   onSave,
   onDelete,
   onViewTrade,
+  focusObservationId,
 }) => {
   const [draft, setDraft] = useState<TradingObservation | null>(null);
+  /**
+   * The picture being viewed large.
+   *
+   * The library is read as thumbnails, and a chart is unreadable at 80 pixels. Every picture in
+   * it therefore opens in the app's lightbox — including the unlabelled ones, because the trader
+   * has to be able to read a chart before deciding what it shows.
+   */
+  const [lightbox, setLightbox] = useState<{
+    images: string[];
+    index: number;
+    title: string;
+    subtitle?: string;
+  } | null>(null);
+  /**
+   * The last picture labelled from this screen, said back to the trader.
+   *
+   * Labelling only changes a role, so without this the only visible difference is a strip
+   * disappearing — which reads as a click that did nothing, especially when the picture itself
+   * cannot be drawn yet because its signed link has not arrived.
+   */
+  const [labelNotice, setLabelNotice] = useState<string | null>(null);
+  /** The record a search just asked for, highlighted briefly once it has been scrolled to. */
+  const [focusId, setFocusId] = useState<string | null>(null);
+  /** A record the screen still owes a jump to, held until it is actually rendered. */
+  const [jumpTo, setJumpTo] = useState<{ id: string; targetId?: string } | null>(null);
   /** Which observation's outcome panel is open. One at a time: this is a form, not a table. */
   const [outcomeOpenId, setOutcomeOpenId] = useState<string | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -231,8 +262,56 @@ export const ObservationLibrary: React.FC<ObservationLibraryProps> = ({
     });
   }, [sorted, filter]);
 
+  /**
+   * Reads the search result's request as a jump, rather than scrolling here.
+   *
+   * The section switch has already happened by the time this runs, so the record is rendered; the
+   * jump below is what answers "nothing happened" when the card was above the fold, or when the
+   * trader cannot tell which of several cards was the match.
+   */
+  useEffect(() => {
+    if (!focusObservationId) return;
+    setJumpTo({ id: focusObservationId });
+  }, [focusObservationId]);
+
   const activeFilterCount =
     (filter.instrumentId ? 1 : 0) + (filter.session ? 1 : 0) + (filter.query.trim() ? 1 : 0);
+
+  /**
+   * Scrolls a record — or one part of it — into view and rings it for a moment.
+   *
+   * Returns whether the node was on screen at all, because a record the filters are hiding must
+   * not report itself brought into view.
+   */
+  function ringRecord(id: string, targetId = `observation-${id}`): boolean {
+    const node = document.getElementById(targetId) ?? document.getElementById(`observation-${id}`);
+    if (!node) return false;
+    node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setFocusId(id);
+    return true;
+  }
+
+  /**
+   * Landed the jump.
+   *
+   * Two controls on this screen ask for a record by name — a search result and the import panel's
+   * "waiting for a label" count — and both are dead clicks whenever the filters happen to be
+   * hiding that record. So a jump that finds nothing clears the filters once and tries again, and
+   * only then gives up: a click that cannot land says so through the list it just revealed.
+   */
+  useEffect(() => {
+    if (!jumpTo) return;
+    if (ringRecord(jumpTo.id, jumpTo.targetId)) {
+      setJumpTo(null);
+      const timer = window.setTimeout(() => setFocusId(null), 2600);
+      return () => window.clearTimeout(timer);
+    }
+    if (activeFilterCount > 0) {
+      setFilter({ instrumentId: '', session: '', query: '' });
+      return;
+    }
+    setJumpTo(null);
+  }, [jumpTo, visible.length, activeFilterCount]);
 
   const indexedCount = sorted.filter((observation) =>
     (observation.images ?? []).some((image) => image.indexStatus === 'completed')
@@ -245,11 +324,27 @@ export const ObservationLibrary: React.FC<ObservationLibraryProps> = ({
   function startNew() {
     setDraft(newObservation(userId, timezone));
     setOutcomeOpenId(null);
+    setLabelNotice(null);
   }
 
   function startEdit(observation: TradingObservation) {
     setDraft({ ...observation, images: [...(observation.images ?? [])] });
     setOutcomeOpenId(null);
+    setLabelNotice(null);
+  }
+
+  /** Opens one picture at full size, with the record's own words as its title. */
+  function openImage(
+    src: string,
+    observation: TradingObservation,
+    subtitle = 'Screenshot attached to this sighting.'
+  ) {
+    setLightbox({
+      images: [src],
+      index: 0,
+      title: `${observation.symbol || 'Chart'} · ${formatTimestamp(observation.observedAt, timezone)}`,
+      subtitle,
+    });
   }
 
   /** Replaces one image slot on the draft, keeping the other slot untouched. */
@@ -332,6 +427,17 @@ export const ObservationLibrary: React.FC<ObservationLibraryProps> = ({
         ))}
       </div>
 
+      {labelNotice && (
+        <p
+          id="observation-label-notice"
+          role="status"
+          className="flex items-start gap-2 rounded-xl border border-emerald-900/60 bg-emerald-950/25 p-3 text-[11px] leading-relaxed text-emerald-200"
+        >
+          <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-400" />
+          <span>{labelNotice}</span>
+        </p>
+      )}
+
       {/*
         ---- What the journal already holds, and cannot be searched ----
 
@@ -349,14 +455,27 @@ export const ObservationLibrary: React.FC<ObservationLibraryProps> = ({
         consentToIndex={consentToIndex}
         cloudEnabled={cloudEnabled}
         onSave={onSave}
+        onFindUnlabelled={() => {
+          const waiting = observations.find((observation) => unlabelledImages(observation).length > 0);
+          if (!waiting) return;
+          setJumpTo({ id: waiting.id, targetId: `observation-unlabelled-${waiting.id}` });
+        }}
       />
 
       {/* ---- The record form. Open only while something is being written. ---- */}
       {draft && (
-        <div
-          id="observation-form"
-          className="space-y-4 rounded-2xl border border-sky-900/60 bg-zinc-900/70 p-4"
+        <ModalOverlay
+          onRequestClose={() => setDraft(null)}
+          label={
+            observations.some((existing) => existing.id === draft.id)
+              ? 'Edit this sighting'
+              : 'Record a sighting'
+          }
         >
+          <div
+            id="observation-form"
+            className="relative max-h-[92vh] w-full max-w-3xl space-y-4 overflow-y-auto rounded-2xl border border-sky-900/60 bg-zinc-900 p-4 shadow-2xl sm:p-5"
+          >
           <div className="flex items-center justify-between gap-2">
             <h3 className="text-xs font-bold tracking-tight text-zinc-100">
               {observations.some((existing) => existing.id === draft.id)
@@ -380,6 +499,7 @@ export const ObservationLibrary: React.FC<ObservationLibraryProps> = ({
             >
               <input
                 id="observation-when"
+                autoFocus
                 type="datetime-local"
                 className={fieldClass}
                 value={toLocalInputValue(new Date(draft.observedAt))}
@@ -636,7 +756,8 @@ export const ObservationLibrary: React.FC<ObservationLibraryProps> = ({
               </p>
             )}
           </div>
-        </div>
+          </div>
+        </ModalOverlay>
       )}
 
       {/* ---- Filters. Folded away, because most visits are to read the list. ---- */}
@@ -749,13 +870,19 @@ export const ObservationLibrary: React.FC<ObservationLibraryProps> = ({
                 key={observation.id}
                 id={`observation-${observation.id}`}
                 data-observation-id={observation.id}
-                className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3"
+                data-focused={focusId === observation.id ? 'true' : undefined}
+                className={`rounded-xl border bg-zinc-900/60 p-3 transition-shadow ${
+                  focusId === observation.id
+                    ? 'border-sky-500/70 ring-2 ring-sky-500/40'
+                    : 'border-zinc-800'
+                }`}
               >
                 <div className="flex flex-wrap items-start gap-3">
                   {before ? (
                     <MemoryImageThumb
                       image={before}
                       alt={`The chart from ${observation.symbol} on ${observation.observedAt.slice(0, 10)}`}
+                      onOpen={(src) => openImage(src, observation)}
                     />
                   ) : (
                     <div className="flex h-14 w-20 shrink-0 items-center justify-center rounded-lg border border-dashed border-zinc-800 text-[9px] text-zinc-600">
@@ -860,6 +987,13 @@ export const ObservationLibrary: React.FC<ObservationLibraryProps> = ({
                               <MemoryImageThumb
                                 image={image}
                                 alt="A chart brought in from the journal, not labelled yet"
+                                onOpen={(src) =>
+                                  openImage(
+                                    src,
+                                    observation,
+                                    'Unlabelled picture brought in from the journal. Say what it shows to make it searchable.'
+                                  )
+                                }
                               />
                               <div className="space-y-1">
                                 <span className="inline-block rounded-md border border-amber-900/70 bg-amber-950/50 px-1.5 py-0.5 font-mono text-[9px] text-amber-300">
@@ -868,13 +1002,19 @@ export const ObservationLibrary: React.FC<ObservationLibraryProps> = ({
                                 <button
                                   type="button"
                                   id={`observation-label-${image.id}`}
-                                  onClick={() =>
+                                  onClick={() => {
                                     onSave(
                                       promoteJournalImage(observation, image.id, {
                                         consent: consentToIndex,
                                       })
-                                    )
-                                  }
+                                    );
+                                    setLabelNotice(
+                                      `${observation.symbol || 'This chart'} — labelled as the picture from before your decision. ` +
+                                        (consentToIndex
+                                          ? 'It is queued for indexing; once that has run, a search can return it.'
+                                          : 'Indexing is off for this library, so it stays readable here but no search will send it.')
+                                    );
+                                  }}
                                   className="block rounded-lg border border-sky-800 px-2 py-1 text-[10px] font-semibold text-sky-300 transition-colors hover:bg-sky-950/60"
                                 >
                                   This was the chart before my decision
@@ -980,6 +1120,15 @@ export const ObservationLibrary: React.FC<ObservationLibraryProps> = ({
           })}
         </div>
       )}
+
+      <ImageLightboxModal
+        isOpen={lightbox !== null}
+        onClose={() => setLightbox(null)}
+        images={lightbox?.images ?? []}
+        initialIndex={lightbox?.index ?? 0}
+        title={lightbox?.title}
+        subtitle={lightbox?.subtitle}
+      />
     </section>
   );
 };

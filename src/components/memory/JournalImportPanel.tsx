@@ -38,6 +38,13 @@ export interface JournalImportPanelProps {
   /** False in a local-only build, where there is no bucket to upload into. */
   cloudEnabled: boolean;
   onSave: (observation: TradingObservation) => void;
+  /**
+   * Takes the trader to the first picture still waiting for a label.
+   *
+   * "Waiting for a label" is the one number on this panel that is an instruction, not a fact, and
+   * pressing it used to do nothing because it was drawn as a plain tile. It is a jump target now.
+   */
+  onFindUnlabelled?: () => void;
 }
 
 /** Reads the panel's numbers off a plan, named once so the wording and the arithmetic cannot drift. */
@@ -64,6 +71,7 @@ export const JournalImportPanel: React.FC<JournalImportPanelProps> = ({
   consentToIndex,
   cloudEnabled,
   onSave,
+  onFindUnlabelled,
 }) => {
   const plan = useMemo(() => planJournalImport({ trades, observations }), [trades, observations]);
   const unlabelled = useMemo(() => countUnlabelledImages(observations), [observations]);
@@ -129,7 +137,7 @@ export const JournalImportPanel: React.FC<JournalImportPanelProps> = ({
         </div>
       </div>
 
-      {facts.total === 0 ? (
+      {facts.total === 0 && facts.unlabelled === 0 ? (
         <p
           id="memory-journal-import-empty"
           className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3 text-[11px] leading-relaxed text-zinc-500"
@@ -140,23 +148,49 @@ export const JournalImportPanel: React.FC<JournalImportPanelProps> = ({
         </p>
       ) : (
         <>
+          {facts.total === 0 && (
+            <p
+              id="memory-journal-import-empty"
+              className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3 text-[11px] leading-relaxed text-zinc-500"
+            >
+              No trade in this journal has a chart attached, so there is nothing left to bring in. The
+              pictures already here are the ones still waiting below.
+            </p>
+          )}
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {[
               { id: 'total', label: 'Trade screenshots', value: facts.total },
               { id: 'already', label: 'Already imported', value: facts.alreadyHere },
               { id: 'ready', label: 'Ready to bring in', value: facts.ready },
               { id: 'unlabelled', label: 'Waiting for a label', value: facts.unlabelled },
-            ].map((fact) => (
-              <div
-                key={fact.id}
-                id={`memory-journal-import-${fact.id}`}
-                data-value={fact.value}
-                className="rounded-xl border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-center"
-              >
-                <div className="font-mono text-base font-semibold text-zinc-100">{fact.value}</div>
-                <div className="text-[9px] uppercase tracking-wide text-zinc-500">{fact.label}</div>
-              </div>
-            ))}
+            ].map((fact) => {
+              const jumpable = fact.id === 'unlabelled' && fact.value > 0 && !!onFindUnlabelled;
+              const shell = 'rounded-xl border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-center';
+              const body = (
+                <>
+                  <div className="font-mono text-base font-semibold text-zinc-100">{fact.value}</div>
+                  <div className="text-[9px] uppercase tracking-wide text-zinc-500">{fact.label}</div>
+                </>
+              );
+              return jumpable ? (
+                <button
+                  key={fact.id}
+                  type="button"
+                  id={`memory-journal-import-${fact.id}`}
+                  data-value={fact.value}
+                  onClick={onFindUnlabelled}
+                  title="Show the pictures still waiting for a label"
+                  className={`${shell} transition-colors hover:border-amber-700/70 hover:bg-amber-950/20`}
+                >
+                  {body}
+                  <div className="text-[9px] text-amber-300/80">show them</div>
+                </button>
+              ) : (
+                <div key={fact.id} id={`memory-journal-import-${fact.id}`} data-value={fact.value} className={shell}>
+                  {body}
+                </div>
+              );
+            })}
           </div>
 
           <div className="flex flex-wrap items-center gap-2">

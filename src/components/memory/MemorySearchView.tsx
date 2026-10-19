@@ -23,6 +23,7 @@ import {
   type MemoryRanking,
 } from '../../lib/memory/similarity';
 import { memorySearchExpiry } from '../../lib/memory/settings';
+import { ImageLightboxModal } from '../common/ImageLightboxModal';
 import {
   MemorySearchResults,
   type MemorySearchResult,
@@ -84,6 +85,15 @@ export interface MemorySearchViewProps {
    * search cannot run.
    */
   onRecordSighting?: (input: { dataUrl: string; filters: MemorySearchFilters }) => void;
+  /**
+   * Jumps to a matched record in the library.
+   *
+   * The result row's own label is "Open the sighting", so the button has to land on the
+   * sighting. It used to open the linked trade when there was one and otherwise do nothing at
+   * all, which is the dead-click this prop replaces; the trade is still reachable from the
+   * record once it is on screen.
+   */
+  onOpenObservation?: (observationId: string) => void;
 }
 
 /** A generated id for one saved search. Same shape as the indexing job ids, for the same reason. */
@@ -161,8 +171,11 @@ export const MemorySearchView: React.FC<MemorySearchViewProps> = ({
   cloudEnabled,
   onViewTrade,
   onRecordSighting,
+  onOpenObservation,
 }) => {
   const [queryDataUrl, setQueryDataUrl] = useState<string | null>(null);
+  /** The query chart at full size: a 160px preview cannot be read for structure. */
+  const [zoomOpen, setZoomOpen] = useState(false);
   const [queryLabel, setQueryLabel] = useState<string | undefined>(undefined);
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -574,14 +587,20 @@ export const MemorySearchView: React.FC<MemorySearchViewProps> = ({
             <div className="space-y-2">
               {queryDataUrl ? (
                 <div className="flex items-start gap-3">
-                  <div className="relative h-24 w-40 shrink-0 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950">
+                  <button
+                    type="button"
+                    id="memory-search-preview-zoom"
+                    onClick={() => setZoomOpen(true)}
+                    title="Click to view this chart larger"
+                    className="h-24 w-40 shrink-0 cursor-zoom-in overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950 focus:outline-none focus:ring-2 focus:ring-sky-500/40"
+                  >
                     <img
                       id="memory-search-preview"
                       src={queryDataUrl}
                       alt="The chart being searched with"
                       className="h-full w-full object-cover"
                     />
-                  </div>
+                  </button>
                   <div className="space-y-1.5">
                     <p className="text-[11px] leading-relaxed text-zinc-400">
                       {queryLabel ? `${queryLabel} — ` : ''}
@@ -812,6 +831,10 @@ export const MemorySearchView: React.FC<MemorySearchViewProps> = ({
                 verdicts={verdicts}
                 onVerdict={(observationId, verdict) => void handleVerdict(observationId, verdict)}
                 onOpenMatch={(result) => {
+                  if (onOpenObservation) {
+                    onOpenObservation(result.match.observationId);
+                    return;
+                  }
                   if (result.trade && onViewTrade) onViewTrade(result.trade);
                 }}
                 symbolFor={(instrumentId) => symbolByInstrument.get(instrumentId) ?? instrumentId}
@@ -849,6 +872,14 @@ export const MemorySearchView: React.FC<MemorySearchViewProps> = ({
           </div>
         </div>
       </div>
+
+      <ImageLightboxModal
+        isOpen={zoomOpen && !!queryDataUrl}
+        onClose={() => setZoomOpen(false)}
+        images={queryDataUrl ? [queryDataUrl] : []}
+        title={queryLabel ?? 'The chart you searched with'}
+        subtitle="The picture this search was made with. It is not stored as a record."
+      />
     </section>
   );
 };

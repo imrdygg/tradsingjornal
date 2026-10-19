@@ -158,6 +158,14 @@ export const TradingMemoryView: React.FC<TradingMemoryViewProps> = ({
   // The library is the default because it is where recording happens, and because it is the one
   // section that works on a journal with no cloud, no consent and nothing indexed yet.
   const [section, setSection] = useState<MemorySection>('library');
+  /**
+   * The record a search asked to open, once the library is the section on screen.
+   *
+   * Held here rather than inside the library because the click happens on the search screen: the
+   * section switch and the scroll have to be two halves of one action, and state is what carries
+   * the second half across the re-render.
+   */
+  const [focusObservationId, setFocusObservationId] = useState<string | null>(null);
 
   /**
    * The indexing run, driven here rather than inside a card so its progress survives the trader
@@ -496,6 +504,7 @@ export const TradingMemoryView: React.FC<TradingMemoryViewProps> = ({
         onSave={onSaveObservation}
         onDelete={onDeleteObservation}
         onViewTrade={onViewTrade}
+        focusObservationId={focusObservationId ?? undefined}
       />
 
       <p className="px-1 text-[10px] leading-relaxed text-zinc-600">
@@ -669,6 +678,10 @@ export const TradingMemoryView: React.FC<TradingMemoryViewProps> = ({
           onRecordSighting={({ dataUrl, filters }) =>
             onSaveObservation(sightingFromSearchChart({ userId, timezone, dataUrl, filters }))
           }
+          onOpenObservation={(observationId) => {
+            setFocusObservationId(observationId);
+            setSection('library');
+          }}
         />
       )}
 

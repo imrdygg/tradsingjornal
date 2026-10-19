@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { AlertCircle, ImagePlus, Loader2, Maximize2, Trash2 } from 'lucide-react';
 import type { MemoryImage, MemoryImageRole } from '../../types';
 import { compressAndReadImage, getImageFromPasteEvent } from '../../lib/utils/image-utils';
+import { ImageLightboxModal } from '../common/ImageLightboxModal';
 import {
   checksumDataUrl,
   createMemoryImageUrl,
@@ -113,6 +114,8 @@ export const MemoryImagePicker: React.FC<MemoryImagePickerProps> = ({
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  /** The attached picture, open at full size. A chart is unreadable in a 160px preview. */
+  const [zoom, setZoom] = useState(false);
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const previewSrc = useMemoryImageSrc(image);
@@ -221,14 +224,23 @@ export const MemoryImagePicker: React.FC<MemoryImagePickerProps> = ({
 
       {image && previewSrc ? (
         <div className="flex items-start gap-3">
-          <div className="relative h-24 w-40 shrink-0 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950">
+          <button
+            type="button"
+            id={`${idPrefix}-zoom`}
+            onClick={() => setZoom(true)}
+            title="View this screenshot larger"
+            className="group relative h-24 w-40 shrink-0 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950 focus:outline-none focus:ring-2 focus:ring-sky-500/40"
+          >
             <img
               id={`${idPrefix}-preview`}
               src={previewSrc}
               alt={`${label} screenshot`}
               className="h-full w-full object-cover"
             />
-          </div>
+            <span className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 transition-opacity group-hover:opacity-100">
+              <Maximize2 className="h-4 w-4 text-zinc-100" />
+            </span>
+          </button>
           <div className="space-y-1.5">
             <p className="text-[11px] leading-relaxed text-zinc-400">
               {helperText ??
@@ -324,6 +336,14 @@ export const MemoryImagePicker: React.FC<MemoryImagePickerProps> = ({
       {note && (
         <p className="text-[10px] leading-relaxed text-amber-300/90">{note}</p>
       )}
+
+      <ImageLightboxModal
+        isOpen={zoom && !!previewSrc}
+        onClose={() => setZoom(false)}
+        images={previewSrc ? [previewSrc] : []}
+        title={label}
+        subtitle="The chart attached to this sighting."
+      />
     </div>
   );
 };

@@ -32,6 +32,7 @@ import {
   type MemoryEvidence,
 } from '../../lib/memory/results';
 import { formatMemoryRate } from '../../lib/memory/outcomes';
+import { ImageLightboxModal } from '../common/ImageLightboxModal';
 
 /**
  * The result of one similarity search, as the trader reads it.
@@ -210,17 +211,25 @@ const PictureSlot: React.FC<{
   alt: string;
   caption: string;
   remark?: string;
-}> = ({ url, alt, caption, remark }) => (
+  onOpen?: (url: string) => void;
+}> = ({ url, alt, caption, remark, onOpen }) => (
   <figure className="min-w-0 space-y-1.5">
     <figcaption className="flex items-center gap-1.5 text-[10px] font-mono font-bold uppercase text-zinc-500">
       {caption}
     </figcaption>
     {url ? (
-      <img
-        src={url}
-        alt={alt}
-        className="w-full rounded-lg border border-zinc-800 bg-zinc-950 object-contain"
-      />
+      <button
+        type="button"
+        onClick={() => onOpen?.(url)}
+        className="block w-full cursor-zoom-in focus:outline-none focus:ring-2 focus:ring-sky-500/40"
+        title="Click to view this chart larger"
+      >
+        <img
+          src={url}
+          alt={alt}
+          className="w-full rounded-lg border border-zinc-800 bg-zinc-950 object-contain"
+        />
+      </button>
     ) : (
       <div className="flex h-40 w-full flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-zinc-800 bg-zinc-950/60 px-3 text-center">
         <ImageOff className="h-4 w-4 text-zinc-600" />
@@ -251,6 +260,13 @@ export const MemorySearchResults: React.FC<MemorySearchResultsProps> = ({
 }) => {
   const [selected, setSelected] = useState<string | null>(null);
   const activeId = selectedObservationId ?? selected;
+  /** The chart being read at full size, in the compare panel or in a result row. */
+  const [zoom, setZoom] = useState<{
+    images: string[];
+    index: number;
+    title?: string;
+    subtitle?: string;
+  } | null>(null);
 
   /**
    * The evidence, assembled once for the whole set.
@@ -459,6 +475,14 @@ export const MemorySearchResults: React.FC<MemorySearchResultsProps> = ({
                 alt={queryLabel ?? 'The chart you searched with'}
                 caption={queryLabel ?? 'The chart you searched with'}
                 remark="The chart you searched with is no longer displayable. The matches are still real; only its preview is gone."
+                onOpen={(url) =>
+                  setZoom({
+                    images: [url],
+                    index: 0,
+                    title: queryLabel ?? 'The chart you searched with',
+                    subtitle: 'The picture this search was made with.',
+                  })
+                }
               />
               <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-2.5">
                 <Fact label="This one">Your current chart. Nothing about it has been recorded yet.</Fact>
@@ -471,6 +495,14 @@ export const MemorySearchResults: React.FC<MemorySearchResultsProps> = ({
                 alt={`The chart from ${selectedResult.match.instrument} observed on ${selectedResult.match.observedAt.slice(0, 10)}`}
                 caption="The match from your library"
                 remark="This picture is stored privately and its preview could not be loaded. Nothing else about the match has changed."
+                onOpen={(url) =>
+                  setZoom({
+                    images: [url],
+                    index: 0,
+                    title: `${selectedResult.match.instrument} · ${selectedResult.match.observedAt.slice(0, 10)}`,
+                    subtitle: 'The chart from your library that this search matched.',
+                  })
+                }
               />
               <div className="space-y-2 rounded-lg border border-zinc-800 bg-zinc-950/60 p-2.5">
                 <div className="flex flex-wrap items-center gap-2">
@@ -548,11 +580,25 @@ export const MemorySearchResults: React.FC<MemorySearchResultsProps> = ({
               >
                 <div className="flex flex-wrap items-start gap-3">
                   {result.imageUrl ? (
-                    <img
-                      src={result.imageUrl}
-                      alt={`Chart from ${match.instrument} observed on ${match.observedAt.slice(0, 10)}`}
-                      className="h-16 w-24 shrink-0 rounded-lg border border-zinc-800 bg-zinc-950 object-cover"
-                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setZoom({
+                          images: [result.imageUrl!],
+                          index: 0,
+                          title: `${match.instrument} · ${match.observedAt.slice(0, 10)}`,
+                          subtitle: 'The chart from your library that this search matched.',
+                        })
+                      }
+                      title="Click to view this chart larger"
+                      className="h-16 w-24 shrink-0 cursor-zoom-in overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950 focus:outline-none focus:ring-2 focus:ring-sky-500/40"
+                    >
+                      <img
+                        src={result.imageUrl}
+                        alt={`Chart from ${match.instrument} observed on ${match.observedAt.slice(0, 10)}`}
+                        className="h-full w-full object-cover"
+                      />
+                    </button>
                   ) : (
                     <div className="flex h-16 w-24 shrink-0 items-center justify-center rounded-lg border border-dashed border-zinc-800 text-[9px] text-zinc-600">
                       no preview
@@ -676,6 +722,15 @@ export const MemorySearchResults: React.FC<MemorySearchResultsProps> = ({
         A resemblance says two charts look alike. It does not say what either one did, and it does not
         say what yours will do.
       </p>
+
+      <ImageLightboxModal
+        isOpen={zoom !== null}
+        onClose={() => setZoom(null)}
+        images={zoom?.images ?? []}
+        initialIndex={zoom?.index ?? 0}
+        title={zoom?.title}
+        subtitle={zoom?.subtitle}
+      />
     </section>
   );
 };

@@ -17,7 +17,6 @@ import type {
   CoachEntryFacts,
   CoachPlanFields,
   CoachPositionFacts,
-  PlanFieldName,
 } from './coach-types';
 import type { InstrumentQuote } from './market-data';
 import type { LevelRecord as MesLevelRecord } from '../mes/types';
@@ -175,26 +174,6 @@ export function buildCoachPlanPatch(params: {
   if (primaryInstrument) patch.primaryInstrument = primaryInstrument;
 
   return patch;
-}
-
-/** Drafts text for one plan field. The trader decides whether to keep it. */
-export function askPlanField(
-  context: PlanCoachContext,
-  field: PlanFieldName,
-  currentValue: string
-): Promise<CoachResult> {
-  return requestCoach('planfield', buildPlanCoachDigest(context), undefined, {
-    field,
-    currentFieldValue: currentValue,
-    instrument: context.day.primaryInstrument,
-  });
-}
-
-/** Drafts a whole plan for the day, from the trader's style plus a live instrument read. */
-export function askPlanBuild(context: PlanCoachContext): Promise<CoachResult> {
-  return requestCoach('planbuild', buildPlanCoachDigest(context), undefined, {
-    instrument: context.day.primaryInstrument,
-  });
 }
 
 /**

@@ -7,13 +7,24 @@ export type TradeStatus = 'open' | 'closed';
 export type TrailingMethod = 'None' | 'Manual' | 'Structure' | 'Fixed Points' | 'Moving Average' | 'Other';
 export type QuestionAnswer = 'yes' | 'no' | 'na';
 
+/**
+ * What kind of instrument this is.
+ *
+ * The arithmetic is the same for all of them — points times dollars-per-point times size — but
+ * the editor, the size unit and the guide all say different things, and a stock's "point" is a
+ * dollar a share rather than a contract's multiplier.
+ */
+export type InstrumentKind = 'future' | 'stock' | 'forex' | 'crypto' | 'custom';
+
 export interface Instrument {
   id: string;
   symbol: string;
   name: string;
-  pointValue: number; // e.g. $5 for MES
-  tickSize: number;   // e.g. 0.25 for MES
-  tickValue: number;  // e.g. $1.25 for MES
+  pointValue: number; // e.g. $5 for MES, $1 per share for a stock
+  tickSize: number;   // e.g. 0.25 for MES, 0.01 for a stock
+  tickValue: number;  // derived: pointValue x tickSize, e.g. $1.25 for MES
+  /** Asset class. Optional so a catalog saved before kinds existed still reads. */
+  kind?: InstrumentKind;
   active: boolean;
   /**
    * Built-in catalog version this instrument arrived in.
@@ -86,31 +97,6 @@ export interface ImportantLevel {
   side?: 'support' | 'resistance';
 }
 
-export interface PlanChange {
-  id: string;
-  tradingDayId: string;
-  fieldName: string;
-  oldValue: string;
-  newValue: string;
-  reason: string;
-  changedAt: string;
-}
-
-export interface PlanSnapshot {
-  riskMode: RiskMode;
-  normalLossLimit: number;
-  plannedLossLimit: number;
-  contractsPlanned: number;
-  primaryInstrument: string;
-  allowedSessions: TradingSession[];
-  marketBias: MarketBias;
-  /** The Trade # that was pre-selected when the plan was locked, when there was one. */
-  defaultRiskTier?: number;
-  /** The per-slot trade caps that were in force when the plan was locked. */
-  riskTierCaps?: number[];
-  lockedAt: string;
-}
-
 export interface TradingDay {
   id: string;
   userId: string;
@@ -152,9 +138,6 @@ export interface TradingDay {
    * a missing record as "nothing ticked yet" rather than as an error.
    */
   routine?: DayRoutine;
-  lockedAt?: string;
-  lockedSnapshot?: PlanSnapshot;
-  planChanges: PlanChange[];
   endedAt?: string;
   createdAt: string;
   updatedAt: string;
@@ -659,72 +642,14 @@ export interface LessonAcknowledgement {
   acknowledgedAt: string;
 }
 
-// ---------------------------------------------------------------------------
-// Chart Pattern playbook study data
-//
-// Two kinds of thing live here and they are deliberately different:
-//
-// - The pattern itself (name, geometry, explanation) is content, shipped in
-//   src/lib/playbook/patterns*.ts and identical for every install.
-// - `PatternStudy` is the trader's own material: status, checklist, notes and logged
-//   examples with screenshots. Only this second part is persisted and synced.
-// ---------------------------------------------------------------------------
-
-/**
- * What a pattern is doing while the trader studies it.
- *
- * These are study-journal states, not trading instructions, and the distinction between
- * `forming`/`near-breakout` (structure exists) and `confirmed` (a candle CLOSED beyond it)
- * is the whole reason the list is this precise.
- */
-export type PatternStatus =
-  | 'watching'
-  | 'forming'
-  | 'near-breakout'
-  | 'breakout-attempted'
-  | 'confirmed'
-  | 'retest'
-  | 'failed-breakout'
-  | 'invalidated'
-  | 'completed';
-
-export type PatternGrade = 'A' | 'B' | 'C' | 'D' | 'F';
-
-/** One logged real-world example of a pattern, reviewed after the fact. */
-export interface PatternStudyEntry {
-  id: string;
-  patternId: string;
-  /** Instrument, date and timeframe the example was taken on. */
-  instrument?: string;
-  tradeDate?: string;
-  timeframe?: string;
-  /** Which stage the pattern was at when the trader acted, if they acted. */
-  stageWhenActed?: PatternStatus;
-  grade?: PatternGrade;
-  /** Chart screenshots, stored inline as data URLs like the rest of the journal. */
-  beforeImage?: string;
-  afterImage?: string;
-  whyValid?: string;
-  whatInvalidated?: string;
-  didWell?: string;
-  didWrong?: string;
-  nextTime?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-/** Everything the trader has recorded about one pattern. One row per pattern. */
-export interface PatternStudy {
-  patternId: string;
-  status: PatternStatus;
-  /** Keys of the checklist rows that are ticked. See `checklistKey`. */
-  checklist: string[];
-  notes: string;
-  entries: PatternStudyEntry[];
-  /** When this study's example images were moved to the media bucket. See `Trade.movedAt`. */
-  movedAt?: string;
-  updatedAt: string;
-}
+// The Chart Pattern playbook's study record lives with the playbook itself, so the
+// standalone product can use it without importing the journal's whole data model.
+export type {
+  PatternStatus,
+  PatternGrade,
+  PatternStudyEntry,
+  PatternStudy,
+} from './lib/playbook/pattern-study-types';
 
 // ---------------------------------------------------------------------------
 // Lessons — the trader's own documented findings

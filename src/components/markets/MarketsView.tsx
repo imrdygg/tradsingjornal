@@ -70,8 +70,6 @@ interface MarketsViewProps {
    * symbol at a time, so the coach is never asked for a plan across every market.
    */
   onApplyPlan: (draft: CoachPlanFields, symbol: string) => void;
-  /** A locked plan needs a recorded reason to change, so nothing is offered for it. */
-  planLocked?: boolean;
   theme: 'dark' | 'light';
   /**
    * The coach's own plans with the trader's grades and feedback, when there are any.
@@ -137,7 +135,6 @@ export const MarketsView: React.FC<MarketsViewProps> = ({
   maxDrawdown,
   primaryInstrument,
   onApplyPlan,
-  planLocked = false,
   theme,
   coachPlans,
   mesLevels,
@@ -517,7 +514,7 @@ export const MarketsView: React.FC<MarketsViewProps> = ({
                         onApplyPlan(planFields, symbol.id);
                         setPlanAppliedAt(new Date().toISOString());
                       }}
-                      disabled={planLocked || !planWritable}
+                      disabled={!planWritable}
                       className="flex items-center gap-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-zinc-950 px-3.5 py-2 text-[11px] font-bold shadow-sm transition-all hover:scale-[1.02] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100"
                     >
                       <Check className="w-3 h-3 stroke-[3]" />
@@ -591,14 +588,6 @@ export const MarketsView: React.FC<MarketsViewProps> = ({
                   <p className="text-[11px] text-zinc-500 leading-relaxed">
                     The {planFields.levels.length} level
                     {planFields.levels.length === 1 ? '' : 's'} above become today's planned levels.
-                  </p>
-                )}
-
-                {planLocked && (
-                  <p className="text-[11px] text-zinc-400 leading-relaxed flex items-start gap-1.5">
-                    <Lock className="w-3.5 h-3.5 mt-0.5 shrink-0 text-zinc-500" />
-                    Today's plan is locked, so it cannot be filled from here. Unlock it first if you
-                    want to plan around this chart.
                   </p>
                 )}
 

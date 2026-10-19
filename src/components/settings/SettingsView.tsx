@@ -22,6 +22,7 @@ import {
   HardDrive,
 } from 'lucide-react';
 import { UserProfile, Instrument, Setup } from '../../types';
+import { InstrumentManager } from './InstrumentManager';
 import { riskTierAmounts } from '../../lib/trading/risk-tiers';
 import { SyncStatusBadge, SyncStatus } from '../layout/SyncStatusBadge';
 import { ModalOverlay } from '../common/ModalOverlay';
@@ -57,6 +58,10 @@ interface SettingsViewProps {
   profile: UserProfile;
   instruments: Instrument[];
   onUpdateProfile: (profile: UserProfile) => void;
+  /** Adds or edits one instrument in the catalog. */
+  onSaveInstrument?: (instrument: Instrument) => void;
+  /** Removes one; returns false when it is the last active instrument. */
+  onDeleteInstrument?: (id: string) => boolean;
   onExportData: () => void;
   onImportData: (jsonData: string) => void;
   /** Returns a summary of what was read so problems can be shown inline. */
@@ -181,6 +186,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   profile,
   instruments,
   onUpdateProfile,
+  onSaveInstrument,
+  onDeleteInstrument,
   onExportData,
   onImportData,
   onTradovateImport,
@@ -806,30 +813,38 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </p>
       </div>
 
-      {/* 3. Supported Futures Instruments */}
+      {/* 3. Instruments — the catalog is the trader's own */}
       <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4 sm:p-5 space-y-4">
-        <h2 className="text-xs font-bold uppercase tracking-wider text-zinc-300 font-mono flex items-center gap-2">
-          <Clock className="w-4 h-4 text-zinc-400" />
-          Supported Futures Contracts Specifications
-        </h2>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 font-mono text-xs">
-          {instruments.map((inst) => (
-            <div
-              key={inst.id}
-              className="rounded-xl border border-zinc-800 bg-zinc-950 p-3 space-y-1"
-            >
-              <div className="flex items-center justify-between text-zinc-100 font-bold">
-                <span>{inst.symbol} — {inst.name}</span>
-                <span className="text-emerald-400">${inst.pointValue}/pt</span>
-              </div>
-              <div className="flex items-center justify-between text-zinc-500 text-[11px]">
-                <span>Tick Size: {inst.tickSize} pts</span>
-                <span>Tick Value: ${inst.tickValue}</span>
-              </div>
+        {onSaveInstrument && onDeleteInstrument ? (
+          <InstrumentManager
+            instruments={instruments}
+            onSave={onSaveInstrument}
+            onDelete={onDeleteInstrument}
+          />
+        ) : (
+          <>
+            <h2 className="text-xs font-bold uppercase tracking-wider text-zinc-300 font-mono flex items-center gap-2">
+              <Clock className="w-4 h-4 text-zinc-400" />
+              Instrument specifications
+            </h2>
+            <div className="grid grid-cols-1 gap-3 font-mono text-xs sm:grid-cols-2">
+              {instruments.map((inst) => (
+                <div key={inst.id} className="rounded-xl border border-zinc-800 bg-zinc-950 p-3 space-y-1">
+                  <div className="flex items-center justify-between font-bold text-zinc-100">
+                    <span>
+                      {inst.symbol} — {inst.name}
+                    </span>
+                    <span className="text-emerald-400">${inst.pointValue}/pt</span>
+                  </div>
+                  <div className="flex items-center justify-between text-[11px] text-zinc-500">
+                    <span>Tick Size: {inst.tickSize} pts</span>
+                    <span>Tick Value: ${inst.tickValue}</span>
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          </>
+        )}
       </div>
 
       {/* 4. Data Backup, Export & Tradovate CSV Staging */}
@@ -1008,6 +1023,26 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </button>
         </div>
       )}
+
+      {/* 6. Licence and terms — what the buyer owns, in the product itself */}
+      <div id="licence-terms" className="space-y-2 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4 sm:p-5">
+        <h2 className="flex items-center gap-2 font-mono text-xs font-bold uppercase tracking-wider text-zinc-300">
+          <Shield className="h-4 w-4 text-zinc-400" />
+          Licence &amp; terms
+        </h2>
+        <p className="text-[11px] leading-relaxed text-zinc-400">
+          This is software you hold a licence to use, not a hosted service. One person, personal
+          use: you may modify the code for your own trading, and you may not resell, redistribute
+          or republish it, or ship it as part of another product. Sharing a licence key or
+          removing the notices is outside the licence.
+        </p>
+        <p className="text-[11px] leading-relaxed text-zinc-500">
+          Cloud sync, the AI coach and Trading Memory run on <strong className="text-zinc-300">your own</strong> Supabase
+          project and Gemini API key, and usage bills to your accounts. The full terms are in
+          LICENSE.txt and docs/LICENSING-AND-TERMS.md in the source you received, and the setup
+          steps are in docs/BUYER-SETUP.md.
+        </p>
+      </div>
 
       {/* Reset confirmation — typed phrase so it cannot happen by accident */}
       {isResetOpen && (

@@ -1,19 +1,27 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { storage } from '../index';
-import { DEFAULT_INSTRUMENTS, INSTRUMENT_CATALOG_VERSION } from '../../trading/instruments';
+import {
+  DEFAULT_INSTRUMENTS,
+  INSTRUMENT_CATALOG_VERSION,
+  instrumentKind,
+  findInstrument,
+  instrumentProblem,
+  normalizeInstrument,
+  unknownInstrument,
+} from '../../trading/instruments';
 import type { Instrument } from '../../../types';
 
 /**
- * The instrument catalog has exactly the problem the setup catalog has: a stored list wins
- * over the defaults, so the read is what decides which contracts a journal actually keeps.
- * The trader now records MES and nothing else, so this read is the thing that strips the
- * micro Nasdaq, micro WTI, VIX and the wider complexes an existing journal may still hold.
+ * The instrument catalog is now a starting list rather than a gate: the built-ins are the
+ * liquid futures contracts, and the trader adds, edits or retires anything else.
  *
- * The prune must never touch what the trader has done to the catalog: not the contracts they
- * added themselves, and not the prices they corrected on the built-ins.
+ * Two properties matter and are tested here: the read never deletes what the trader put in the
+ * catalog, and it never re-adds a built-in the trader removed once the marker says that release
+ * has already arrived. The third property is the one that used to be a lie — an unknown symbol
+ * is priced neutrally, never as MES.
  *
- * Vitest runs in node, so a fake localStorage is installed before each test, the same
- * approach the storage-failure and setup-catalog tests use.
+ * Vitest runs in node, so a fake localStorage is installed before each test, the same approach
+ * the storage-failure and setup-catalog tests use.
  */
 
 /** The two keys involved, spelled out because the key map is private to storage. */
@@ -60,12 +68,7 @@ function removeStorage() {
   delete (globalThis as unknown as { localStorage?: unknown }).localStorage;
 }
 
-/**
- * Writes a journal that was created before the catalog was versioned.
- *
- * `since` is carried through deliberately: seeding a contract that already claims the
- * current version is how the "already arrived, do not offer it again" case is set up.
- */
+/** Writes a journal that was created before this catalog version. */
 function seedJournal(instruments: Array<Partial<Instrument> & { symbol: string }>, version?: number) {
   fake.setItem(
     INSTRUMENTS_KEY,
@@ -78,6 +81,7 @@ function seedJournal(instruments: Array<Partial<Instrument> & { symbol: string }
         tickSize: instrument.tickSize ?? 0.01,
         tickValue: instrument.tickValue ?? 1,
         active: instrument.active ?? true,
+        ...(instrument.kind === undefined ? {} : { kind: instrument.kind }),
         ...(instrument.since === undefined ? {} : { since: instrument.since }),
       }))
     )
@@ -96,50 +100,34 @@ beforeEach(() => {
 afterEach(removeStorage);
 
 describe('ensureInstrumentCatalog', () => {
-  it('brings a stored journal back to the one contract it is for', () => {
-    // A journal that once carried the micros keeps them forever unless the read prunes them,
-    // and a stale cloud copy reintroduces them. Only MES survives.
-    seedJournal(
-      [
-        { id: 'mes', symbol: 'MES' },
-        { id: 'mnq', symbol: 'MNQ' },
-        { id: 'mcl', symbol: 'MCL' },
-        { id: 'vix', symbol: 'VIX' },
-      ],
-      1
-    );
+  it('brings the whole built-in futures catalog to an old MES-only journal', () => {
+    seedJournal([{ id: 'mes', symbol: 'MES' }], 1);
 
     const result = storage.ensureInstrumentCatalog();
 
-    expect(symbols(result)).toEqual(['MES']);
-    expect(symbols(listInStorage())).toEqual(['MES']);
+    // The contract it already had keeps its place, and every built-in arrives beside it.
+    expect([...symbols(result)].sort()).toEqual([...symbols(DEFAULT_INSTRUMENTS)].sort());
+    expect([...symbols(listInStorage())].sort()).toEqual([...symbols(DEFAULT_INSTRUMENTS)].sort());
     expect(JSON.parse(fake.getItem(VERSION_KEY) ?? '0')).toBe(INSTRUMENT_CATALOG_VERSION);
   });
 
-  it('drops the whole retired complex and the levels-only symbol', () => {
-    seedJournal(
-      [
-        { id: 'mes', symbol: 'MES' },
-        { id: 'es', symbol: 'ES' },
-        { id: 'gc', symbol: 'GC' },
-        { id: 'cl', symbol: 'CL' },
-        { id: 'mcl', symbol: 'MCL' },
-        { id: 'vix', symbol: 'VIX' },
-      ],
-      3
-    );
+  it('does not double a contract the journal already holds', () => {
+    seedJournal([{ id: 'es', symbol: 'ES' }, { id: 'mes', symbol: 'MES' }], 1);
 
     const result = storage.ensureInstrumentCatalog();
 
-    expect(symbols(result)).toEqual(['MES']);
-    expect(symbols(listInStorage())).toEqual(['MES']);
+    expect(result.filter((instrument) => instrument.symbol === 'ES')).toHaveLength(1);
+    expect(result.filter((instrument) => instrument.symbol === 'MES')).toHaveLength(1);
   });
 
-  it('keeps the contract the trader added themselves', () => {
-    seedJournal([
-      { id: 'mine', symbol: 'ZZZ', name: 'My own contract', pointValue: 3 },
-      { id: 'mes', symbol: 'MES' },
-    ], 1);
+  it('keeps the contract the trader added themselves, spec and all', () => {
+    seedJournal(
+      [
+        { id: 'mine', symbol: 'ZZZ', name: 'My own contract', pointValue: 3, tickSize: 0.5 },
+        { id: 'mes', symbol: 'MES' },
+      ],
+      1
+    );
 
     const result = storage.ensureInstrumentCatalog();
     const mine = result.find((instrument) => instrument.symbol === 'ZZZ');
@@ -147,20 +135,21 @@ describe('ensureInstrumentCatalog', () => {
     expect(mine).toBeDefined();
     expect(mine?.id).toBe('mine');
     expect(mine?.pointValue).toBe(3);
+    expect(mine?.tickSize).toBe(0.5);
   });
 
   it('does not overwrite a built-in the trader corrected', () => {
-    // A trader who fixed MES's point value to match their broker's contract spec.
-    seedJournal([{ id: 'mes', symbol: 'MES', pointValue: 50 }], 1);
+    // A trader who fixed ES's point value to match their broker's contract spec.
+    seedJournal([{ id: 'es', symbol: 'ES', pointValue: 55 }], 1);
 
     const result = storage.ensureInstrumentCatalog();
 
-    expect(result.find((instrument) => instrument.symbol === 'MES')?.pointValue).toBe(50);
+    expect(result.find((instrument) => instrument.symbol === 'ES')?.pointValue).toBe(55);
   });
 
-  it('does not bring back a contract the version it arrived in already recorded', () => {
-    // The marker says this journal has seen the catalog that MCL arrived in, so its absence
-    // from the list is a decision — the trader removed it — not an oversight.
+  it('does not bring back a contract whose release the marker already recorded', () => {
+    // The marker says this journal has seen the current catalog, so a missing built-in is the
+    // trader's decision — they removed it — not an oversight.
     seedJournal([{ id: 'mes', symbol: 'MES' }], INSTRUMENT_CATALOG_VERSION);
 
     const result = storage.ensureInstrumentCatalog();
@@ -182,9 +171,131 @@ describe('ensureInstrumentCatalog', () => {
     const result = storage.ensureInstrumentCatalog();
 
     expect(symbols(result)).toEqual(symbols(DEFAULT_INSTRUMENTS));
-    // Nothing is written over a journal that simply had no instrument list: the defaults
-    // are still the defaults, and the marker records that this device has seen them.
     expect(fake.getItem(INSTRUMENTS_KEY)).toBeNull();
     expect(JSON.parse(fake.getItem(VERSION_KEY) ?? '0')).toBe(INSTRUMENT_CATALOG_VERSION);
+  });
+});
+
+describe('saveInstrument', () => {
+  it('derives the tick value instead of trusting the typed one', () => {
+    storage.saveInstrument({
+      id: 'msft',
+      symbol: 'msft',
+      name: 'Microsoft',
+      kind: 'stock',
+      pointValue: 1,
+      tickSize: 0.01,
+      tickValue: 999,
+      active: true,
+    });
+    const msft = storage.getInstruments().find((instrument) => instrument.id === 'msft');
+
+    expect(msft?.symbol).toBe('MSFT');
+    expect(msft?.tickValue).toBe(0.01);
+    expect(instrumentKind(msft)).toBe('stock');
+  });
+
+  it('keeps the stored id when a symbol is edited, so history is not orphaned', () => {
+    storage.saveInstrument({
+      id: 'custom',
+      symbol: 'ABC',
+      name: 'First name',
+      pointValue: 2,
+      tickSize: 0.25,
+      tickValue: 0.5,
+      active: true,
+    });
+
+    const list = storage.saveInstrument({
+      id: 'custom',
+      symbol: 'XYZ',
+      name: 'Renamed',
+      pointValue: 2,
+      tickSize: 0.25,
+      tickValue: 0.5,
+      active: true,
+    });
+
+    expect(list.filter((instrument) => instrument.id === 'custom')).toHaveLength(1);
+    expect(list.find((instrument) => instrument.id === 'custom')?.symbol).toBe('XYZ');
+  });
+});
+
+describe('deleteInstrument', () => {
+  it('removes one and leaves the rest', () => {
+    storage.saveInstrument({
+      id: 'abc',
+      symbol: 'ABC',
+      name: 'Test',
+      pointValue: 1,
+      tickSize: 0.01,
+      tickValue: 0.01,
+      active: true,
+    });
+
+    const result = storage.deleteInstrument('abc');
+
+    expect(result.some((instrument) => instrument.id === 'abc')).toBe(false);
+    expect(result.length).toBeGreaterThan(0);
+  });
+
+  it('refuses to remove the last active instrument', () => {
+    fake.setItem(
+      INSTRUMENTS_KEY,
+      JSON.stringify([
+        { id: 'only', symbol: 'ONLY', name: 'Only', pointValue: 1, tickSize: 0.01, tickValue: 0.01, active: true },
+      ])
+    );
+
+    const result = storage.deleteInstrument('only');
+
+    expect(result.map((instrument) => instrument.id)).toEqual(['only']);
+  });
+});
+
+describe('unknown symbols', () => {
+  it('prices an unknown symbol neutrally rather than as MES', () => {
+    const resolved = findInstrument(DEFAULT_INSTRUMENTS, 'TSLA');
+
+    expect(resolved.symbol).toBe('TSLA');
+    expect(resolved.pointValue).toBe(1);
+    expect(resolved.active).toBe(false);
+    expect(resolved).not.toEqual(DEFAULT_INSTRUMENTS.find((i) => i.symbol === 'MES'));
+  });
+
+  it('carries the asked-for symbol on the neutral fallback', () => {
+    expect(unknownInstrument('abc').symbol).toBe('ABC');
+  });
+});
+
+describe('instrumentProblem', () => {
+  const base: Instrument = {
+    id: 'test',
+    symbol: 'TST',
+    name: 'Test',
+    pointValue: 5,
+    tickSize: 0.25,
+    tickValue: 1.25,
+    active: true,
+  };
+
+  it('accepts a well-formed contract', () => {
+    expect(instrumentProblem(base, [])).toBeNull();
+  });
+
+  it('rejects a duplicate symbol', () => {
+    expect(instrumentProblem(base, [{ ...base, id: 'other' }])).toMatch(/already in the catalog/);
+  });
+
+  it('rejects a zero multiplier and a zero tick', () => {
+    expect(instrumentProblem({ ...base, pointValue: 0 }, [])).toMatch(/per point/);
+    expect(instrumentProblem({ ...base, tickSize: 0 }, [])).toMatch(/Tick size/);
+  });
+
+  it('normalises a draft into a well-formed instrument', () => {
+    const clean = normalizeInstrument({ ...base, symbol: ' tst ', tickValue: 0 });
+
+    expect(clean.symbol).toBe('TST');
+    expect(clean.tickValue).toBe(1.25);
   });
 });

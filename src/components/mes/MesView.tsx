@@ -45,9 +45,19 @@ interface MesViewProps {
    * shortcut between the two records depends on this.
    */
   bridge?: MesPlaybookBridge;
+  /**
+   * True in the standalone product: the copy stops referring to the journal's cloud sync,
+   * and the cross-record playbook card is left out because there is no playbook here.
+   */
+  standalone?: boolean;
 }
 
-export const MesView: React.FC<MesViewProps> = ({ records, persist, bridge }) => {
+export const MesView: React.FC<MesViewProps> = ({
+  records,
+  persist,
+  bridge,
+  standalone = false,
+}) => {
   const [section, setSection] = useState<MesSection>('dashboard');
 
   return (
@@ -94,7 +104,7 @@ export const MesView: React.FC<MesViewProps> = ({ records, persist, bridge }) =>
         {section === 'levels' && <MesLevelsTable />}
         {section === 'patterns' && <MesPatterns />}
         {section === 'timing' && <MesTiming />}
-        {section === 'data' && <MesDataManager />}
+        {section === 'data' && <MesDataManager standalone={standalone} />}
       </div>
     </MesJournalProvider>
   );

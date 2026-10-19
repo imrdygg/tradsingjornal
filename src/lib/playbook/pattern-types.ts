@@ -12,11 +12,11 @@
  * in `displayName` or `aliases`, and a discrepancy is explained in `sourceNote`.
  */
 
-import type { PatternGrade, PatternStatus } from '../../types';
+import type { PatternGrade, PatternStatus } from './pattern-study-types';
 
-// The persisted unions live in types.ts with the rest of the data model; re-exported here
-// so the playbook UI has one import for its vocabulary.
-export type { PatternGrade, PatternStatus } from '../../types';
+// The persisted unions live with the study record; re-exported here so the playbook UI
+// has one import for its vocabulary.
+export type { PatternGrade, PatternStatus } from './pattern-study-types';
 
 export type PatternBias = 'bullish' | 'bearish' | 'neutral';
 export type PatternCategory = 'reversal' | 'continuation';

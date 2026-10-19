@@ -16,7 +16,9 @@ import {
   Target,
   MessageSquarePlus,
   Brain,
+  CircleHelp,
 } from 'lucide-react';
+import { FeatureGuidePanel } from '../help/FeatureGuidePanel';
 import {
   getCurrentTradingDate,
   getCurrentTradingSessionDate,
@@ -99,6 +101,9 @@ export const AppShell: React.FC<AppShellProps> = ({
   const sessionDate = getCurrentTradingSessionDate(timezone);
   const marketClosed = getCurrentTradingDate(timezone) !== sessionDate;
   const [statusExpanded, setStatusExpanded] = useState(false);
+  // The guide follows the tab it was opened from, so a trader who is lost opens one button and
+  // lands on the screen they are already looking at rather than on a contents page.
+  const [guideOpen, setGuideOpen] = useState(false);
 
   const navItems: Array<{ id: NavTab; label: string; icon: React.ComponentType<{ className?: string }> }> = [
     { id: 'today', label: 'Today', icon: Calendar },
@@ -252,6 +257,17 @@ export const AppShell: React.FC<AppShellProps> = ({
 
           {/* Actions */}
           <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
+            <button
+              id="feature-guide-btn"
+              type="button"
+              onClick={() => setGuideOpen(true)}
+              title="Guide to this screen"
+              aria-label="Open the guide for this screen"
+              className="flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-300 shadow-sm transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+            >
+              <CircleHelp className="h-4 w-4 stroke-[2.2]" />
+            </button>
+
             {onOpenFeedback && (
               <button
                 id="feedback-btn"
@@ -435,6 +451,12 @@ export const AppShell: React.FC<AppShellProps> = ({
           })}
         </div>
       </div>
+
+      <FeatureGuidePanel
+        open={guideOpen}
+        topic={currentTab}
+        onClose={() => setGuideOpen(false)}
+      />
     </div>
   );
 };

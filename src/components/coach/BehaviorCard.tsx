@@ -151,10 +151,10 @@ export const BehaviorCard: React.FC<{ behavior: BehaviorFacts }> = ({ behavior }
 
           <div className="grid sm:grid-cols-2 gap-2">
             <CoachFact
-              label="Larger than the day's plan"
+              label="Larger than the day's recorded size"
               value={
                 sizeDiscipline.daysWithPlannedContracts === 0
-                  ? 'no plan to compare'
+                  ? 'no size recorded'
                   : `${sizeDiscipline.tradesOverPlannedSize} trade(s)` +
                     (sizeDiscipline.overPlannedSizeAfterLoss > 0
                       ? ` · ${sizeDiscipline.overPlannedSizeAfterLoss} after a loss`

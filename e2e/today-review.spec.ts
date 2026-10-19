@@ -165,7 +165,6 @@ test.describe('What Today shows on load', () => {
               importantLevels: [],
               waitingFor: '',
               stayOutIf: '',
-              planChanges: [],
               createdAt: '2026-09-24T12:00:00.000Z',
               updatedAt: '2026-09-24T12:00:00.000Z',
             },

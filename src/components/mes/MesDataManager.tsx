@@ -20,7 +20,15 @@ import { Badge, EmptyState, SectionCard, Stat } from './mes-ui';
  * between the two records is a data operation like the rest of this screen: the trader decides
  * when it happens, and it is reported the same way a restore or a clear is.
  */
-export const MesDataManager: React.FC = () => {
+interface MesDataManagerProps {
+  /**
+   * True in the standalone product. There is no journal snapshot and no playbook there, so
+   * the storage note must not promise cloud sync and the cross-record card is omitted.
+   */
+  standalone?: boolean;
+}
+
+export const MesDataManager: React.FC<MesDataManagerProps> = ({ standalone = false }) => {
   const { records, clearAll, loadDemo, importFile } = useMesJournal();
   const [status, setStatus] = useState<string | null>(null);
 
@@ -175,15 +183,25 @@ export const MesDataManager: React.FC = () => {
             <Badge className="border-amber-800/60 bg-amber-950/40 text-amber-200">
               {STORAGE_KEY}
             </Badge>
-            ) and is also carried in the journal&apos;s own backup and cloud sync, so it follows the
-            account rather than the laptop. localStorage on its own is not a backup: it is wiped
-            when site data is cleared. Download a copy from here if it matters.
+            ){standalone ? (
+              <>
+                . That is the only copy: it is wiped when site data is cleared, so download a
+                backup from here if it matters.
+              </>
+            ) : (
+              <>
+                {' '}
+                and is also carried in the journal&apos;s own backup and cloud sync, so it follows
+                the account rather than the laptop. localStorage on its own is not a backup: it
+                is wiped when site data is cleared. Download a copy from here if it matters.
+              </>
+            )}
           </span>
         </div>
       </SectionCard>
 
       {/* The playbook's own marked lines, and the way across in each direction. */}
-      <MesPlaybookCard />
+      {!standalone && <MesPlaybookCard />}
 
       <SectionCard
         title="Backup and restore"

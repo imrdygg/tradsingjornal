@@ -1,0 +1,51 @@
+TRADING JOURNAL, AI COACH AND TRADING MEMORY — END USER LICENSE
+
+Copyright (c) 2026. All rights reserved.
+
+This software is licensed, not sold. The full terms are in docs/LICENSING-AND-TERMS.md.
+This file is the short form that ships beside the code.
+
+1. LICENSE GRANT
+   Your purchase grants one person a non-exclusive, non-transferable license to install, run and
+   modify this software for their own personal trading, on devices they own or control. If your
+   purchase includes the source, you may keep a private modified copy for that same use.
+
+2. WHAT YOU MAY NOT DO
+   - Resell, sublicense, rent, lend, or redistribute the software, its source, or its files.
+   - Publish the software, in whole or in part, as your own product or as part of one.
+   - Use the code to build a competing product for sale.
+   - Publish the source in a public repository, a file-sharing link, or a dataset.
+   - Share your license key, or use one key to activate other people's copies.
+   - Remove or alter the copyright, license, or attribution notices.
+
+3. SERVICES ARE YOURS
+   This purchase is the software, not a hosted service. Cloud sync, the AI coach and Trading
+   Memory require your own Supabase project, your own Gemini API key, and your own hosting.
+   Usage is billed to your accounts. The seller provides no database, API credits, hosting,
+   deployment, backups or monitoring of your deployment.
+
+4. NO FINANCIAL ADVICE
+   This software records and reads your own trading. It is not financial, investment, or trading
+   advice, it does not predict markets, and any rate or score it shows describes what you
+   recorded, not what will happen next. You are solely responsible for your trading decisions
+   and their outcomes.
+
+5. NO WARRANTY
+   The software is provided "as is", without warranty of any kind, express or implied, including
+   fitness for a particular purpose. The author is not liable for any loss or damage arising from
+   its use, including trading losses, lost data, or cloud and API charges.
+
+6. DATA
+   Your journal lives in your browser and, if you configure it, in your own Supabase project.
+   You are responsible for backups. The seller holds no copy of your data and cannot recover it.
+
+7. THIRD-PARTY SERVICES
+   Supabase, Google Gemini, your chart and quote providers, and the store you bought from each
+   have their own terms. Their availability, pricing and limits are outside this license.
+
+8. TERMINATION
+   This license ends if you breach these terms. On termination you must stop using the software
+   and delete its files and any copies you made.
+
+9. REFUNDS AND SUPPORT
+   Refunds and support are handled through the store where you purchased the software.

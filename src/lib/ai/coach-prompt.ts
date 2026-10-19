@@ -1919,6 +1919,46 @@ export function formatDigestForPrompt(digest: JournalDigest, mode?: CoachMode): 
     }
   };
   renderStats('BY INSTRUMENT', digest.byInstrument);
+
+  // ---- Contract specifications -------------------------------------------
+  // The journal prices each trade with its own instrument's spec, so every dollar figure
+  // below is already correct. This section exists for the other direction: a trader asks
+  // "what is ten points here", or the coach reasons about risk in points, and it must use
+  // the contract the trade was taken in rather than assuming the day's. It was one contract
+  // for long enough that assuming $5/point looked safe.
+  const specs = digest.instruments ?? [];
+  if (specs.length) {
+    lines.push('');
+    lines.push(
+      "=== CONTRACT SPECIFICATIONS (what one point is worth, from the trader's own catalog) ==="
+    );
+    for (const spec of specs) {
+      const focus =
+        !!digest.primaryInstrument &&
+        spec.symbol.trim().toUpperCase() === digest.primaryInstrument.trim().toUpperCase();
+      lines.push(
+        `- ${spec.symbol} — ${spec.name}: $${spec.pointValue} per point, ` +
+          `$${spec.tickValue} per ${spec.tickSize}-point tick (${spec.kind})` +
+          (spec.active ? '' : ' [retired from the pickers; history only]') +
+          (focus ? " — the day's focus contract" : '')
+      );
+    }
+    lines.push(
+      'Every P&L, risk and R figure in this digest is already in dollars, priced with the ' +
+        "specification of the contract that trade was taken in. Never re-price a figure using " +
+        "another contract's point value, never assume a point is worth $5, and when you turn a " +
+        'price move into money, use the specification above for that symbol.'
+    );
+    if (digest.unpricedSymbols && digest.unpricedSymbols.length) {
+      lines.push(
+        'These symbols appear in the record but are no longer in the catalog, so their stored ' +
+          'dollars are what they were when recorded: ' +
+          digest.unpricedSymbols.join(', ') +
+          ". Say so rather than comparing them to a live contract's figures."
+      );
+    }
+  }
+
   renderStats('BY SETUP', digest.bySetup);
   renderStats('BY SESSION', digest.bySession);
 
@@ -1959,9 +1999,8 @@ export function formatDigestForPrompt(digest: JournalDigest, mode?: CoachMode): 
   }
 
   lines.push('');
-  lines.push('=== PLAN vs WHAT ACTUALLY HAPPENED ===');
+  lines.push('=== THE DAY vs WHAT ACTUALLY HAPPENED ===');
   const p = digest.planAdherence;
-  lines.push(`${p.daysWithPlan} day(s) had a locked plan.`);
   lines.push(
     `Days that lost more than the planned loss limit: ${p.daysExceededLossLimit}` +
       (p.worstOvershoot > 0 ? ` (worst overshoot ${money(p.worstOvershoot)}).` : '.')
@@ -1969,8 +2008,6 @@ export function formatDigestForPrompt(digest: JournalDigest, mode?: CoachMode): 
   lines.push(`Trades taken outside the planned sessions: ${p.tradesOutsideAllowedSessions}.`);
   lines.push(`Trades on a setup that was not on the day's watch list: ${p.tradesOnUnplannedSetup}.`);
   lines.push(`Trades on an instrument other than the day's primary one: ${p.tradesOnNonPrimaryInstrument}.`);
-  lines.push(`Edits made to an already-locked plan: ${p.lockedPlanEdits}.`);
-  for (const example of p.lockedPlanEditExamples) lines.push(`- ${example}`);
 
   lines.push('');
   lines.push('=== STREAKS ===');
@@ -2046,10 +2083,10 @@ export function formatDigestForPrompt(digest: JournalDigest, mode?: CoachMode): 
   const size = b.sizeDiscipline;
   if (size.daysWithPlannedContracts > 0) {
     lines.push(
-      `SIZE AGAINST THEIR OWN PLAN: ${size.tradesOverPlannedSize} trade(s) were larger than ` +
-        `the contracts planned for that day` +
+      `SIZE AGAINST THE DAY'S RECORDED SIZE: ${size.tradesOverPlannedSize} trade(s) were larger ` +
+        `than the size recorded for that day` +
         (size.worstOvershootContracts > 0
-          ? ` (worst was ${size.worstOvershootContracts} contract(s) over the plan)`
+          ? ` (worst was ${size.worstOvershootContracts} contract(s) over it)`
           : '') +
         `. ${size.overPlannedSizeAfterLoss} of those came within ${loss.windowMinutes} minutes of a loss.`
     );
@@ -2110,8 +2147,8 @@ export function formatDigestForPrompt(digest: JournalDigest, mode?: CoachMode): 
     lines.push('No plan has been recorded for today yet.');
   } else {
     lines.push(
-      `Status ${t.status}${t.locked ? ' (locked)' : ' (not locked)'}. ` +
-        `Primary instrument ${t.primaryInstrument}, ${t.contractsPlanned} contract(s) planned, ` +
+      `Status ${t.status}. Primary instrument ${t.primaryInstrument}, ` +
+        `${t.contractsPlanned} contract(s) planned, ` +
         `planned loss limit ${money(t.plannedLossLimit)}. Bias recorded as ${t.marketBias}.`
     );
     lines.push(`Allowed sessions: ${t.allowedSessions.join(', ') || 'none recorded'}.`);

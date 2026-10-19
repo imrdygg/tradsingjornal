@@ -6,6 +6,8 @@ import {defineConfig} from 'vite';
 export default defineConfig(() => {
   return {
     plugins: [react(), tailwindcss()],
+    // The journal uploads to Supabase Storage; the standalone playbook compiles that path out.
+    define: { __CLOUD_MEDIA__: 'true' },
     resolve: {
       alias: {
         '@': path.resolve(import.meta.dirname, '.'),

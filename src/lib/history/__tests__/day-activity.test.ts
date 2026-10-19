@@ -30,7 +30,6 @@ function freshDay(overrides: Partial<TradingDay> = {}): TradingDay {
     waitingFor: '',
     stayOutIf: '',
     notes: '',
-    planChanges: [],
     createdAt: '2026-09-20T12:00:00.000Z',
     updatedAt: '2026-09-20T12:00:00.000Z',
     ...overrides,
@@ -85,33 +84,6 @@ describe('dayHasRecordedActivity', () => {
 
   it('keeps a day with an end-of-day review', () => {
     expect(dayHasRecordedActivity(freshDay(), { tradeCount: 0, review })).toBe(true);
-  });
-
-  it('keeps a locked plan, even with nothing else on the day', () => {
-    expect(
-      dayHasRecordedActivity(freshDay({ lockedAt: '2026-09-20T13:30:00.000Z' }), { tradeCount: 0 })
-    ).toBe(true);
-  });
-
-  it('keeps a recorded plan change', () => {
-    expect(
-      dayHasRecordedActivity(
-        freshDay({
-          planChanges: [
-            {
-              id: 'c1',
-              tradingDayId: 'day-2026-09-20',
-              fieldName: 'Planned Loss Limit',
-              oldValue: '100',
-              newValue: '150',
-              reason: 'Earned cushion',
-              changedAt: '2026-09-20T14:00:00.000Z',
-            },
-          ],
-        }),
-        { tradeCount: 0 }
-      )
-    ).toBe(true);
   });
 
   it('keeps a day the trader wrote plan text on', () => {

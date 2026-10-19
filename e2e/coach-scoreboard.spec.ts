@@ -69,7 +69,6 @@ async function seedJournal(page: Page, trades: SeededTrade[] = TRADES) {
             importantLevels: [],
             waitingFor: '',
             stayOutIf: '',
-            planChanges: [],
             createdAt: `${day.date}T12:00:00.000Z`,
             updatedAt: `${day.date}T12:00:00.000Z`,
           }))

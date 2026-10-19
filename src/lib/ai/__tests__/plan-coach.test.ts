@@ -29,7 +29,6 @@ function makeDay(overrides: Partial<TradingDay> = {}): TradingDay {
     importantLevels: [],
     waitingFor: 'Wait for the retest.',
     stayOutIf: 'Stay out in the first five minutes.',
-    planChanges: [],
     createdAt: '2026-09-18T12:00:00.000Z',
     updatedAt: '2026-09-18T12:00:00.000Z',
     ...overrides,

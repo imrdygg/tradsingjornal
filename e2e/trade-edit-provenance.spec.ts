@@ -69,7 +69,6 @@ async function seedPastTrade(page: Page) {
           waitingFor: '',
           stayOutIf: '',
           notes: '',
-          planChanges: [],
           createdAt: entryTime,
           updatedAt: entryTime,
         },

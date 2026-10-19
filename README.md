@@ -3,15 +3,21 @@
 A private futures trading journal for one trader: plan the day, record executions, review
 them honestly, and get a coach that reads only your own records.
 
-Everything hangs off three questions the app keeps asking:
+Everything hangs off two questions the app keeps asking:
 
-1. **What was the plan?** A morning plan (loss limit, contracts, sessions, watched setups,
-   levels) that is *locked* before you trade, with every later edit recorded as a change
-   with a reason.
-2. **What actually happened?** Trades recorded by hand or imported from a Tradovate CSV,
+1. **What actually happened?** Trades recorded by hand or imported from a Tradovate CSV,
    with screenshots, and a stop that is honestly labelled as invented when the CSV had none.
-3. **Was the plan followed?** End-of-day and per-trade execution reviews that produce a
-   discipline score, which the analytics, insights and coach all read.
+2. **Was it done the way it was meant to be done?** End-of-day and per-trade execution
+   reviews that produce a discipline score, which the analytics, insights and coach all read.
+
+> **The morning plan was retired.** Today's levels are still written by hand, and a day still
+> carries the settings it is read against (loss limit, sessions, watch list, primary
+> instrument), but there is no plan form and nothing is *locked*: the form, the lock, the
+> snapshot and the plan-change audit trail are gone, along with the coach's "how many days had
+> a plan" count — which could only ever read zero once nothing could lock one. A coach
+> quoting "0 of 40 days had a plan" reads as a discipline failure rather than as a feature
+> that no longer exists, so it says nothing instead. The levels, the routine, the session
+> extremes and the reviews are what the day is still read against.
 
 ---
 
@@ -34,6 +40,35 @@ npm run lint           # tsc --noEmit
 
 Requires Node `^20.19.0 || >=22.12.0` (Vite 8). The project uses **npm** — `package-lock.json`
 is the source of truth.
+
+> **Selling this as software?** The buyer supplies their own Supabase project, their own Gemini
+> API key and their own hosting; this repository is the code, not a hosted service. What each
+> product needs, the setup checklist and the listing copy are in [`docs/BUYER-SETUP.md`](docs/BUYER-SETUP.md).
+
+---
+
+## Instruments, guides and a clean first run
+
+- **Any market, not one contract.** `src/lib/trading/instruments.ts` ships the liquid futures
+  catalog (equity index, energy, metals, rates, grains, FX, crypto) with each contract's real
+  multiplier and tick. Stocks, ETFs and anything else are added in **Settings → Instruments**
+  by their own dollars-per-point and tick size; brokers' specs usually differ, so the catalog is
+  editable rather than authoritative.
+- **P&L follows the contract.** A trade's risk, R and money are computed from its own
+  instrument's `pointValue`; a stock is one dollar a point per share, so the form sizes it in
+  shares. An unknown symbol resolves to a neutral one-dollar-per-point instrument carrying that
+  symbol — it is never silently priced as MES.
+- **The coach is told the specs.** The digest carries every catalog contract's point and tick
+  value and the day's focus contract, with an explicit rule never to re-price a figure using
+  another contract's numbers.
+- **Every tab has a guide.** The ? button in the header opens `FeatureGuidePanel` on the
+  current screen: what it is, numbered steps, limits, and which services the buyer supplies.
+- **First run is empty.** A new install has no trades, levels or demo data; the MES tracker's
+  demo is opt-in only. Settings → Start fresh clears the record and keeps the trader's profile,
+  instruments and setups, and the in-memory lists are cleared with it.
+- **Licence.** `LICENSE.txt` and `docs/LICENSING-AND-TERMS.md` state the grant: one person,
+  personal use, modify for your own trading, no resale or redistribution. Settings carries the
+  short form too.
 
 ---
 
@@ -498,6 +533,57 @@ vector stays in Postgres.
 | `npm run clean` | Removes `dist/` and `server.js`. |
 
 ---
+
+## Product builds
+
+The **Chart Pattern Playbook** is also built as a standalone product for sale, from the same
+source the Playbook tab renders:
+
+```bash
+npm run dev:chart-patterns      # product only, http://localhost:3001
+npm run build:chart-patterns    # dist/chart-patterns
+npm run e2e:product             # builds, then drives the built artifact
+npm run check:boundaries        # fails if the product reaches into the journal
+npm run package:chart-patterns  # release/chart-pattern-playbook-<version>.zip
+```
+
+- `chart-patterns.html` and `src/products/chart-patterns/` are its entry and shell.
+- `vite.chart-patterns.config.ts` builds with `base: './'`, so the zip runs from any folder
+  or subdirectory.
+- `__CLOUD_MEDIA__` is `false` in that build. `ImageUploader` then keeps a screenshot inline
+  and the Supabase client is compiled out; the journal's build sets it to `true`.
+- The product owns `ptj_pattern_studies_v1` — the same key the journal uses — and its export
+  can also read a full journal backup's `patternStudies`. A buyer can move notes both ways.
+- Buyer docs and the EULA live in `products/chart-patterns/`. The zip contains `index.html`,
+  `assets/`, `INSTALL.md`, `LICENSE.txt`, `README.md` and `version.json`.
+- The license check is offline by design (format + stored key + seven-day trial). It is not
+  DRM; the activation screen says so. Hosted features verify Payhip keys server-side instead.
+- **Buyer requirements:** the two static mini-products need nothing external. The journal,
+  coach, memory and bundle products are sold as software and require the buyer's own Supabase
+  project and Gemini API key; the setup guide and the listing copy are in
+  `docs/BUYER-SETUP.md`, and the licence grant (one person, no resale or redistribution) is in
+  `docs/LICENSING-AND-TERMS.md`.
+
+The **MES Indicator Level Tracker** is the second standalone product, built from the same
+`MesView` the journal's MES tab mounts:
+
+```bash
+npm run dev:mes        # product only, http://localhost:3002
+npm run build:mes      # dist/mes-tracker
+npm run e2e:mes        # builds, then drives the built artifact
+npm run package:mes    # release/mes-indicator-level-tracker-<version>.zip
+```
+
+- `mes-tracker.html`, `vite.mes-tracker.config.ts` and `src/products/mes-tracker/` are its
+  entry, build and shell. `MesView` takes `standalone`, which drops the playbook cross-record
+  card and the cloud-sync claims.
+- It owns `ptj_mes_levels_v1`, the journal's key, through `src/lib/mes/storage.ts`; a backup
+  moves between the two products.
+- Both products share `src/lib/license/offline-license.ts` and `src/components/license/`.
+  `scripts/package-product.ts` reads `products/<id>/product.json`, and
+  `scripts/check-product-boundaries.ts` checks every product's built JS, not just one.
+- Buyer docs for MES live in `products/mes-tracker/`; the zip has the same file list as the
+  playbook's.
 
 ## Architecture
 

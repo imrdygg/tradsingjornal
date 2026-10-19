@@ -10,13 +10,7 @@ import {
   Play,
 } from 'lucide-react';
 import { compressAndReadImage, getImageFromPasteEvent } from '../../lib/utils/image-utils';
-import {
-  isVideoUrl,
-  uploadImageDataUrl,
-  uploadMediaFile,
-  validateVideoFile,
-  MAX_VIDEO_SECONDS,
-} from '../../lib/media/media-utils';
+import { isVideoUrl, MAX_VIDEO_SECONDS } from '../../lib/utils/media-type';
 
 export interface ImageUploaderProps {
   /** Attachment list. Images are data URLs, uploaded videos are cloud URLs. */
@@ -79,6 +73,11 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
     const newUrls: string[] = [];
 
     try {
+      // The upload client is a build-time choice. The journal compiles it in; the standalone
+      // Chart Pattern Playbook compiles it out (__CLOUD_MEDIA__ = false), so a screenshot
+      // there stays inline and no Supabase code is ever downloaded.
+      const media = __CLOUD_MEDIA__ ? await import('../../lib/media/media-utils') : null;
+
       // Images first — they are compressed locally, then sent to the media bucket when there
       // is an account to send them to. Inline is the fallback, not the goal: a journal full of
       // base64 screenshots is what fills a browser's ~5 MB and stops every later save.
@@ -87,7 +86,7 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
         const dataUrl = await compressAndReadImage(file);
         setStatus('Uploading screenshot…');
         try {
-          newUrls.push(await uploadImageDataUrl(dataUrl));
+          newUrls.push(media ? await media.uploadImageDataUrl(dataUrl) : dataUrl);
         } catch {
           // Signed out or no cloud storage: keep the picture inline rather than lose it.
           newUrls.push(dataUrl);
@@ -96,14 +95,18 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
 
       // Clips are validated, then uploaded to cloud storage.
       for (const file of videoFiles) {
+        if (!media) {
+          setError('Video attachments are only available in the full journal.');
+          continue;
+        }
         setStatus('Checking video…');
-        const check = await validateVideoFile(file);
+        const check = await media.validateVideoFile(file);
         if (!check.ok) {
           setError(check.error || 'That video could not be used.');
           continue;
         }
         setStatus(`Uploading video (${Math.round(check.durationSeconds || 0)}s)…`);
-        newUrls.push(await uploadMediaFile(file));
+        newUrls.push(await media.uploadMediaFile(file));
       }
 
       if (newUrls.length > 0) {

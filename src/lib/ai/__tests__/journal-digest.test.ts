@@ -60,7 +60,6 @@ function makeDay(overrides: Partial<TradingDay> = {}): TradingDay {
     importantLevels: [],
     waitingFor: 'Retest of the open',
     stayOutIf: 'Chop inside the prior range',
-    planChanges: [],
     createdAt: '2026-09-18T12:00:00.000Z',
     updatedAt: '2026-09-18T12:00:00.000Z',
     ...overrides,
@@ -298,30 +297,6 @@ describe('buildJournalDigest', () => {
       expect(digest.planAdherence.daysExceededLossLimit).toBe(0);
       expect(digest.planAdherence.worstOvershoot).toBe(0);
     });
-
-    it('counts edits made to a locked plan and keeps examples', () => {
-      const digest = build({
-        tradingDays: [
-          makeDay({
-            tradeDate: '2026-09-17',
-            planChanges: [
-              {
-                id: 'c1',
-                tradingDayId: 'd1',
-                fieldName: 'Planned loss limit',
-                oldValue: '100',
-                newValue: '200',
-                reason: 'felt good',
-                changedAt: '2026-09-17T15:00:00.000Z',
-              },
-            ],
-          }),
-        ],
-      });
-
-      expect(digest.planAdherence.lockedPlanEdits).toBe(1);
-      expect(digest.planAdherence.lockedPlanEditExamples[0]).toContain('felt good');
-    });
   });
 
   describe('streaks', () => {
@@ -492,18 +467,16 @@ describe('buildJournalDigest', () => {
     expect(digest.traderOwnWords.tradeNotes[0]).toBe('spaced out badly');
   });
 
-  it("reports today's plan and today's result separately from history", () => {
+  it("reports today's day record and today's result separately from history", () => {
     const digest = build({
       trades: [makeTrade({ tradingDayId: 'today', netPnL: 25 })],
-      tradingDays: [makeDay({ id: 'today', tradeDate: '2026-09-18', lockedAt: '2026-09-18T13:00:00.000Z' })],
+      tradingDays: [makeDay({ id: 'today', tradeDate: '2026-09-18' })],
       todayTradeDate: '2026-09-18',
     });
 
     expect(digest.today.hasPlan).toBe(true);
-    expect(digest.today.locked).toBe(true);
     expect(digest.today.tradesTaken).toBe(1);
     expect(digest.today.netPnL).toBe(25);
-    expect(digest.planAdherence.daysWithPlan).toBe(1);
   });
 
   it('handles a completely empty journal without producing NaN', () => {
@@ -1332,5 +1305,46 @@ describe("the trader's own mindset notes", () => {
     expect(read.total).toBe(45);
     expect(read.notes).toHaveLength(40);
     expect(read.omitted).toBe(5);
+  });
+});
+
+/**
+ * The coach used to be able to assume one contract. Every dollar figure it reads is priced
+ * with the trade's own spec, so the spec has to travel with the digest: otherwise "ten points"
+ * is silently $50 when the trader took it in NQ, and a deleted contract's dollars look
+ * comparable to a live one's.
+ */
+describe('instrument specifications', () => {
+  it('carries every catalog contract with its point and tick value', () => {
+    const digest = build();
+
+    expect(digest.instruments).toHaveLength(DEFAULT_INSTRUMENTS.length);
+    expect(digest.instruments.find((entry) => entry.symbol === 'MES')).toMatchObject({
+      pointValue: 5,
+      tickValue: 1.25,
+      kind: 'future',
+    });
+    expect(digest.instruments.find((entry) => entry.symbol === 'NQ')).toMatchObject({
+      pointValue: 20,
+      tickValue: 5,
+    });
+  });
+
+  it("names the day's focus contract", () => {
+    const digest = build({ tradingDays: [makeDay({ primaryInstrument: 'NQ' })] });
+
+    expect(digest.primaryInstrument).toBe('NQ');
+  });
+
+  it('lists a symbol the record holds but the catalog no longer does', () => {
+    const digest = build({ trades: [makeTrade({ instrumentId: 'xyz' })] });
+
+    expect(digest.unpricedSymbols).toEqual(['XYZ']);
+  });
+
+  it('has no unpriced symbols when every trade resolves', () => {
+    const digest = build({ trades: [makeTrade({ instrumentId: 'mes' })] });
+
+    expect(digest.unpricedSymbols).toEqual([]);
   });
 });

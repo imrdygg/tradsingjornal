@@ -65,7 +65,6 @@ async function seedTradeWithCharts(page: Page, images: string[]) {
             importantLevels: [],
             waitingFor: '',
             stayOutIf: '',
-            planChanges: [],
             createdAt: at,
             updatedAt: at,
           },

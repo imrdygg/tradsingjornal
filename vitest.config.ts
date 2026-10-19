@@ -6,6 +6,8 @@ import { defineConfig } from 'vitest/config';
  * `npm test` — those run via `npm run e2e`.
  */
 export default defineConfig({
+  // Matches the journal build, so a component that branches on the switch can be tested.
+  define: { __CLOUD_MEDIA__: 'true' },
   test: {
     environment: 'node',
     // Only unit tests under `src/` are scanned. Nothing may live in `api/` except the

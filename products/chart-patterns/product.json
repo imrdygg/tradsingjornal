@@ -1,0 +1,10 @@
+{
+  "id": "chart-pattern-playbook",
+  "displayName": "Chart Pattern Playbook",
+  "version": "1.0.0",
+  "licenseMode": "offline-key",
+  "buildDir": "dist/chart-patterns",
+  "buildHtml": "chart-patterns.html",
+  "sourceDir": "src/products/chart-patterns",
+  "allowedSegments": ["/components/playbook/", "/lib/playbook/"]
+}

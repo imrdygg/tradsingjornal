@@ -1701,17 +1701,14 @@ function formatDigestForPrompt(digest, mode) {
     for (const fail of e.failedRules) lines.push(`- ${fail.rule}: ${fail.times}x`);
   }
   lines.push("");
-  lines.push("=== PLAN vs WHAT ACTUALLY HAPPENED ===");
+  lines.push("=== THE DAY vs WHAT ACTUALLY HAPPENED ===");
   const p = digest.planAdherence;
-  lines.push(`${p.daysWithPlan} day(s) had a locked plan.`);
   lines.push(
     `Days that lost more than the planned loss limit: ${p.daysExceededLossLimit}` + (p.worstOvershoot > 0 ? ` (worst overshoot ${money(p.worstOvershoot)}).` : ".")
   );
   lines.push(`Trades taken outside the planned sessions: ${p.tradesOutsideAllowedSessions}.`);
   lines.push(`Trades on a setup that was not on the day's watch list: ${p.tradesOnUnplannedSetup}.`);
   lines.push(`Trades on an instrument other than the day's primary one: ${p.tradesOnNonPrimaryInstrument}.`);
-  lines.push(`Edits made to an already-locked plan: ${p.lockedPlanEdits}.`);
-  for (const example of p.lockedPlanEditExamples) lines.push(`- ${example}`);
   lines.push("");
   lines.push("=== STREAKS ===");
   lines.push(`Consecutive losing days at the moment: ${digest.streaks.consecutiveLosingDays}.`);
@@ -1767,7 +1764,7 @@ function formatDigestForPrompt(digest, mode) {
   const size = b.sizeDiscipline;
   if (size.daysWithPlannedContracts > 0) {
     lines.push(
-      `SIZE AGAINST THEIR OWN PLAN: ${size.tradesOverPlannedSize} trade(s) were larger than the contracts planned for that day` + (size.worstOvershootContracts > 0 ? ` (worst was ${size.worstOvershootContracts} contract(s) over the plan)` : "") + `. ${size.overPlannedSizeAfterLoss} of those came within ${loss.windowMinutes} minutes of a loss.`
+      `SIZE AGAINST THE DAY'S RECORDED SIZE: ${size.tradesOverPlannedSize} trade(s) were larger than the size recorded for that day` + (size.worstOvershootContracts > 0 ? ` (worst was ${size.worstOvershootContracts} contract(s) over it)` : "") + `. ${size.overPlannedSizeAfterLoss} of those came within ${loss.windowMinutes} minutes of a loss.`
     );
   }
   const activity = b.activity;
@@ -1817,7 +1814,7 @@ function formatDigestForPrompt(digest, mode) {
     lines.push("No plan has been recorded for today yet.");
   } else {
     lines.push(
-      `Status ${t.status}${t.locked ? " (locked)" : " (not locked)"}. Primary instrument ${t.primaryInstrument}, ${t.contractsPlanned} contract(s) planned, planned loss limit ${money(t.plannedLossLimit)}. Bias recorded as ${t.marketBias}.`
+      `Status ${t.status}. Primary instrument ${t.primaryInstrument}, ${t.contractsPlanned} contract(s) planned, planned loss limit ${money(t.plannedLossLimit)}. Bias recorded as ${t.marketBias}.`
     );
     lines.push(`Allowed sessions: ${t.allowedSessions.join(", ") || "none recorded"}.`);
     lines.push(`Setups on the watch list: ${t.watchedSetups.length ? t.watchedSetups.join(", ") : "none recorded"}.`);

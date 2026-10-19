@@ -1,0 +1,46 @@
+MES INDICATOR LEVEL TRACKER — END USER LICENSE
+
+Copyright (c) 2026. All rights reserved.
+
+This product is licensed, not sold. The terms below are the whole licence.
+
+1. LICENSE GRANT
+   Your purchase grants one person a non-exclusive, non-transferable license to install and use
+   this product on any devices that person owns or controls, for personal record-keeping.
+
+2. WHAT YOU MAY NOT DO
+   - Resell, sublicense, rent, lend, or redistribute the product or its files.
+   - Publish the product, in whole or in part, as your own product or as part of one.
+   - Use the content or code to build a competing product for sale.
+   - Publish the files in a public repository, a file-sharing link, or a dataset.
+   - Share your license key publicly, or use one key to activate other people's copies.
+   - Remove or alter the copyright, license, or attribution notices.
+
+3. OWNERSHIP
+   The code, wording and design remain the seller's. You receive the right to use them under
+   section 1, not ownership of them.
+
+4. NO FINANCIAL ADVICE
+   This product is a record of levels the user observed. It is not financial, investment, or
+   trading advice, and it does not predict markets. A reliability or strength figure describes
+   past tests of a price level, not a future outcome. You are solely responsible for your trading
+   decisions and their outcomes.
+
+5. NO WARRANTY
+   The product is provided "as is", without warranty of any kind, express or implied, including
+   fitness for a particular purpose. The author is not liable for any loss or damage arising from
+   its use, including trading losses or lost data.
+
+6. DATA
+   Your records are stored in your own browser. You are responsible for exporting backups. The
+   product makes no network requests and holds no copy of your data.
+
+7. THIRD-PARTY SERVICES
+   The store you bought from has its own terms for the sale, receipts, refunds and tax.
+
+8. TERMINATION
+   This license ends if you breach these terms. On termination you must stop using the product
+   and delete its files and any copies you made.
+
+9. REFUNDS AND SUPPORT
+   Refunds and support are handled through the store where you purchased the product.

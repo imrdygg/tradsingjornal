@@ -108,6 +108,7 @@ import {
   DayRoutine,
   Setup,
   UserProfile,
+  Instrument,
   TradeExecutionReview,
   TradeManagement,
   PatternStudy,
@@ -522,34 +523,6 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   };
 
   /**
-   * Undoes today's plan lock. The reason is recorded in the plan change audit
-   * trail first, so unlocking leaves the same paper trail as any other edit to
-   * a locked plan.
-   */
-  const handleUnlockPlan = (reason?: string) => {
-    if (reason) {
-      storage.recordPlanChange(todayTradingDay.id, {
-        fieldName: 'Plan Lock',
-        oldValue: 'Locked',
-        newValue: 'Unlocked',
-        reason,
-      });
-    }
-    storage.unlockPlan(todayTradingDay.id);
-    setTradingDays(storage.getTradingDays());
-  };
-
-  const handleRecordPlanChange = (change: {
-    fieldName: string;
-    oldValue: string;
-    newValue: string;
-    reason: string;
-  }) => {
-    storage.recordPlanChange(todayTradingDay.id, change);
-    setTradingDays(storage.getTradingDays());
-  };
-
-  /**
    * Everything the coach needs about this journal, in one object.
    *
    * Built from the live state rather than cached for the session, because the whole value
@@ -882,6 +855,54 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   const handleUpdateProfile = (newProfile: UserProfile) => {
     storage.updateProfile(newProfile);
     setProfile(storage.getProfile());
+  };
+
+  /**
+   * Adds or edits one instrument in the trader's catalog.
+   *
+   * Storage normalises the spec and derives the tick value, then hands back the whole catalog;
+   * the state takes the returned list rather than the draft so the screen and storage cannot
+   * disagree about what was saved.
+   */
+  const handleSaveInstrument = (instrument: Instrument) => {
+    setInstruments(storage.saveInstrument(instrument));
+  };
+
+  /**
+   * Removes one instrument, repointing anything that named it as the default.
+   *
+   * Returns false when storage refused — the last active instrument cannot go, because a
+   * journal with no contract has nothing to record a trade against. When the removed contract
+   * was the profile's focus or today's contract, both move to the first remaining active one:
+   * leaving them naming a symbol the catalog no longer holds would quietly price the day's
+   * risk off the neutral fallback.
+   */
+  const handleDeleteInstrument = (instrumentId: string): boolean => {
+    const before = instruments;
+    const removed = before.find((instrument) => instrument.id === instrumentId);
+    if (!removed) return false;
+
+    const next = storage.deleteInstrument(instrumentId);
+    if (next.length === before.length) return false;
+    setInstruments(next);
+
+    const replacement = next.find((instrument) => instrument.active !== false) ?? next[0];
+    if (!replacement) return true;
+
+    const namesRemoved = (value: string | undefined) =>
+      !!value &&
+      (value.toLowerCase() === removed.id.toLowerCase() ||
+        value.toUpperCase() === removed.symbol.toUpperCase());
+
+    if (namesRemoved(profile.defaultInstrument)) {
+      storage.updateProfile({ ...profile, defaultInstrument: replacement.symbol });
+      setProfile(storage.getProfile());
+    }
+    if (namesRemoved(todayTradingDay.primaryInstrument)) {
+      storage.saveTradingDay({ ...todayTradingDay, primaryInstrument: replacement.symbol });
+      setTradingDays(storage.getTradingDays());
+    }
+    return true;
   };
 
   const handleAddSetup = (setup: Setup) => {
@@ -1423,16 +1444,37 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
   const handleResetJournal = async () => {
     storage.resetJournal();
 
+    /**
+     * The emptied journal, built from the live state rather than from a fresh literal.
+     *
+     * `resetJournal` keeps the trader's own material — profile, instrument catalog, setups,
+     * playbook studies and the lessons library — so those are carried through from the current
+     * snapshot. Everything it does clear is emptied here too: a list left on screen after
+     * "start fresh" would look like it had survived the reset, and the cloud copy must match
+     * what the browser now holds.
+     */
+    const before = currentStateRef.current;
     const fresh: StorageState = {
+      ...before,
       profile,
       instruments,
       setups,
+      patternStudies: before.patternStudies,
+      lessons: before.lessons,
       tradingDays: [],
       trades: [],
       reviews: [],
       levelTouches: [],
+      markedLevels: [],
+      levelOutlooks: [],
+      mesLevels: [],
       sessionExtremes: [],
       chartSearches: [],
+      observations: [],
+      memorySearches: [],
+      coachPlans: [],
+      mindsetNotes: [],
+      feedback: [],
     };
 
     // Deliberate and destructive, so it takes the unconditional write: the emptied journal
@@ -1444,10 +1486,16 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
     // An armed undo points at records the reset just deleted; taking it back would resurrect
     // them, so the button is cleared rather than left holding a plan against an empty journal.
     setLevelUndo(null);
-    // The reset clears these two in storage as well, so the screen has to follow: a list
-    // still on screen after "start fresh" would look like it had survived the reset.
     setLevelTouches([]);
+    setMarkedLevels([]);
+    setLevelOutlooks([]);
+    setMesLevels([]);
     setSessionExtremes([]);
+    setChartSearches([]);
+    setObservations([]);
+    setCoachPlans([]);
+    setMindsetNotes([]);
+    setFeedback([]);
     // Recreate today's (empty) planning day so the app has somewhere to land.
     storage.getOrCreateToday();
     setTradingDays(storage.getTradingDays());
@@ -2052,7 +2100,6 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             maxDrawdown={profile.maxDrawdown ?? null}
             primaryInstrument={instrumentSymbol(instruments, todayTradingDay.primaryInstrument)}
             onApplyPlan={handleApplyChartPlan}
-            planLocked={!!todayTradingDay.lockedAt}
             theme={theme}
             coachPlans={coachPlans}
             mesLevels={mesLevels}
@@ -2191,6 +2238,8 @@ function JournalApp({ userId, userEmail, onSignOut }: JournalAppProps) {
             onReorderSetups={handleReorderSetups}
             onRelabelSetup={handleRelabelSetup}
             onUpdateProfile={handleUpdateProfile}
+            onSaveInstrument={handleSaveInstrument}
+            onDeleteInstrument={handleDeleteInstrument}
             onExportData={handleExportData}
             onImportData={handleImportData}
             onTradovateImport={handleTradovateImport}

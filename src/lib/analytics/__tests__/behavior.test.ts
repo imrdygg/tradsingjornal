@@ -63,7 +63,6 @@ function makeDay(overrides: Partial<TradingDay> = {}): TradingDay {
     importantLevels: [],
     waitingFor: '',
     stayOutIf: '',
-    planChanges: [],
     createdAt: '2026-09-18T12:00:00.000Z',
     updatedAt: '2026-09-18T12:00:00.000Z',
     ...overrides,

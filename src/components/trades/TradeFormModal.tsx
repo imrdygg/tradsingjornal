@@ -27,7 +27,7 @@ import { calculateInitialRisk } from '../../lib/trading/calculate-risk';
 import { deriveStop, hasAssumedRisk } from '../../lib/trading/risk-fixup';
 import { calculatePnL } from '../../lib/trading/calculate-pnl';
 import { calculateRMultiple } from '../../lib/trading/calculate-r';
-import { findInstrument } from '../../lib/trading/instruments';
+import { findInstrument, instrumentKind, sizeUnit } from '../../lib/trading/instruments';
 import {
   DEFAULT_RISK_TIER_AMOUNTS,
   RISK_TIER_COUNT,
@@ -803,7 +803,9 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
                 id="trade-contracts"
                 type="number"
                 min="1"
-                max="50"
+                // A future is sized in contracts, which is tens; a stock is sized in shares,
+                // which can be thousands. One cap for both would refuse a real stock trade.
+                max={instrumentKind(selectedInstrument) === 'stock' ? 1000000 : 50}
                 value={contracts}
                 onChange={(e) => {
                   // The trader is taking the size over by hand; stop deriving it.
@@ -813,7 +815,10 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
                 className="w-16 rounded-lg border border-zinc-800 bg-zinc-950 px-2 py-1 text-xs font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none"
                 required
               />
-              <span>contract{contracts === '1' ? '' : 's'}</span>
+              <span>
+                {sizeUnit(selectedInstrument).replace(/s$/, '')}
+                {contracts === '1' ? '' : 's'}
+              </span>
             </label>
             <button
               type="button"
@@ -858,11 +863,36 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
                 onChange={(e) => setInstrumentId(e.target.value)}
                 className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs font-mono text-zinc-100 focus:border-zinc-600 focus:outline-none"
               >
-                {instruments.map((inst) => (
-                  <option key={inst.id} value={inst.id}>
-                    {inst.symbol} — {inst.name} (${inst.pointValue}/pt)
-                  </option>
-                ))}
+                {/* Grouped by asset class: the catalog is long now, and a trader looking for
+                    a stock should not have to scan thirty futures roots to find it. */}
+                {(['future', 'stock', 'forex', 'crypto', 'custom'] as const).map((kind) => {
+                  const group = instruments.filter(
+                    (inst) => instrumentKind(inst) === kind && inst.active !== false
+                  );
+                  if (group.length === 0) return null;
+                  return (
+                    <optgroup
+                      key={kind}
+                      label={
+                        kind === 'future'
+                          ? 'Futures'
+                          : kind === 'stock'
+                          ? 'Stocks & ETFs'
+                          : kind === 'forex'
+                          ? 'Forex futures'
+                          : kind === 'crypto'
+                          ? 'Crypto futures'
+                          : 'Other'
+                      }
+                    >
+                      {group.map((inst) => (
+                        <option key={inst.id} value={inst.id}>
+                          {inst.symbol} — {inst.name} (${inst.pointValue}/pt)
+                        </option>
+                      ))}
+                    </optgroup>
+                  );
+                })}
               </select>
             </div>
           )}

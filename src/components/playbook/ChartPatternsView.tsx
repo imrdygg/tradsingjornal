@@ -36,7 +36,12 @@ import {
   checklistKey,
 } from '../../lib/playbook/pattern-types';
 import type { PatternBias, PatternCategory, PatternSetup } from '../../lib/playbook/pattern-types';
-import type { PatternGrade, PatternStatus, PatternStudy, PatternStudyEntry } from '../../types';
+import type {
+  PatternGrade,
+  PatternStatus,
+  PatternStudy,
+  PatternStudyEntry,
+} from '../../lib/playbook/pattern-study-types';
 
 export interface ChartPatternsViewProps {
   studies: PatternStudy[];

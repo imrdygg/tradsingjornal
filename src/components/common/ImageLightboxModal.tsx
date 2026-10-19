@@ -14,7 +14,7 @@ import {
   Video,
   Play,
 } from 'lucide-react';
-import { isVideoUrl } from '../../lib/media/media-utils';
+import { isVideoUrl } from '../../lib/utils/media-type';
 
 export interface ImageLightboxModalProps {
   isOpen: boolean;

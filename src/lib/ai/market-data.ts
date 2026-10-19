@@ -96,24 +96,49 @@ const FETCH_TIMEOUT_MS = 4_000;
  */
 export const FUTURES_QUOTE_SYMBOLS: Readonly<Record<string, string>> = {
   // Equity index futures, micro and full size.
-  MES: 'MES=F',
   ES: 'ES=F',
-  MNQ: 'MNQ=F',
+  MES: 'MES=F',
   NQ: 'NQ=F',
-  MYM: 'MYM=F',
+  MNQ: 'MNQ=F',
   YM: 'YM=F',
-  M2K: 'M2K=F',
+  MYM: 'MYM=F',
   RTY: 'RTY=F',
-  // Metals and energy.
-  MGC: 'MGC=F',
-  GC: 'GC=F',
-  SIL: 'SIL=F',
-  SI: 'SI=F',
-  MCL: 'MCL=F',
+  M2K: 'M2K=F',
+  NKD: 'NKD=F',
+  // Energy, micro contracts included.
   CL: 'CL=F',
-  // FX.
+  MCL: 'MCL=F',
+  QM: 'QM=F',
+  BZ: 'BZ=F',
+  NG: 'NG=F',
+  RB: 'RB=F',
+  HO: 'HO=F',
+  // Metals.
+  GC: 'GC=F',
+  MGC: 'MGC=F',
+  SI: 'SI=F',
+  SIL: 'SIL=F',
+  HG: 'HG=F',
+  PL: 'PL=F',
+  // Rates.
+  ZB: 'ZB=F',
+  ZN: 'ZN=F',
+  ZF: 'ZF=F',
+  ZT: 'ZT=F',
+  // Grains.
+  ZC: 'ZC=F',
+  ZS: 'ZS=F',
+  ZW: 'ZW=F',
+  // FX futures.
   M6E: 'M6E=F',
   '6E': '6E=F',
+  '6J': '6J=F',
+  '6B': '6B=F',
+  '6A': '6A=F',
+  // Crypto futures.
+  BTC: 'BTC=F',
+  MBT: 'MBT=F',
+  ETH: 'ETH=F',
 };
 
 /** The provider's ticker for a journal instrument, or null when it is not mapped. */

@@ -180,11 +180,13 @@ export const LevelChartCard: React.FC<LevelChartCardProps> = ({
   /**
    * The views on offer.
    *
-   * Compare pairs two contracts, so it is dropped when the catalog holds one: a journal that
-   * records a single market has nothing to compare it against, and the tab would only ever
-   * open on its own empty state. Every other view stands on its own.
+   * Compare pairs two contracts, so it is dropped unless the *record* covers more than one.
+   * The old test was the catalog's length, which meant the same thing while the catalog held a
+   * single contract; now that a trader can add anything, the catalog says nothing about what
+   * they have actually written down, and the tab would open on its own empty state for every
+   * new instrument they add. Every other view stands on its own.
    */
-  const views = instruments.length > 1 ? VIEWS : VIEWS.filter((entry) => entry.id !== 'compare');
+  const views = canCompare ? VIEWS : VIEWS.filter((entry) => entry.id !== 'compare');
 
   // The one blind spot worth naming: the line the trader keeps marking and price keeps missing.
   // Read over the whole record, not the selected contract, because that is the question the

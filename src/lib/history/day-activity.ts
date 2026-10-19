@@ -47,10 +47,8 @@ export function dayHasRecordedActivity(
   // A trade is the strongest signal there is: the session happened.
   if (facts.tradeCount > 0) return true;
 
-  // A review, a locked plan, or a change recorded against a locked plan.
+  // A review is writing about the session, so it counts on its own.
   if (facts.review) return true;
-  if (day.lockedAt || day.lockedSnapshot) return true;
-  if (day.planChanges.length > 0) return true;
 
   // The day was closed out on purpose.
   if (day.endedAt) return true;

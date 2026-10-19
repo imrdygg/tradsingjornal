@@ -95,7 +95,6 @@ function makeDay(overrides: Partial<TradingDay> = {}): TradingDay {
     importantLevels: [],
     waitingFor: 'Retest of the open',
     stayOutIf: 'Chop inside the prior range',
-    planChanges: [],
     createdAt: '2026-09-18T12:00:00.000Z',
     updatedAt: '2026-09-18T12:00:00.000Z',
     ...overrides,
@@ -2495,5 +2494,48 @@ describe('mindset mode', () => {
     expect(() =>
       parseCoachResponse('mindset', { read: 'x', nextStep: 'y', motivation: 'm' })
     ).toThrow(/headline/);
+  });
+});
+
+/**
+ * The coach used to be able to assume one contract at $5 a point. Every digest now carries the
+ * catalog's specifications, and every dollar figure in it was priced with the trade's own
+ * contract. This is the prompt-side half of that rule: the specs are present, and the model is
+ * told not to re-price anything with another contract's numbers.
+ */
+describe('contract specifications in the prompt', () => {
+  it('lists what a point is worth for each contract', () => {
+    const text = formatDigestForPrompt(digestFor());
+
+    expect(text).toContain('CONTRACT SPECIFICATIONS');
+    expect(text).toContain('MES — Micro E-mini S&P 500: $5 per point');
+    expect(text).toContain('NQ — E-mini Nasdaq-100: $20 per point');
+    expect(text).toContain('CL — Crude Oil (WTI): $1000 per point');
+  });
+
+  it("names the day's focus contract without hiding the others", () => {
+    const text = formatDigestForPrompt(
+      digestFor({ tradingDays: [makeDay({ primaryInstrument: 'NQ' })] })
+    );
+
+    expect(text).toContain("the day's focus contract");
+    expect(text).toContain('NQ — E-mini Nasdaq-100');
+    expect(text).toContain('MES — Micro E-mini S&P 500');
+  });
+
+  it('forbids assuming a dollar point value', () => {
+    const text = formatDigestForPrompt(digestFor());
+
+    expect(text).toContain('never assume a point is worth $5');
+    expect(text).toContain('already in dollars');
+  });
+
+  it('flags a symbol the catalog no longer holds', () => {
+    const text = formatDigestForPrompt(
+      digestFor({ trades: [makeTrade({ instrumentId: 'xyz' })] })
+    );
+
+    expect(text).toContain('no longer in the catalog');
+    expect(text).toContain('XYZ');
   });
 });

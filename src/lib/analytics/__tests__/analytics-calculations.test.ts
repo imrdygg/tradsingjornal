@@ -171,7 +171,6 @@ describe('Analytics Calculations', () => {
         importantLevels: [],
         waitingFor: 'Pullback to VWAP',
         stayOutIf: 'Choppy inside range',
-        planChanges: [],
         createdAt: '2026-09-17T07:00:00Z',
         updatedAt: '2026-09-17T16:00:00Z',
       },

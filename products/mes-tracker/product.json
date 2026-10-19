@@ -1,0 +1,10 @@
+{
+  "id": "mes-indicator-level-tracker",
+  "displayName": "MES Indicator Level Tracker",
+  "version": "1.0.0",
+  "licenseMode": "offline-key",
+  "buildDir": "dist/mes-tracker",
+  "buildHtml": "mes-tracker.html",
+  "sourceDir": "src/products/mes-tracker",
+  "allowedSegments": ["/components/mes/", "/lib/mes/"]
+}

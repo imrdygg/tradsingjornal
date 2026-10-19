@@ -345,7 +345,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
             Trading Day History
           </h1>
           <p className="text-xs text-zinc-400 mt-0.5">
-            Detailed archive of locked morning plans, mid-day changes, trade executions, and disciplined reviews.
+            Detailed archive of each session: what it was read against, the trades executed, and the review written afterwards.
           </p>
         </div>
       </div>
@@ -768,18 +768,13 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
               </button>
             </div>
 
-            {/* 1. Original Morning Plan & Immutable Snapshot */}
+            {/* 1. The day's own record: its settings, and the levels it was read against. */}
             <div className="rounded-xl border border-zinc-800 bg-zinc-950/70 p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold uppercase tracking-wider text-zinc-400 font-mono flex items-center gap-1.5">
                   <Lock className="w-3.5 h-3.5 text-zinc-300" />
-                  Morning Plan & Original Snapshot
+                  The day's record
                 </span>
-                {selectedDay.lockedAt && (
-                  <span className="text-[11px] font-mono text-zinc-400">
-                    Locked at {formatTimestamp(selectedDay.lockedAt)}
-                  </span>
-                )}
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs font-mono">
@@ -860,23 +855,6 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                 </div>
               )}
 
-              {/* Plan changes audit list */}
-              {selectedDay.planChanges && selectedDay.planChanges.length > 0 && (
-                <div className="pt-2 border-t border-zinc-800/60 space-y-1.5">
-                  <span className="text-[11px] font-semibold text-amber-300 uppercase font-mono block">
-                    Recorded Plan Changes ({selectedDay.planChanges.length})
-                  </span>
-                  {selectedDay.planChanges.map((c) => (
-                    <div key={c.id} className="text-xs text-zinc-300 bg-zinc-900/80 p-2 rounded-lg">
-                      <span className="font-semibold text-zinc-100">{c.fieldName}</span> changed from{' '}
-                      <span className="text-rose-300 font-mono">{c.oldValue}</span> to{' '}
-                      <span className="text-emerald-300 font-mono">{c.newValue}</span> at{' '}
-                      <span className="text-zinc-400 font-mono">{formatTimestamp(c.changedAt)}</span>.
-                      <p className="text-zinc-400 italic text-[11px] mt-0.5">Reason: "{c.reason}"</p>
-                    </div>
-                  ))}
-                </div>
-              )}
             </div>
 
             {/* 2. Executed Trades for Day */}

@@ -10,39 +10,17 @@
  */
 import { supabase } from '../supabase';
 import type { StorageState } from '../storage';
+import { isInlineImage, isVideoUrl, MAX_VIDEO_SECONDS } from '../utils/media-type';
 
 /** Public-read Storage bucket that holds uploaded trade/playbook videos. */
 export const MEDIA_BUCKET = 'journal-media';
 
-/** Longest clip we accept — "quick 30 sec / 1 min" recordings. */
-export const MAX_VIDEO_SECONDS = 90;
+// Re-exported so existing imports keep working; the definitions live in the pure module.
+export { isInlineImage, isInlineVideo, isVideoUrl, MAX_VIDEO_SECONDS } from '../utils/media-type';
 
 /** Hard size cap so a phone recording never blows up the upload. */
 export const MAX_VIDEO_BYTES = 60 * 1024 * 1024;
 
-/** True when the attachment is a video rather than a still image. */
-export function isVideoUrl(url: string | undefined | null): boolean {
-  if (!url) return false;
-  if (url.startsWith('data:video/')) return true;
-  // Uploaded clips keep their extension in the public Storage URL.
-  return /\.(mp4|webm|mov|m4v|ogv|ogg)(\?|#|$)/i.test(url);
-}
-
-/**
- * True when a URL is an image held inline in the journal rather than uploaded.
- *
- * This is the test the migration is built on: anything it reports true for is weight the
- * browser is carrying, and moving it to the bucket is what frees the space. Deliberately
- * separate from `isVideoUrl` so a clip can never be mistaken for a screenshot.
- */
-export function isInlineImage(url: string | undefined | null): boolean {
-  return !!url && url.startsWith('data:image/');
-}
-
-/** True when a URL is a video held inline in the journal. Should never occur, but is counted. */
-export function isInlineVideo(url: string | undefined | null): boolean {
-  return !!url && url.startsWith('data:video/');
-}
 
 /** The characters a base64 data URL actually carries, for weighing what a move would free. */
 export function inlineDataChars(urls: (string | undefined | null)[]): number {

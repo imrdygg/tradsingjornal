@@ -24,7 +24,6 @@ function tradingDay(over: Partial<TradingDay> = {}): TradingDay {
     importantLevels: [],
     waitingFor: '',
     stayOutIf: '',
-    planChanges: [],
     createdAt: '2026-09-28T00:00:00Z',
     updatedAt: '2026-09-28T00:00:00Z',
     ...over,

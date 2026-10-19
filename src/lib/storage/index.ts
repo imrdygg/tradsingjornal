@@ -6,8 +6,6 @@ import {
   DailyReview,
   LessonAcknowledgement,
   UserProfile,
-  PlanChange,
-  PlanSnapshot,
   PatternStudy,
   LevelTouch,
   SessionExtreme,
@@ -27,10 +25,14 @@ import { normalizeMesLevel } from '../mes/analytics';
 import {
   DEFAULT_INSTRUMENTS,
   INSTRUMENT_CATALOG_VERSION,
-  RETIRED_INSTRUMENT_IDS,
+  normalizeInstrument,
 } from '../trading/instruments';
 import { DEFAULT_RISK_TIER_AMOUNTS } from '../trading/risk-tiers';
 import { FOCUS_SETUP_NAMES } from '../playbook/focus-setups';
+import {
+  normalisePatternStudies,
+  upsertPatternStudy,
+} from '../playbook/pattern-store';
 import { timeframeOf } from '../analytics/session-extremes';
 import { clearCachedNotes } from '../ai/checkpoints';
 import { normaliseMemoryAiSettings } from '../memory/settings';
@@ -564,18 +566,48 @@ export const storage = {
     return getItem<Instrument[]>(STORAGE_KEYS.INSTRUMENTS, DEFAULT_INSTRUMENTS);
   },
 
+  /**
+   * Adds or updates one instrument, normalised on the way in.
+   *
+   * The editor is the trader's own catalog, so this does not police their spec — it only makes
+   * the record well formed, derives the tick value from the two numbers that define it, and
+   * keeps the id stable for anything already stored. Returns the whole catalog.
+   */
   saveInstrument(instrument: Instrument): Instrument[] {
     const list = this.getInstruments();
-    const idx = list.findIndex((i) => i.id === instrument.id);
+    const clean = normalizeInstrument(instrument);
+    const idx = list.findIndex(
+      (entry) => entry.id === clean.id || entry.symbol.toUpperCase() === clean.symbol
+    );
     let updated: Instrument[];
     if (idx >= 0) {
       updated = [...list];
-      updated[idx] = instrument;
+      // Keep the stored id: trades and levels point at it, and renaming a symbol must not
+      // orphan the history that was recorded under that id.
+      updated[idx] = { ...clean, id: list[idx].id };
     } else {
-      updated = [...list, instrument];
+      updated = [...list, clean];
     }
     setItem(STORAGE_KEYS.INSTRUMENTS, updated);
     return updated;
+  },
+
+  /**
+   * Removes one instrument from the catalog.
+   *
+   * Removal is a catalog decision, not a history rewrite: trades and levels keep the symbol
+   * they were recorded with, and `findInstrument` resolves that symbol to a neutral one rather
+   * than re-pricing it. The last active instrument cannot be removed — a journal with no
+   * contract cannot record a trade — and the caller is told why by the empty list.
+   */
+  deleteInstrument(instrumentId: string): Instrument[] {
+    const list = this.getInstruments();
+    const target = list.find((entry) => entry.id === instrumentId);
+    if (!target) return list;
+    const remaining = list.filter((entry) => entry.id !== instrumentId);
+    if (!remaining.some((entry) => entry.active !== false)) return list;
+    setItem(STORAGE_KEYS.INSTRUMENTS, remaining);
+    return remaining;
   },
 
   /**
@@ -613,17 +645,12 @@ export const storage = {
       return DEFAULT_INSTRUMENTS;
     }
 
-    // Strip contracts that are no longer in the catalog before anything else. The merge
-    // below only ever adds, so a journal that received the full complex would keep it for
-    // good; this is what brings it back to the three the trader actually uses. It runs on
-    // every read, whatever the marker says, because a stale cloud copy can reintroduce the
-    // whole list.
-    const retired = new Set(RETIRED_INSTRUMENT_IDS.map((id) => id.toLowerCase()));
-    const kept = stored.filter((instrument) => !retired.has(instrument.id.trim().toLowerCase()));
-    const pruned = kept.length !== stored.length;
+    // The list only ever grows here. It used to be pruned down to MES on every read, which is
+    // why a journal that once carried ES or CL had lost it; that prune is gone, and the
+    // built-ins carry the current version so they arrive again once.
+    const kept = stored;
 
     if (version >= INSTRUMENT_CATALOG_VERSION) {
-      if (pruned) setItem(STORAGE_KEYS.INSTRUMENTS, kept);
       return kept;
     }
 
@@ -640,7 +667,7 @@ export const storage = {
     );
 
     const merged = arrivals.length ? [...kept, ...arrivals] : kept;
-    if (arrivals.length || pruned) setItem(STORAGE_KEYS.INSTRUMENTS, merged);
+    if (arrivals.length) setItem(STORAGE_KEYS.INSTRUMENTS, merged);
     setItem(STORAGE_KEYS.INSTRUMENT_CATALOG, INSTRUMENT_CATALOG_VERSION);
     return merged;
   },
@@ -900,7 +927,6 @@ export const storage = {
       waitingFor: '',
       stayOutIf: '',
       notes: '',
-      planChanges: [],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -951,77 +977,6 @@ export const storage = {
 
     setItem(STORAGE_KEYS.DAYS, updatedList);
     return updatedDay;
-  },
-
-  /**
-   * Undoes a plan lock so the trader can carry on planning, or unlock after
-   * locking by mistake. Returns the reopened day.
-   */
-  unlockPlan(dayId: string): TradingDay | undefined {
-    const day = this.getTradingDayById(dayId);
-    if (!day) return undefined;
-
-    return this.saveTradingDay({
-      ...day,
-      status: day.status === 'active' ? 'planning' : day.status,
-      lockedAt: undefined,
-      lockedSnapshot: undefined,
-    });
-  },
-
-  lockPlan(dayId: string): TradingDay | undefined {
-    const day = this.getTradingDayById(dayId);
-    if (!day) return undefined;
-
-    const lockedAt = new Date().toISOString();
-    const lockedSnapshot: PlanSnapshot = {
-      riskMode: day.riskMode,
-      normalLossLimit: day.normalLossLimit,
-      plannedLossLimit: day.plannedLossLimit,
-      contractsPlanned: day.contractsPlanned,
-      primaryInstrument: day.primaryInstrument,
-      allowedSessions: [...day.allowedSessions],
-      marketBias: day.marketBias,
-      defaultRiskTier: day.defaultRiskTier,
-      riskTierCaps: day.riskTierCaps ? [...day.riskTierCaps] : undefined,
-      lockedAt,
-    };
-
-    const updated: TradingDay = {
-      ...day,
-      status: day.status === 'planning' ? 'active' : day.status,
-      lockedAt,
-      lockedSnapshot,
-      updatedAt: lockedAt,
-    };
-
-    return this.saveTradingDay(updated);
-  },
-
-  recordPlanChange(
-    dayId: string,
-    change: { fieldName: string; oldValue: string; newValue: string; reason: string }
-  ): TradingDay | undefined {
-    const day = this.getTradingDayById(dayId);
-    if (!day) return undefined;
-
-    const newRecord: PlanChange = {
-      id: `pc-${Date.now()}`,
-      tradingDayId: dayId,
-      fieldName: change.fieldName,
-      oldValue: change.oldValue,
-      newValue: change.newValue,
-      reason: change.reason,
-      changedAt: new Date().toISOString(),
-    };
-
-    const updated: TradingDay = {
-      ...day,
-      planChanges: [...(day.planChanges || []), newRecord],
-      updatedAt: new Date().toISOString(),
-    };
-
-    return this.saveTradingDay(updated);
   },
 
   getTrades(): Trade[] {
@@ -1292,7 +1247,10 @@ export const storage = {
   },
 
   getPatternStudies(): PatternStudy[] {
-    return getItem<PatternStudy[]>(STORAGE_KEYS.PATTERN_STUDIES, []);
+    // Normalised through the playbook's own slice, so a standalone install and the journal
+    // agree on what a valid study row is. The read still goes through `getItem` here, which
+    // is what reports a corrupt or blocked write to the sticky warning banner.
+    return normalisePatternStudies(getItem<unknown>(STORAGE_KEYS.PATTERN_STUDIES, [])) ?? [];
   },
 
   getPatternStudy(patternId: string): PatternStudy | undefined {
@@ -1304,13 +1262,9 @@ export const storage = {
    * create and the update path and there is never a duplicate row to reconcile.
    */
   savePatternStudy(study: PatternStudy): PatternStudy[] {
-    const studies = this.getPatternStudies();
-    const index = studies.findIndex((existing) => existing.patternId === study.patternId);
-    const updated: PatternStudy = { ...study, updatedAt: new Date().toISOString() };
-    const next =
-      index >= 0
-        ? [...studies.slice(0, index), updated, ...studies.slice(index + 1)]
-        : [...studies, updated];
+    // The upsert (and the `updatedAt` stamp) is shared with the standalone product's slice.
+    // Only the write itself stays here, so a quota failure is reported through `setItem`.
+    const next = upsertPatternStudy(this.getPatternStudies(), study);
     setItem(STORAGE_KEYS.PATTERN_STUDIES, next);
     return next;
   },

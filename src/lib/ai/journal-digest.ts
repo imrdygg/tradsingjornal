@@ -1,6 +1,7 @@
 import {
   DailyReview,
   Instrument,
+  InstrumentKind,
   Lesson,
   CoachPlan,
   LevelKind,
@@ -20,7 +21,7 @@ import {
 } from '../../types';
 import { calculateTradeRuleFollowing, DAILY_DISCIPLINE_RULES } from '../analytics/discipline';
 import { analyzeBehavior, BehaviorFacts } from '../analytics/behavior';
-import { instrumentSymbol } from '../trading/instruments';
+import { instrumentKind, instrumentSymbol, tryFindInstrument } from '../trading/instruments';
 import { hasAssumedRisk } from '../trading/risk-fixup';
 import { HIGH_DISCIPLINE_SCORE } from '../analytics/review-trend';
 import { assessRiskCapacity, type RiskCapacity } from '../analytics/risk-capacity';
@@ -82,6 +83,18 @@ import type { LevelRecord as MesLevelRecord } from '../mes/types';
  * otherwise invent them. If a fact is not in this object, the coach is instructed
  * to say it does not know.
  */
+
+/** One instrument's specification, as the coach needs it to convert a price move to money. */
+export interface DigestInstrument {
+  symbol: string;
+  name: string;
+  kind: InstrumentKind;
+  /** Dollars per point for one contract, or per share for a stock. */
+  pointValue: number;
+  tickSize: number;
+  tickValue: number;
+  active: boolean;
+}
 
 export interface DigestStatLine {
   label: string;
@@ -731,6 +744,24 @@ export interface JournalDigest {
     largestLoss: number;
   };
   byInstrument: DigestStatLine[];
+  /**
+   * The contract specifications behind every dollar figure in this digest.
+   *
+   * P&L, R multiples and risk are stored in dollars, priced with the spec that was on the
+   * instrument when the trade was recorded. The coach needs the spec to answer a question like
+   * "what is ten points on this contract" without assuming the day's contract is $5 a point —
+   * which was true only while the journal shipped one contract.
+   */
+  instruments: DigestInstrument[];
+  /** The contract the day is worked on, by symbol. Null when the day names none. */
+  primaryInstrument: string | null;
+  /**
+   * Symbols the record holds but the catalog no longer does.
+   *
+   * Their trades keep the P&L they were priced with at the time. Listed so the coach says so
+   * rather than treating a deleted contract's numbers as comparable to a live one's.
+   */
+  unpricedSymbols: string[];
   bySetup: DigestStatLine[];
   bySession: DigestStatLine[];
   discipline: {
@@ -748,9 +779,20 @@ export interface JournalDigest {
     avgScore: number;
     failedRules: DigestRuleFailure[];
   };
-  /** Plan vs what actually happened. Often the most useful section. */
+  /**
+   * The day's own recorded constraints against what was actually traded.
+   *
+   * Not a plan. The fields it compares against — allowed sessions, the day's watch list, the
+   * loss limit, the primary instrument — are still written on the day, so a trade that fell
+   * outside one of them is a fact about the record.
+   *
+   * Everything that used to depend on a *locked* plan is gone with the lock. `daysWithPlan`
+   * counted days with `lockedAt` set, and nothing could set it any more, so the coach was
+   * quoting "0 of 40 days had a plan" from a number that could only ever read zero — which is
+   * worse than saying nothing, because it reads as a discipline failure rather than as a
+   * retired feature.
+   */
   planAdherence: {
-    daysWithPlan: number;
     daysExceededLossLimit: number;
     worstOvershoot: number;
     tradesOutsideAllowedSessions: number;
@@ -758,8 +800,6 @@ export interface JournalDigest {
     tradesOnUnplannedSetup: number;
     unplannedSetupsTraded: string[];
     tradesOnNonPrimaryInstrument: number;
-    lockedPlanEdits: number;
-    lockedPlanEditExamples: string[];
   };
   streaks: {
     consecutiveLosingDays: number;
@@ -879,7 +919,6 @@ export interface JournalDigest {
     date: string;
     hasPlan: boolean;
     status: string;
-    locked: boolean;
     marketBias: string;
     primaryInstrument: string;
     contractsPlanned: number;
@@ -1943,8 +1982,6 @@ export function buildJournalDigest(input: {
   let tradesOnNonPrimaryInstrument = 0;
   let daysExceededLossLimit = 0;
   let worstOvershoot = 0;
-  let lockedPlanEdits = 0;
-  const lockedEditExamples: string[] = [];
 
   const dayById = new Map<string, TradingDay>();
   for (const day of tradingDays) dayById.set(day.id, day);
@@ -1983,16 +2020,6 @@ export function buildJournalDigest(input: {
       daysExceededLossLimit += 1;
       const overshoot = Math.abs(dayPnL) - day.plannedLossLimit;
       if (overshoot > worstOvershoot) worstOvershoot = overshoot;
-    }
-    // ...but editing a locked plan is a discipline fact even on a day with no trade,
-    // so it must not be skipped when there is no P&L for that day.
-    for (const change of day.planChanges ?? []) {
-      lockedPlanEdits += 1;
-      if (lockedEditExamples.length < 5) {
-        lockedEditExamples.push(
-          `${day.tradeDate}: ${change.fieldName} ${change.oldValue} → ${change.newValue} (${change.reason})`
-        );
-      }
     }
   }
 
@@ -2238,6 +2265,26 @@ export function buildJournalDigest(input: {
       largestLoss: round(closed.reduce((m, t) => Math.min(m, realizedPnL(t)), 0)),
     },
     byInstrument: group(closed, (t) => instrumentSymbol(instruments, t.instrumentId)),
+    instruments: instruments.map((instrument) => ({
+      symbol: instrument.symbol,
+      name: instrument.name,
+      kind: instrumentKind(instrument),
+      pointValue: instrument.pointValue,
+      tickSize: instrument.tickSize,
+      tickValue: instrument.tickValue,
+      active: instrument.active !== false,
+    })),
+    primaryInstrument:
+      today?.primaryInstrument?.trim() ||
+      instruments.find((instrument) => instrument.active !== false)?.symbol ||
+      null,
+    unpricedSymbols: [
+      ...new Set(
+        closed
+          .map((trade) => instrumentSymbol(instruments, trade.instrumentId))
+          .filter((symbol) => symbol && symbol !== '—' && !tryFindInstrument(instruments, symbol))
+      ),
+    ],
     bySetup: group(closed, (t) => {
       if (t.setupName) return t.setupName;
       const setup = t.setupId ? setups.find((s) => s.id === t.setupId) : undefined;
@@ -2261,7 +2308,6 @@ export function buildJournalDigest(input: {
       failedRules: tallyRules(reviewedTrades.flatMap(tradeRuleBreaks)),
     },
     planAdherence: {
-      daysWithPlan: tradingDays.filter((d) => !!d.lockedAt).length,
       daysExceededLossLimit,
       worstOvershoot: round(worstOvershoot),
       tradesOutsideAllowedSessions,
@@ -2269,8 +2315,6 @@ export function buildJournalDigest(input: {
       tradesOnUnplannedSetup,
       unplannedSetupsTraded: [...unplannedSetups],
       tradesOnNonPrimaryInstrument,
-      lockedPlanEdits,
-      lockedPlanEditExamples: lockedEditExamples,
     },
     streaks: {
       consecutiveLosingDays,
@@ -2317,7 +2361,6 @@ export function buildJournalDigest(input: {
       date: todayTradeDate,
       hasPlan: !!today,
       status: today?.status ?? 'no plan recorded',
-      locked: !!today?.lockedAt,
       marketBias: today?.marketBias ?? 'not recorded',
       primaryInstrument: today?.primaryInstrument ?? 'not recorded',
       contractsPlanned: today?.contractsPlanned ?? 0,

@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useMemo } from 'react';
-import type { JournalFile, LevelPatch, LevelRecord, NewLevelInput } from '../../lib/mes/types';
+import type { LevelPatch, LevelRecord, NewLevelInput } from '../../lib/mes/types';
+import { parseMesImport } from '../../lib/mes/storage';
 import type { MesPlaybookBridge } from '../../lib/mes/playbook-bridge';
 import { normalizeMesLevel, sanitizeLevel } from '../../lib/mes/analytics';
 import { buildDemoLevels } from '../../lib/mes/demo';
@@ -100,14 +101,18 @@ export const MesJournalProvider: React.FC<MesJournalProviderProps> = ({
       },
       async importFile(file) {
         const text = await file.text();
-        const parsed = JSON.parse(text) as unknown;
-        const payload =
-          parsed && typeof parsed === 'object' && 'records' in parsed
-            ? (parsed as Partial<JournalFile>).records
-            : parsed;
-        const cleaned = cleanAll(Array.isArray(payload) ? payload : []);
-        persist(cleaned);
-        return cleaned.length;
+        const parsed: unknown = JSON.parse(text);
+        // The same reader the product uses: its own envelope, a bare array, or a full
+        // journal backup's `mesLevels`. Refusing an unrelated file is better than the old
+        // behaviour, which replaced the record with nothing and called it a restore.
+        const imported = parseMesImport(parsed);
+        if (!imported) {
+          throw new Error(
+            'That file has no MES levels in it. Use a tracker backup or a full journal backup.'
+          );
+        }
+        persist(imported.records);
+        return imported.records.length;
       },
     };
   }, [records, persist, bridge]);

@@ -44,6 +44,8 @@ is the source of truth.
 > **Selling this as software?** The buyer supplies their own Supabase project, their own Gemini
 > API key and their own hosting; this repository is the code, not a hosted service. What each
 > product needs, the setup checklist and the listing copy are in [`docs/BUYER-SETUP.md`](docs/BUYER-SETUP.md).
+> The listings themselves — what is sold separately, the four prices and the readiness
+> checklist — are in [`docs/SELLING.md`](docs/SELLING.md).
 
 ---
 

@@ -319,11 +319,18 @@ prompt.
 
 ### What is implemented today
 
-- **The Observation library.** Record a market situation with a screenshot, a time, an instrument,
-a timeframe, a session, a setup, a free-text read and optional notes — then edit it, filter it, and
-later record **what happened afterwards**. A sighting is expected to be usable with almost none of
-that filled in, and an outcome is expected to be missing for a while: it is what price did, and it
-can only be written once you have watched it.
+- **The Observation library.** Record a market situation with **one to three screenshots and a note
+under each one** — what you saw in that picture, in your own words — plus a time, an instrument, and
+optionally a timeframe, session, setup or the trade it led to. Then edit it, filter it, and later
+record **what happened afterwards**. A sighting is expected to be usable with almost none of that
+filled in, and an outcome is expected to be missing for a while: it is what price did, and it can
+only be written once you have watched it.
+- **The notes are what the coach reads for a pattern.** A read of the sighting library names what
+keeps recurring across those per-picture notes: the level you keep photographing, the shape you keep
+marking, what you say you were waiting for. It works from the words only — the pictures are indexed
+for resemblance search and are not re-sent with that read — it never adds a price or a level you did
+not write, and a couple of notes is reported as too thin to call a pattern rather than dressed up as
+one.
 - **An observation does not need a trade.** This is the point of the whole thing. Limiting the
 library to executed trades would only ever answer *"what happened the last times I took this"*,
 never *"what happened the last times I saw this"* — and the second question is both bigger and free
@@ -346,7 +353,8 @@ screenshots across; each one arrives as `context`, stored and readable but **not
 because a picture attached to a trade does not say whether it was taken before or after the
 decision. One click per picture — *this was the chart before my decision* — makes it `before-setup`
 and queues it for indexing. It never guesses, and an import can never create a matchable picture on
-its own.
+its own. Pictures recorded through the sighting form are `before-setup` from the start, because the
+whole record is the view you had while studying the market.
 - **Private storage.** Screenshots go to a private `journal-memory` bucket, not the public one. The
 record keeps the object's **path**, never a signed URL (which expires), and every upload is verified
 by reading the object back before the inline copy is discarded. A failed upload never costs you the

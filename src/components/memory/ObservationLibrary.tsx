@@ -17,15 +17,12 @@ import {
 import type {
   Instrument,
   LevelTimeframe,
-  MarketOutlookBias,
   MemoryContinuation,
   MemoryImage,
   MemoryOutcome,
   MemoryOutcomeStatus,
-  MemoryObservedAtSource,
   Setup,
   Trade,
-  TradeDirection,
   TradingDay,
   TradingObservation,
   TradingSession,
@@ -36,6 +33,7 @@ import { MEMORY_OUTCOME_WINDOWS, formatMemoryRate } from '../../lib/memory/outco
 import { tradeResultSample } from '../../lib/memory/results';
 import { promoteJournalImage, unlabelledImages } from '../../lib/memory/journal-import';
 import { MemoryImagePicker, MemoryImageThumb } from './MemoryImagePicker';
+import { SightingPictures } from './SightingPictures';
 import { JournalImportPanel } from './JournalImportPanel';
 import { ModalOverlay } from '../common/ModalOverlay';
 import { ImageLightboxModal } from '../common/ImageLightboxModal';
@@ -49,21 +47,15 @@ import { ImageLightboxModal } from '../common/ImageLightboxModal';
  * "what happened the last times I TOOK this setup" but never "what happened the last times I SAW
  * it", and the second question is both bigger and free of the selection bias the first one carries.
  *
- * So recording a sighting asks for very little — a picture, a time and an instrument is enough —
- * and everything else is optional and fillable later. The outcome in particular is expected to be
- * absent for a while: it is what price did afterwards, and it can only be written once the trader
- * has actually watched what happened.
+ * Recording one asks for very little: a time, an instrument, and one to three pictures of the
+ * chart the trader was studying, each with a line about what they saw. Nothing else is required.
+ * The outcome is still separate and still expected to be absent for a while, because it is what
+ * price did afterwards and can only be written once the trader has watched it.
  *
- * Two boundaries are enforced here rather than only in the engine:
- *
- *   1. **The two pictures are labelled by what they are.** The first is what the trader was looking
- *      at when they decided, and only that kind of picture can be matched on. The second is from
- *      after the fact and is read only once the matches are chosen. Labelling them at the moment
- *      they are attached is what keeps the distinction real, because a picture taken afterwards and
- *      filed as a setup screenshot would make the whole library lie about what the trader knew.
- *   2. **Uncertainty about the time is recorded, not hidden.** A timestamp the trader is unsure of
- *      is marked as such and the engine refuses to place it in a replay, rather than letting an
- *      approximate date drift into a search window it never belonged to.
+ * The per-picture note is the load-bearing part now. A chart with no words is still searchable by
+ * resemblance, but a pattern needs something said: what held, what broke, what the trader was
+ * waiting for. So the note lives on the picture rather than on the record — a three-day view and a
+ * zoomed entry are two observations, and merging them into one paragraph loses which said what.
  */
 
 export type MemoryObservationFilter = {
@@ -95,33 +87,6 @@ export interface ObservationLibraryProps {
 
 const TIMEFRAMES: LevelTimeframe[] = ['1m', '3m', '5m', '15m', '30m', '1h'];
 const SESSIONS: TradingSession[] = ['Overnight', 'Premarket', 'Regular Session'];
-const TRENDS: { value: MarketOutlookBias; label: string }[] = [
-  { value: 'bullish', label: 'Leaning up' },
-  { value: 'bearish', label: 'Leaning down' },
-  { value: 'neutral', label: 'No lean' },
-];
-const DIRECTIONS: { value: TradeDirection | 'none'; label: string }[] = [
-  { value: 'none', label: 'No direction claimed' },
-  { value: 'long', label: 'Long' },
-  { value: 'short', label: 'Short' },
-];
-const TIME_SOURCES: { value: MemoryObservedAtSource; label: string; hint: string }[] = [
-  {
-    value: 'recorded',
-    label: 'I know when this was',
-    hint: 'The time above is when the setup was in front of me. A replay may use it.',
-  },
-  {
-    value: 'upload-time',
-    label: 'Roughly — this is when I got to it',
-    hint: 'Recorded, but NOT the decision moment. A replay leaves it out rather than guessing.',
-  },
-  {
-    value: 'unknown',
-    label: 'I do not know',
-    hint: 'Still worth keeping and reading. It just cannot be placed in time.',
-  },
-];
 
 /** `YYYY-MM-DDTHH:mm` in the browser's own clock, which is what a datetime-local input wants. */
 function toLocalInputValue(date: Date): string {
@@ -256,7 +221,13 @@ export const ObservationLibrary: React.FC<ObservationLibraryProps> = ({
       if (filter.instrumentId && observation.instrumentId !== filter.instrumentId) return false;
       if (filter.session && observation.session !== filter.session) return false;
       if (!needle) return true;
-      return [observation.setupName, observation.setupCategory, observation.notes, observation.marketContext]
+      return [
+        observation.setupName,
+        observation.setupCategory,
+        observation.notes,
+        observation.marketContext,
+        ...(observation.images ?? []).map((image) => image.note),
+      ]
         .filter(Boolean)
         .some((text) => String(text).toLowerCase().includes(needle));
     });
@@ -383,11 +354,6 @@ export const ObservationLibrary: React.FC<ObservationLibraryProps> = ({
     });
   }
 
-  const beforeImage = draft?.images?.find(
-    (image) => image.role === 'before-setup' || image.role === 'entry'
-  );
-  const afterImage = draft?.images?.find((image) => image.role === 'after-setup');
-
   return (
     <section id="observation-library" className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -397,9 +363,9 @@ export const ObservationLibrary: React.FC<ObservationLibraryProps> = ({
             Observation library
           </h2>
           <p className="mt-1 max-w-2xl text-xs leading-relaxed text-zinc-400">
-            Everything you have seen, whether or not you traded it. This is the half of the memory
-            that works on its own: a sighting is worth keeping with nothing more than a chart and a
-            time, and what price did afterwards is filled in later — or never.
+            A picture of the market you studied, and what you saw in it. One to three charts per
+            sighting, each with its own note. That is the whole record — your coach reads the notes
+            across sightings to find the pattern you keep coming back to.
           </p>
         </div>
         <button
@@ -509,29 +475,6 @@ export const ObservationLibrary: React.FC<ObservationLibraryProps> = ({
               />
             </Field>
 
-            <Field label="How sure are you of that time?">
-              <select
-                id="observation-time-source"
-                className={fieldClass}
-                value={draft.observedAtSource}
-                onChange={(e) =>
-                  setDraft({
-                    ...draft,
-                    observedAtSource: e.target.value as MemoryObservedAtSource,
-                  })
-                }
-              >
-                {TIME_SOURCES.map((source) => (
-                  <option key={source.value} value={source.value}>
-                    {source.label}
-                  </option>
-                ))}
-              </select>
-              <p className="text-[10px] leading-relaxed text-zinc-500">
-                {TIME_SOURCES.find((source) => source.value === draft.observedAtSource)?.hint}
-              </p>
-            </Field>
-
             <Field label="Instrument">
               <select
                 id="observation-instrument"
@@ -611,60 +554,6 @@ export const ObservationLibrary: React.FC<ObservationLibraryProps> = ({
             </Field>
 
             <Field
-              label="Category"
-              hint="An optional wider label, so a growing library can be grouped."
-            >
-              <input
-                id="observation-category"
-                className={fieldClass}
-                placeholder="e.g. break and run"
-                value={draft.setupCategory ?? ''}
-                onChange={(e) => setDraft({ ...draft, setupCategory: e.target.value || undefined })}
-              />
-            </Field>
-
-            <Field label="Trend it was forming against">
-              <select
-                id="observation-trend"
-                className={fieldClass}
-                value={draft.previousTrend ?? ''}
-                onChange={(e) =>
-                  setDraft({
-                    ...draft,
-                    previousTrend: (e.target.value || undefined) as MarketOutlookBias,
-                  })
-                }
-              >
-                <option value="">Not recorded</option>
-                {TRENDS.map((trend) => (
-                  <option key={trend.value} value={trend.value}>
-                    {trend.label}
-                  </option>
-                ))}
-              </select>
-            </Field>
-
-            <Field label="What it pointed at">
-              <select
-                id="observation-direction"
-                className={fieldClass}
-                value={draft.observedDirection ?? 'none'}
-                onChange={(e) =>
-                  setDraft({
-                    ...draft,
-                    observedDirection: e.target.value as TradeDirection | 'none',
-                  })
-                }
-              >
-                {DIRECTIONS.map((direction) => (
-                  <option key={direction.value} value={direction.value}>
-                    {direction.label}
-                  </option>
-                ))}
-              </select>
-            </Field>
-
-            <Field
               label="Trade taken under it"
               hint="Optional. Leaving this empty is a real answer — it is how a setup you watched but did not take gets recorded."
             >
@@ -687,51 +576,19 @@ export const ObservationLibrary: React.FC<ObservationLibraryProps> = ({
             </Field>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <MemoryImagePicker
-              idPrefix="observation-before"
-              label="What you were looking at"
-              role="before-setup"
-              observationId={draft.id}
-              userId={userId}
-              image={beforeImage}
-              consentToIndex={consentToIndex}
-              onChange={(image) => setDraftImage('before-setup', image)}
-            />
-            <MemoryImagePicker
-              idPrefix="observation-after"
-              label="What happened next (optional)"
-              role="after-setup"
-              observationId={draft.id}
-              userId={userId}
-              image={afterImage}
-              consentToIndex={consentToIndex}
-              onChange={(image) => setDraftImage('after-setup', image)}
-            />
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="What the chart was showing">
-              <textarea
-                id="observation-context"
-                rows={3}
-                className={fieldClass}
-                placeholder="Structure, levels, what you were waiting for."
-                value={draft.marketContext ?? ''}
-                onChange={(e) => setDraft({ ...draft, marketContext: e.target.value || undefined })}
-              />
-            </Field>
-            <Field label="Notes">
-              <textarea
-                id="observation-notes"
-                rows={3}
-                className={fieldClass}
-                placeholder="In your own words."
-                value={draft.notes ?? ''}
-                onChange={(e) => setDraft({ ...draft, notes: e.target.value || undefined })}
-              />
-            </Field>
-          </div>
+          <SightingPictures
+            images={draft.images ?? []}
+            observationId={draft.id}
+            userId={userId}
+            consentToIndex={consentToIndex}
+            onChange={(images) =>
+              setDraft((current) =>
+                current
+                  ? { ...current, images, updatedAt: new Date().toISOString() }
+                  : current
+              )
+            }
+          />
 
           <div className="flex flex-wrap items-center gap-2">
             <button
@@ -842,7 +699,7 @@ export const ObservationLibrary: React.FC<ObservationLibraryProps> = ({
       {visible.length === 0 ? (
         <p id="observation-empty" className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4 text-xs leading-relaxed text-zinc-400">
           {sorted.length === 0
-            ? 'Nothing recorded yet. The first sighting is the one that makes this useful — record a chart you are looking at now, even if you never trade it.'
+            ? 'Nothing recorded yet. Take a picture of the chart you are studying today, write one line about what it showed, and that is a sighting.'
             : 'No sighting matches these filters.'}
         </p>
       ) : (
@@ -854,6 +711,7 @@ export const ObservationLibrary: React.FC<ObservationLibraryProps> = ({
             const after = (observation.images ?? []).find(
               (image) => image.role === 'after-setup'
             );
+            const pictures = observation.images ?? [];
             // Pictures brought in from the journal that nobody has said anything about yet. They are
             // deliberately not filed as either of the two above: an unlabelled picture is not a
             // before-the-decision chart, and presenting it as one is the mistake this strip exists to
@@ -877,18 +735,34 @@ export const ObservationLibrary: React.FC<ObservationLibraryProps> = ({
                     : 'border-zinc-800'
                 }`}
               >
-                <div className="flex flex-wrap items-start gap-3">
-                  {before ? (
-                    <MemoryImageThumb
-                      image={before}
-                      alt={`The chart from ${observation.symbol} on ${observation.observedAt.slice(0, 10)}`}
-                      onOpen={(src) => openImage(src, observation)}
-                    />
-                  ) : (
-                    <div className="flex h-14 w-20 shrink-0 items-center justify-center rounded-lg border border-dashed border-zinc-800 text-[9px] text-zinc-600">
-                      no chart
-                    </div>
-                  )}
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+                  {/*
+                    The pictures, one under the other with their own words beneath each. The
+                    note is part of the picture rather than the record: a chart note that sits
+                    apart from the chart it describes is the thing this screen exists to stop.
+                  */}
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                    {pictures.length === 0 ? (
+                      <div className="flex h-14 w-20 items-center justify-center rounded-lg border border-dashed border-zinc-800 text-[9px] text-zinc-600">
+                        no chart
+                      </div>
+                    ) : (
+                      pictures.map((image) => (
+                        <figure key={image.id} className="w-40 space-y-1">
+                          <MemoryImageThumb
+                            image={image}
+                            alt={`A chart from ${observation.symbol} on ${observation.observedAt.slice(0, 10)}`}
+                            onOpen={(src) => openImage(src, observation, image.note)}
+                          />
+                          {image.note && (
+                            <figcaption className="text-[10px] leading-relaxed text-zinc-400">
+                              {image.note}
+                            </figcaption>
+                          )}
+                        </figure>
+                      ))
+                    )}
+                  </div>
 
                   <div className="min-w-0 flex-1 space-y-1.5">
                     <div className="flex flex-wrap items-center gap-2">
@@ -913,20 +787,13 @@ export const ObservationLibrary: React.FC<ObservationLibraryProps> = ({
                           {observation.setupName}
                         </span>
                       )}
-                      {observation.observedAtSource !== 'recorded' && (
-                        <span
-                          className="rounded-md border border-amber-900/70 bg-amber-950/50 px-1.5 py-0.5 text-[10px] text-amber-300"
-                          title={
-                            TIME_SOURCES.find(
-                              (source) => source.value === observation.observedAtSource
-                            )?.hint
-                          }
-                        >
-                          time {observation.observedAtSource === 'unknown' ? 'unknown' : 'approximate'}
-                        </span>
-                      )}
                     </div>
 
+                    {/*
+                      Text written when the form still asked for it. Rendered for the records
+                      that have it, and never asked for again: the per-picture note above is
+                      where a sighting is described now.
+                    */}
                     {observation.marketContext && (
                       <p className="text-xs leading-relaxed text-zinc-300">
                         {observation.marketContext}

@@ -337,6 +337,18 @@ describe('imageRow / imageFromRow', () => {
     expect(imageRow(image(), USER, 'obs-1').bucket_id).toBe('journal-memory');
   });
 
+  it('carries the note written under the picture', () => {
+    const row = imageRow(image({ note: 'Held the shelf for two days.' }), USER, 'obs-1');
+    expect(row.note).toBe('Held the shelf for two days.');
+    expect(imageFromRow(row).note).toBe('Held the shelf for two days.');
+  });
+
+  it('writes a missing note as null, so a null means nothing was written', () => {
+    const row = imageRow(image(), USER, 'obs-1');
+    expect(row.note).toBeNull();
+    expect(imageFromRow(row).note).toBeUndefined();
+  });
+
   it('round-trips a picture, and never carries the vector itself', () => {
     const row = imageRow(image(), USER, 'obs-1');
     const restored = imageFromRow({ ...row, embedding: toPgVector(vector()) });

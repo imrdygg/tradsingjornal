@@ -527,6 +527,18 @@ export const MemorySearchResults: React.FC<MemorySearchResultsProps> = ({
                     {selectedResult.observation.marketContext}
                   </p>
                 )}
+                {/* What you wrote under each picture, so a match reads as a sighting rather
+                    than as a score. */}
+                {(selectedResult.observation?.images ?? []).map((image) =>
+                  image.note ? (
+                    <p
+                      key={image.id}
+                      className="border-l border-zinc-700 pl-2 text-[11px] leading-relaxed text-zinc-400"
+                    >
+                      {image.note}
+                    </p>
+                  ) : null
+                )}
                 <div className="grid gap-2 sm:grid-cols-2">
                   <Fact label="Market">
                     {recordedOutcomeWords(selectedResult.observation)}

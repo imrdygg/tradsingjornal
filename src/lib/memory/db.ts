@@ -187,6 +187,8 @@ export interface MemoryImageRow {
   bucket_id: string;
   storage_path: string;
   image_checksum: string | null;
+  /** What the trader saw in this picture, in their own words. */
+  note: string | null;
   width: number | null;
   height: number | null;
   mime_type: string | null;
@@ -308,6 +310,7 @@ export function imageRow(
     // pictures that are actually in the bucket. See the caller.
     storage_path: image.storagePath as string,
     image_checksum: orNull(image.checksum),
+    note: orNull(image.note),
     width: orNull(image.width),
     height: orNull(image.height),
     mime_type: orNull(image.mimeType),
@@ -362,6 +365,7 @@ export function imageFromRow(row: MemoryImageRow): MemoryImage {
     role: row.image_role as MemoryImage['role'],
     storagePath: row.storage_path ?? undefined,
     checksum: row.image_checksum ?? undefined,
+    note: row.note ?? undefined,
     width: row.width ?? undefined,
     height: row.height ?? undefined,
     mimeType: row.mime_type ?? undefined,

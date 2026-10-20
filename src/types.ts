@@ -1159,6 +1159,16 @@ export interface MemoryImage {
   dataUrl?: string;
   /** SHA-256 of the image bytes: the dedupe key and the change detector. */
   checksum?: string;
+  /**
+   * What the trader saw in this picture, in their own words.
+   *
+   * One note per picture rather than one note per record, because that is how a chart is
+   * actually read: a three-day view and a zoomed entry are two observations, and merging them
+   * into one paragraph loses which picture said what. The notes are what the coach reads to
+   * find a repeated pattern; a picture with no note is still a searchable chart, just a silent
+   * one.
+   */
+  note?: string;
   width?: number;
   height?: number;
   mimeType?: string;
@@ -1240,13 +1250,21 @@ export interface TradingObservation {
   session?: TradingSession;
   setupId?: string;
   setupName?: string;
-  /** A wider bucket than the setup name, for grouping a growing library. */
+  /**
+   * @deprecated No longer asked for when a sighting is recorded.
+   *
+   * Kept on the type so records written by an earlier build keep their text when they are
+   * edited or read. New sightings leave these unset; the per-picture `MemoryImage.note` is
+   * what the trader writes now.
+   */
   setupCategory?: string;
-  /** The trend the setup was forming against, in the trader's words. */
+  /** @deprecated See `setupCategory`. */
   previousTrend?: MarketOutlookBias;
-  /** Which way the setup pointed, or `none` for a pure observation. */
+  /** @deprecated See `setupCategory`. */
   observedDirection?: TradeDirection | 'none';
+  /** @deprecated See `setupCategory`. */
   marketContext?: string;
+  /** @deprecated See `setupCategory`. */
   notes?: string;
   images: MemoryImage[];
   outcome?: MemoryOutcome;

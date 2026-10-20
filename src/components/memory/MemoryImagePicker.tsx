@@ -50,6 +50,16 @@ export interface MemoryImagePickerProps {
   consentToIndex: boolean;
   onChange: (image: MemoryImage | undefined) => void;
   idPrefix: string;
+  /**
+   * What the trader saw in this picture, written under it.
+   *
+   * Held on the image itself rather than on the observation, because a sighting can carry
+   * several pictures and each one is a separate observation of the chart. The note is the
+   * material the coach reads for a pattern; the picture alone is a chart with nothing said
+   * about it.
+   */
+  note?: string;
+  onNoteChange?: (note: string) => void;
 }
 
 /** Folder-safe id for a picture that was just picked. */
@@ -110,10 +120,12 @@ export const MemoryImagePicker: React.FC<MemoryImagePickerProps> = ({
   consentToIndex,
   onChange,
   idPrefix,
+  note,
+  onNoteChange,
 }) => {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [note, setNote] = useState<string | null>(null);
+  const [uploadNotice, setUploadNotice] = useState<string | null>(null);
   /** The attached picture, open at full size. A chart is unreadable in a 160px preview. */
   const [zoom, setZoom] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -127,7 +139,7 @@ export const MemoryImagePicker: React.FC<MemoryImagePickerProps> = ({
       return;
     }
     setError(null);
-    setNote(null);
+    setUploadNotice(null);
     setBusy('Optimising the screenshot…');
 
     try {
@@ -141,6 +153,9 @@ export const MemoryImagePicker: React.FC<MemoryImagePickerProps> = ({
         role,
         dataUrl,
         checksum: checksum ?? undefined,
+        // A picture swapped in place of another keeps the words already written about the
+        // chart: the trader is replacing the screenshot, not forgetting what they saw.
+        note: note?.trim() || image?.note,
         mimeType: 'image/jpeg',
         // The picture's own time is not known from a file drop, so it is left unset rather than
         // stamped with the moment it was uploaded. `capturedAt` is only ever written when the
@@ -167,14 +182,14 @@ export const MemoryImagePicker: React.FC<MemoryImagePickerProps> = ({
           setBusy(null);
           return;
         } catch (uploadError) {
-          setNote(
+          setUploadNotice(
             uploadError instanceof Error
               ? `Kept in this browser instead of your private storage: ${uploadError.message}`
               : 'Kept in this browser instead of your private storage.'
           );
         }
       } else {
-        setNote('No cloud storage is configured, so this picture is kept in this browser.');
+        setUploadNotice('No cloud storage is configured, so this picture is kept in this browser.');
       }
 
       onChange(base);
@@ -252,7 +267,7 @@ export const MemoryImagePicker: React.FC<MemoryImagePickerProps> = ({
               type="button"
               id={`${idPrefix}-remove`}
               onClick={() => {
-                setNote(null);
+                setUploadNotice(null);
                 setError(null);
                 onChange(undefined);
               }}
@@ -327,14 +342,37 @@ export const MemoryImagePicker: React.FC<MemoryImagePickerProps> = ({
         </div>
       )}
 
+      {image && onNoteChange && (
+        <div className="space-y-1">
+          <label
+            htmlFor={`${idPrefix}-note`}
+            className="text-[10px] font-mono uppercase font-bold text-zinc-400"
+          >
+            What you saw in this picture
+          </label>
+          <textarea
+            id={`${idPrefix}-note`}
+            rows={2}
+            className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-2.5 py-1.5 text-xs text-zinc-100 placeholder:text-zinc-600 focus:border-sky-600 focus:outline-none focus:ring-1 focus:ring-sky-600/40"
+            placeholder="e.g. Held the 5,430 shelf for two days, then lost it on the third."
+            value={note ?? image.note ?? ''}
+            onChange={(e) => onNoteChange(e.target.value)}
+          />
+          <p className="text-[10px] leading-relaxed text-zinc-500">
+            Your own words. Your coach reads these notes to find the pattern; the picture alone
+            says nothing about what you noticed.
+          </p>
+        </div>
+      )}
+
       {error && (
         <div className="flex items-start gap-1.5 rounded-lg border border-rose-800/80 bg-rose-950/40 p-2 text-[11px] text-rose-300">
           <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <span className="leading-relaxed">{error}</span>
         </div>
       )}
-      {note && (
-        <p className="text-[10px] leading-relaxed text-amber-300/90">{note}</p>
+      {uploadNotice && (
+        <p className="text-[10px] leading-relaxed text-amber-300/90">{uploadNotice}</p>
       )}
 
       <ImageLightboxModal

@@ -32,6 +32,23 @@ async function openMemory(page: Page) {
   await expect(page.locator('#observation-library')).toBeVisible();
 }
 
+/**
+ * Puts a chart in the next picture slot and writes the note under it.
+ *
+ * The note is attached to the picture now, so a sighting with words always has a picture: that
+ * is the whole shape of the record. `index` is the slot, and the first empty slot is always the
+ * one after the pictures already attached.
+ */
+async function addPictureNote(page: Page, note: string, index = 0) {
+  await page.locator(`#observation-picture-${index}-input`).setInputFiles({
+    name: `chart-${index}.png`,
+    mimeType: 'image/png',
+    buffer: Buffer.from(PNG_BASE64, 'base64'),
+  });
+  await expect(page.locator(`#observation-picture-${index}-preview`)).toBeVisible();
+  await page.locator(`#observation-picture-${index}-note`).fill(note);
+}
+
 test.describe('Trading Memory', () => {
   test('is reachable from the navigation and states what it is', async ({ page }) => {
     await openMemory(page);
@@ -72,15 +89,14 @@ test.describe('Trading Memory', () => {
     await page.locator('#observation-setup').selectOption({ index: 1 });
     await page.locator('#observation-timeframe').selectOption('5m');
     await page.locator('#observation-session').selectOption('Overnight');
-    await page.locator('#observation-context').fill('Overnight swept the low and held.');
-    await page.locator('#observation-notes').fill('Watching for a reclaim of the session high.');
+    await addPictureNote(page, 'Held the shelf for two days, then lost it on the third.');
 
     await expect(page.locator('#observation-save')).toBeEnabled();
     await page.locator('#observation-save').click();
 
     await expect(page.locator('#observation-form')).toBeHidden();
     await expect(page.locator('#observation-list article')).toHaveCount(1);
-    await expect(page.locator('#observation-list')).toContainText('Overnight swept the low');
+    await expect(page.locator('#observation-list')).toContainText('Held the shelf for two days');
     // No trade was taken, and the card says so rather than leaving a blank.
     await expect(page.locator('#observation-list')).toContainText('no trade taken');
     // The outcome has not been recorded, so it reads as unrecorded rather than as a reversal.
@@ -91,14 +107,14 @@ test.describe('Trading Memory', () => {
     await openMemory(page);
     await page.locator('#observation-new').click();
 
-    await page.locator('#observation-before-input').setInputFiles({
+    await page.locator('#observation-picture-0-input').setInputFiles({
       name: 'chart.png',
       mimeType: 'image/png',
       buffer: Buffer.from(PNG_BASE64, 'base64'),
     });
 
     // Local-only: the picture stays inline and is labelled as such.
-    await expect(page.locator('#observation-before-preview')).toBeVisible();
+    await expect(page.locator('#observation-picture-0-preview')).toBeVisible();
     await expect(page.locator('#observation-form')).toContainText('in this browser');
     // Consent is off, so nothing was queued for indexing and the record says so.
     await expect(page.locator('#observation-form')).toContainText('skipped');
@@ -115,12 +131,12 @@ test.describe('Trading Memory', () => {
 
     await page.locator('#observation-new').click();
     await page.locator('#observation-instrument').selectOption({ index: 1 });
-    await page.locator('#observation-context').fill('First read.');
+    await addPictureNote(page, 'First read.');
     await page.locator('#observation-save').click();
     await expect(page.locator('#observation-list article')).toHaveCount(1);
 
     await page.locator('#observation-list article').first().locator('[id^="observation-edit-"]').click();
-    await page.locator('#observation-context').fill('Rewritten after the close.');
+    await page.locator('#observation-picture-0-note').fill('Rewritten after the close.');
     await page.locator('#observation-save').click();
 
     await expect(page.locator('#observation-list article')).toHaveCount(1);
@@ -158,7 +174,7 @@ test.describe('Trading Memory', () => {
     for (const text of ['Alpha read.', 'Beta read.']) {
       await page.locator('#observation-new').click();
       await page.locator('#observation-instrument').selectOption({ index: 1 });
-      await page.locator('#observation-context').fill(text);
+      await addPictureNote(page, text);
       await page.locator('#observation-save').click();
     }
     await expect(page.locator('#observation-list article')).toHaveCount(2);
@@ -169,6 +185,25 @@ test.describe('Trading Memory', () => {
 
     await page.locator('#observation-search').fill('');
     await expect(page.locator('#observation-list article')).toHaveCount(2);
+  });
+
+  test('turns a note under a picture into material the coach can read', async ({ page }) => {
+    await openMemory(page);
+
+    // Nothing to read yet: the card says so rather than offering a read that has no material.
+    await expect(page.locator('#memory-sighting-patterns-empty')).toContainText('No notes written yet');
+
+    await page.locator('#observation-new').click();
+    await page.locator('#observation-instrument').selectOption({ index: 1 });
+    await addPictureNote(page, 'Held the shelf all day, then lost it on the third.');
+    await page.locator('#observation-save').click();
+
+    const card = page.locator('#memory-sighting-patterns');
+    await expect(card).toBeVisible();
+    // One sighting, one note, and the read is offered — the note is the material.
+    await expect(card).toContainText('Notes written');
+    await expect(card.locator('#memory-sighting-patterns-generate')).toBeVisible();
+    await expect(card).toContainText('1 of 1');
   });
 
   test('deletes a sighting', async ({ page }) => {

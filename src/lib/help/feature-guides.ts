@@ -205,13 +205,14 @@ export const FEATURE_GUIDES: readonly FeatureGuide[] = [
   {
     id: 'memory',
     label: 'Memory',
-    title: 'Trading Memory — search your own charts',
+    title: 'Trading Memory — record what you saw, then search it',
     summary:
-      'A private library of your chart screenshots, searchable by what the chart looked like — using embeddings you generate with your own key.',
+      'A private library of your chart sightings: one to three pictures per entry, a note under each about what you saw, searchable by likeness — using embeddings you generate with your own key.',
     steps: [
+      'Record a sighting: pick a contract, take or upload one to three chart pictures, and write one line under each about what you saw.',
+      'Ask the coach to read the notes across your sightings. It names the patterns that keep recurring, from your words only.',
       'Give consent for image processing in the Memory panel; nothing is uploaded before that.',
-      'Upload or paste a chart, add the context, and index it. Indexing runs in the background.',
-      'Search with a new chart or a description to see similar past setups and what happened next.',
+      'Index the library, then search with a new chart to see the sightings it resembles and what happened next.',
       'Use the evaluation panel to see whether the retrieval is actually finding the right trades.',
     ],
     notes: [

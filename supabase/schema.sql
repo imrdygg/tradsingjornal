@@ -320,6 +320,10 @@ create table if not exists public.memory_images (
   -- checksum moved is a different picture and must be re-embedded, while an
   -- identical re-upload is recognised and skipped.
   image_checksum text,
+  -- What the trader saw in this picture, in their own words. One note per picture rather
+  -- than one per observation: a multi-day view and a zoomed entry are two observations, and
+  -- the coach reads these notes to find a repeated pattern.
+  note text,
   width integer,
   height integer,
   mime_type text,
@@ -343,6 +347,10 @@ create table if not exists public.memory_images (
 
 create index if not exists memory_images_user_observation_idx
   on public.memory_images (user_id, observation_id);
+
+-- Added after the table shipped, so an existing project picks it up without being dropped.
+-- `create table if not exists` above is a no-op on a database that already has the table.
+alter table public.memory_images add column if not exists note text;
 -- Only indexed rows are ever searched, so the partial index keeps the candidate set
 -- to exactly what the match function will consider.
 create index if not exists memory_images_searchable_idx

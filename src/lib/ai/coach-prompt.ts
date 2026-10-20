@@ -39,6 +39,9 @@ import type {
   MatchItem,
   MindsetPattern,
   MindsetResponse,
+  SightingNotesFacts,
+  SightingPattern,
+  SightingsResponse,
   SelfPlanResponse,
   PlannedLevel,
   PlanFieldName,
@@ -135,6 +138,13 @@ export const COACH_MODES: readonly CoachMode[] = [
    * opinion, and never a diagnosis.
    */
   'mindset',
+  /**
+   * The sighting pattern read: the trader's memory library, one to three pictures per
+   * sighting with a note under each, read back as the patterns that keep recurring. Their own
+   * words only, from notes rather than pictures — the images are indexed separately for
+   * resemblance search and are not re-read here.
+   */
+  'sightings',
 ];
 
 /**
@@ -210,7 +220,8 @@ export function coachGuardrails(
   withPlanGrades = false,
   withEntryEdge = false,
   withMindset = false,
-  withMesLevels = false
+  withMesLevels = false,
+  withSightings = false
 ): string {
   let text = COACH_GUARDRAILS;
   if (withLearn) text += LEARN_GUARDRAILS_SUFFIX;
@@ -228,6 +239,10 @@ export function coachGuardrails(
   if (withLevelEdge) text += LEVEL_EDGE_GUARDRAILS_SUFFIX;
   if (withExtremes) text += EXTREMES_GUARDRAILS_SUFFIX;
   if (withMesLevels) text += MES_LEVELS_GUARDRAILS_SUFFIX;
+  // Appended for the sighting pattern read only: it works from notes the trader wrote under
+  // their own charts, so it needs rules about not describing pictures it was never shown and
+  // not turning a sighting into a signal.
+  if (withSightings) text += SIGHTINGS_GUARDRAILS_SUFFIX;
   if (withMarketData) text += MARKET_GUARDRAILS_SUFFIX;
   // The self-plan is an opinion mode, but it is the one placed where a called-off answer is
   // not allowed: the trader asked for a plan to grade. The general opinion suffix makes
@@ -647,6 +662,29 @@ N6. NEVER TURN A NOTE INTO A TRADE TO TAKE. The notes are a mirror, not a signal
     what keeps coming back and let the trader decide what to do with it.
 N7. SAY WHAT TO CHANGE. A reflection that only describes is not coaching. Name the concrete
     things they could do differently, drawn from their own notes rather than general advice.`;
+
+const SIGHTINGS_GUARDRAILS_SUFFIX = `\n\nTHE TRADER'S OWN SIGHTING NOTES — SPECIAL RULES FOR THIS REQUEST ONLY.
+The trader photographed charts to study the market, one to three pictures at a time, and wrote
+under each picture what they saw. Those notes are the whole material for this request. They are
+their own observations, not findings, not a signal, and not a market read of yours.
+
+G1. READ ONLY THE NOTES. Every pattern must come from a note in YOUR SIGHTING NOTES. Quote
+the trader's own words and the date they wrote them. Never invent a note, a date, a symbol or a
+level they did not write down.
+G2. NO PICTURES WERE SHOWN TO YOU. The charts are indexed separately for a resemblance search
+and are deliberately not re-read for this request. Never describe, guess at or imply what any
+picture shows; work from the words under it and say so when the words are missing.
+G3. THIN IS AN ANSWER. A pattern needs several sightings. With only a handful, say exactly
+that, return few or no patterns, and make the step about writing more down. Never pad the list
+or upgrade two similar notes into a pattern.
+G4. LEVELS ARE THEIR CLAIM, NOT YOURS. Never say a level held, broke, or was defended unless a
+note says so, and never add a price, level or move of your own. You have no market data.
+G5. NEVER TURN A SIGHTING INTO A SIGNAL. These notes are a memory, not a forecast and not a
+reason to take a trade. Point at what keeps recurring and hand it back to the trader.
+G6. NAME THEIR PATTERN, NOT A TEXTBOOK ONE. Describe what their own notes keep doing in their
+own terms. If the notes do not name the setup, do not name it for them.
+G7. THE COUNTS ARE GIVEN. Quote the counts you were handed and never do your own arithmetic on
+how many sightings or notes there were.`;
 
 const SELFPLAN_GUARDRAILS_SUFFIX = `\n\nTHE COACH'S OWN PLAN — SPECIAL RULES FOR THIS REQUEST ONLY.
 The trader has asked you to make your OWN trade plan for one instrument. You have the live
@@ -1536,6 +1574,46 @@ export function formatLessonImagesForPrompt(labels: string[] | undefined): strin
 }
 
 /**
+ * The trader's sighting notes, as the pattern read may quote them.
+ *
+ * Rendered only for the `sightings` mode. The pictures are NOT attached to this request: they
+ * are embedded separately for resemblance search and re-reading them here would turn a note
+ * read into a chart read the mode's rules forbid. What travels is the words under each picture,
+ * with the date and the chart it belongs to, so every pattern can be traced to a note.
+ */
+export function formatSightingNotesForPrompt(facts: SightingNotesFacts | undefined): string {
+  const list = facts?.sightings ?? [];
+  if (!list.length) {
+    return (
+      '\n\n=== YOUR SIGHTING NOTES ===\n' +
+      'No sighting carries a note yet, so there is nothing to read. Say exactly that and make ' +
+      'the step about writing one line under the next picture.'
+    );
+  }
+
+  const lines: string[] = [];
+  lines.push('');
+  lines.push('=== YOUR SIGHTING NOTES ===');
+  lines.push(
+    `${facts?.total ?? list.length} sighting(s) recorded, ${facts?.listed ?? list.length} listed ` +
+      'below, newest first. Each sighting is one study session: one to three pictures, and the ' +
+      "trader's own words under each one. The pictures themselves were not sent with this " +
+      'request, so these notes are all there is — quote them, and never describe a chart.'
+  );
+  for (const sighting of list) {
+    lines.push('');
+    lines.push(
+      `- ${sighting.date} ${sighting.symbol}` +
+        (sighting.timeframe ? ` [${sighting.timeframe}]` : '')
+    );
+    sighting.notes.forEach((note, index) => {
+      lines.push(`  picture ${index + 1}: ${JSON.stringify(note)}`);
+    });
+  }
+  return `\n\n${lines.join('\n').trim()}`;
+}
+
+/**
  * The trader's own written lessons, as the dedicated read may quote them.
  *
  * Rendered only for the `lessons` mode: the notes are the trader's own material and are kept
@@ -1727,6 +1805,19 @@ export function formatDigestForPrompt(digest: JournalDigest, mode?: CoachMode): 
 
   lines.push(`TODAY'S DATE: ${digest.generatedFor}`);
   lines.push('');
+  // The sighting read is about the memory library, which is not part of the journal digest at
+  // all — its material arrives through extras. The journal sections are withheld on purpose:
+  // this answer is about what the trader saw and wrote down, and handing over their P&L would
+  // turn it into a verdict about money rather than a reading of their own notes.
+  if (mode === 'sightings') {
+    lines.push('=== THE JOURNAL SECTIONS ARE WITHHELD FOR THIS READ ===');
+    lines.push(
+      'The material for this request is the trader\'s own sighting notes below. Trade results, ' +
+        'P&L, reviews and the rest of the journal are deliberately not given to you: this is a ' +
+        'reading of what they recorded seeing, not of what they made.'
+    );
+    return lines.join('\n');
+  }
   if (mode === 'extremes' && digest.extremeRead?.todayObservations?.length) {
     const observations = digest.extremeRead.todayObservations;
     lines.push(
@@ -2694,6 +2785,23 @@ Every price must be a number from the LIVE READ or the DAILY CHART DATA you were
   "motivation": "2 sentences. Specific to this trader and earned by their own notes. No slogans."
 }
 Return 1-4 themes. Name only themes their own notes support and quote the lessons by their own titles. For every theme, list under the lessons array the exact lessons behind it — each one's title and the day it was written, both copied from the digest — oldest first. Never invent a lesson, a title, a date or a finding, never turn a note into a trade or a forecast, and never describe a video clip you cannot watch. When the library is too thin for a theme, say exactly that and return few or no themes.`,
+  sightings: `Return exactly this JSON:
+{
+  "headline": "one sentence, under 16 words, on what their sighting notes keep saying",
+  "read": "2-3 sentences on what the notes keep returning to, quoting the trader's own words and the dates",
+  "patterns": [
+    {
+      "pattern": "a recurring observation in the trader's own terms — a level that behaved a certain way, a shape they keep photographing, what they keep waiting for",
+      "evidence": "the sightings and notes behind it: how many, on which dates, quoting the note's own words",
+      "sightings": 0
+    }
+  ],
+  "method": "2-3 sentences on how you grouped the notes and what that showed, quoting the counts",
+  "notEnoughYet": "what the notes do not cover yet, or that there are too few to say anything. Empty string when the notes are enough",
+  "nextStep": "one concrete, checkable thing to write down under the next picture",
+  "motivation": "2 sentences. Specific to this trader and earned by their own notes. No slogans."
+}
+Return 1-4 patterns, best supported first. Every pattern must quote notes that actually appear in YOUR SIGHTING NOTES, with their dates, and the sightings count must match the notes you cite. Return an empty patterns array when the notes are too thin, and say exactly that in notEnoughYet — never pad the list. Never describe a chart, never add a price or level the trader did not write, and never turn a sighting into a forecast or a trade to take.`,
   mindset: `Return exactly this JSON:
 {
   "headline": "one sentence, under 16 words, on what their notes keep returning to",
@@ -3053,6 +3161,17 @@ export function buildCoachPrompt(
         `given no trades, no P&L and no results, and you must not ask for or refer to any: ` +
         `this reflection is about their head alone. Never diagnose or label them, never turn ` +
         `a feeling into a market call or a trade, and make the step about the notes.`
+      : mode === 'sightings'
+      ? `Read the trader's own chart sightings — the pictures they took of the market to study ` +
+        `it, and the note they wrote under each one — and name the patterns that keep recurring. ` +
+        `Work only from THEIR SIGHTING NOTES. Each sighting is one study session with one to ` +
+        `three pictures; the notes are what they saw, in their own words. Name the setups they ` +
+        `keep photographing, the levels they keep marking, what they say they were waiting for, ` +
+        `and what they say price did. Quote a note's own words and the date it was written. ` +
+        `Never describe a picture — none was shown to you for this request. Never predict a ` +
+        `market move and never turn a sighting into a signal or a trade. Never say a level held ` +
+        `or broke unless a note says so. A pattern needs several sightings: with only a few, say ` +
+        `so and return few or no patterns rather than padding the list.`
       : mode === 'selfplan'
       ? `Make your OWN trade plan for the instrument under LIVE READ, from its live quote and ` +
         `the recent daily bars you were handed — and none of the trader's own levels, which ` +
@@ -3156,8 +3275,13 @@ export function buildCoachPrompt(
       ? formatLessonImagesForPrompt(extras?.imageLabels)
       : '';
 
+  // The sighting notes, gated on their mode like every other block: the material is the
+  // trader's own words under their own pictures, and it belongs to that one read.
+  const sightingsBlock =
+    mode === 'sightings' ? formatSightingNotesForPrompt(extras?.sightings) : '';
+
   const userPrompt =
-    `${context}${marketBlock}${instrumentBlock}${chartBlock}${imagesBlock}${tradeBlock}${positionBlock}${entryBlock}${entryEdgeBlock}${fieldBlock}${questionBlock}` +
+    `${context}${marketBlock}${instrumentBlock}${chartBlock}${imagesBlock}${sightingsBlock}${tradeBlock}${positionBlock}${entryBlock}${entryEdgeBlock}${fieldBlock}${questionBlock}` +
     `\n\n=== YOUR TASK ===\n${task.replace('{instrument}', extras?.instrument || 'the instrument')}\n\n${COACH_RESPONSE_SHAPES[mode]}`;
 
   return {
@@ -3203,7 +3327,10 @@ export function buildCoachPrompt(
       // the level-touch and extreme rules are: a reliability rate over the trader's own
       // marked levels reads like a prediction, so it is never quoted in a mode whose
       // guardrails did not say what it is and is not.
-      (digest.mesRead?.records ?? 0) > 0
+      (digest.mesRead?.records ?? 0) > 0,
+      // And the sighting rules, gated on the one mode that reads notes written under the
+      // trader's own charts and could otherwise describe pictures it was never shown.
+      mode === 'sightings'
     ),
     userPrompt,
   };
@@ -3667,6 +3794,37 @@ export function parseCoachResponse(
       // nothing missing worth naming, and saying so is the answer.
       possibleCauses: asLooseText(obj.possibleCauses),
       whatToChange: asLooseText(obj.whatToChange),
+      notEnoughYet: asLooseText(obj.notEnoughYet),
+      nextStep: asText(obj.nextStep, 'nextStep'),
+      motivation: asText(obj.motivation, 'motivation'),
+    };
+    return response;
+  }
+
+  if (mode === 'sightings') {
+    const patternsRaw = Array.isArray(obj.patterns) ? obj.patterns : [];
+    const patterns: SightingPattern[] = patternsRaw
+      .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+      .map((item) => ({
+        pattern: typeof item.pattern === 'string' ? item.pattern.trim() : '',
+        evidence: typeof item.evidence === 'string' ? item.evidence.trim() : '',
+        // A missing or nonsensical count is read as one sighting rather than as zero: the
+        // pattern itself is still a real claim about their notes, and zero would render as a
+        // pattern supported by nothing at all.
+        sightings:
+          typeof item.sightings === 'number' && Number.isFinite(item.sightings)
+            ? Math.max(1, Math.round(item.sightings))
+            : 1,
+      }))
+      // A pattern with no name or no evidence is an impression, not a finding — the same rule
+      // every other list mode follows.
+      .filter((item) => item.pattern && item.evidence);
+
+    const response: SightingsResponse = {
+      headline: asText(obj.headline, 'headline'),
+      read: asText(obj.read, 'read'),
+      patterns,
+      method: asLooseText(obj.method),
       notEnoughYet: asLooseText(obj.notEnoughYet),
       nextStep: asText(obj.nextStep, 'nextStep'),
       motivation: asText(obj.motivation, 'motivation'),

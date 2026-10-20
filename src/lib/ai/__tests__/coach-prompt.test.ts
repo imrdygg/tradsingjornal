@@ -9,6 +9,7 @@ import {
   extractJsonFromModelText,
   formatDigestForPrompt,
   formatEntryEdgeForPrompt,
+  formatSightingNotesForPrompt,
   formatTradeForPrompt,
   isCoachMode,
   parseCoachResponse,
@@ -21,6 +22,7 @@ import type {
   MatchResponse,
   MindsetResponse,
   SelfPlanResponse,
+  SightingsResponse,
 } from '../coach-types';
 import { buildJournalDigest } from '../journal-digest';
 import type { DailyBars, MarketBrief } from '../market-data';
@@ -1705,8 +1707,11 @@ describe('selfplan mode', () => {
     const digest = digestFor({ coachPlans: [plan] });
     // The feedback is the only signal the coach has about how the trader wants a plan
     // written, so it travels with every answer rather than only the next self-plan — every
-    // answer but the mindset reflection, which is given the notes alone.
-    for (const mode of [...COACH_MODES.filter((entry) => entry !== 'mindset'), undefined]) {
+    // answer but the two reads deliberately given notes alone (mindset, sightings).
+    for (const mode of [
+      ...COACH_MODES.filter((entry) => entry !== 'mindset' && entry !== 'sightings'),
+      undefined,
+    ]) {
       const text = formatDigestForPrompt(digest, mode);
       expect(text).toContain("THE TRADER'S GRADES OF YOUR PAST PLANS");
       expect(text).toContain('Entry was too close to the level.');
@@ -2024,14 +2029,20 @@ describe('behaviour section in the prompt', () => {
   });
 
   it('reaches every mode, not just the brief', () => {
-    // Every mode but the mindset reflection, which is deliberately handed the trader's notes
-    // and nothing else: no behaviour section, no trades, no P&L.
-    for (const mode of COACH_MODES.filter((entry) => entry !== 'mindset')) {
+    // Every mode but the two reads deliberately handed their own material and nothing else:
+    // the mindset reflection and the sighting notes both withhold the journal, so neither has
+    // a behaviour section, trades or P&L to describe.
+    for (const mode of COACH_MODES.filter(
+      (entry) => entry !== 'mindset' && entry !== 'sightings'
+    )) {
       expect(buildCoachPrompt(mode, digestFor()).userPrompt).toContain(
         'BEHAVIOUR, READ FROM THEIR OWN TIMESTAMPS AND SIZES'
       );
     }
     expect(buildCoachPrompt('mindset', digestFor()).userPrompt).not.toContain(
+      'BEHAVIOUR, READ FROM THEIR OWN TIMESTAMPS AND SIZES'
+    );
+    expect(buildCoachPrompt('sightings', digestFor()).userPrompt).not.toContain(
       'BEHAVIOUR, READ FROM THEIR OWN TIMESTAMPS AND SIZES'
     );
   });
@@ -2537,5 +2548,104 @@ describe('contract specifications in the prompt', () => {
 
     expect(text).toContain('no longer in the catalog');
     expect(text).toContain('XYZ');
+  });
+});
+
+/**
+ * The sighting pattern read.
+ *
+ * The mode exists to answer one question from the trader's own memory library: what do the notes
+ * written under my charts keep saying? Two properties are worth pinning down. The material is
+ * the NOTES, never a picture (the charts are indexed separately and are not re-read here), and
+ * the journal sections are withheld, because a reading of what they saw is not a verdict on what
+ * they made.
+ */
+describe('sightings mode', () => {
+  const facts = {
+    total: 3,
+    listed: 1,
+    sightings: [
+      {
+        date: '2026-10-01',
+        symbol: 'MES',
+        timeframe: '15m',
+        notes: ['Held the 5,430 shelf for two days, then lost it on the third.'],
+      },
+    ],
+  };
+
+  it('is a real mode that is never allowed a market opinion', () => {
+    expect(COACH_MODES).toContain('sightings');
+    expect(isCoachMode('sightings')).toBe(true);
+    expect(allowsMarketOpinion('sightings')).toBe(false);
+  });
+
+  it('quotes the note under the picture, with its date and chart', () => {
+    const text = formatSightingNotesForPrompt(facts);
+    expect(text).toContain('2026-10-01 MES [15m]');
+    expect(text).toContain('Held the 5,430 shelf for two days');
+    expect(text).toContain('listed');
+  });
+
+  it('says there is nothing to read rather than inventing notes', () => {
+    const text = formatSightingNotesForPrompt(undefined);
+    expect(text).toContain('No sighting carries a note yet');
+  });
+
+  it('withholds the journal sections, so the answer is about notes rather than results', () => {
+    const text = formatDigestForPrompt(digestFor(), 'sightings');
+    expect(text).toContain('JOURNAL SECTIONS ARE WITHHELD');
+    expect(text).not.toContain('CLOSED-TRADE RESULTS');
+  });
+
+  it('attaches the notes and the no-picture rule to the prompt', () => {
+    const { userPrompt, systemInstruction } = buildCoachPrompt(
+      'sightings',
+      digestFor(),
+      undefined,
+      undefined,
+      { sightings: facts }
+    );
+
+    expect(userPrompt).toContain('YOUR SIGHTING NOTES');
+    expect(userPrompt).toContain('Held the 5,430 shelf');
+    expect(COACH_RESPONSE_SHAPES.sightings).toContain('"patterns"');
+    expect(systemInstruction).toContain('NO PICTURES WERE SHOWN TO YOU');
+  });
+
+  it('never carries sighting notes into another mode', () => {
+    const { userPrompt } = buildCoachPrompt(
+      'brief',
+      digestFor(),
+      undefined,
+      undefined,
+      { sightings: facts }
+    );
+    expect(userPrompt).not.toContain('Held the 5,430 shelf');
+  });
+
+  it('keeps a pattern only when it has evidence, and counts at least one sighting', () => {
+    const result = parseCoachResponse('sightings', {
+      headline: 'The same shelf keeps showing up.',
+      read: 'You keep photographing the 5,430 shelf.',
+      patterns: [
+        {
+          pattern: 'The shelf holds for two days, then breaks',
+          evidence: '2026-10-01: "Held the 5,430 shelf for two days, then lost it on the third."',
+          sightings: 2,
+        },
+        { pattern: 'No evidence', sightings: 3 },
+        { pattern: 'Nothing counted', evidence: 'a note', sightings: 0 },
+      ],
+      method: 'Read every note in order.',
+      notEnoughYet: '',
+      nextStep: 'Write one line under each picture about what price did.',
+      motivation: 'You are building a memory faster than you think.',
+    }) as SightingsResponse;
+
+    expect(result.patterns).toHaveLength(2);
+    expect(result.patterns[0].sightings).toBe(2);
+    // A zero or missing count is a pattern supported by nothing, which is not a pattern.
+    expect(result.patterns[1].sightings).toBe(1);
   });
 });

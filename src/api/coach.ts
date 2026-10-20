@@ -11,6 +11,8 @@ import type {
   CoachPositionFacts,
   CoachTradeFacts,
   EntryEdgeFacts,
+  SightingNote,
+  SightingNotesFacts,
 } from '../lib/ai/coach-types';
 import { readCoachImages, type CoachImagePart } from '../lib/ai/coach-images';
 import type { JournalDigest } from '../lib/ai/journal-digest';
@@ -977,6 +979,69 @@ export function readEntryEdgeFacts(raw: unknown): EntryEdgeFacts | null {
 }
 
 /**
+ * How much sighting material one read may carry.
+ *
+ * The block is pasted into a prompt verbatim, so it is bounded here rather than trusted. The
+ * caps are per read, not per library: a sighting read of the most recent forty sightings is a
+ * reading of recent memory, and the card says how many were listed against how many exist.
+ */
+const MAX_SIGHTINGS_PER_READ = 40;
+const MAX_NOTES_PER_SIGHTING = 3;
+const MAX_NOTE_CHARS = 600;
+
+/**
+ * Reads the sighting notes the pattern mode is asked to work from.
+ *
+ * Returns null when nothing readable survives — a request with no notes cannot be answered, and
+ * answering it anyway would invite the model to invent sightings. A sighting with no words is
+ * dropped rather than listed empty: the picture is indexed for resemblance search, but this
+ * read is a reading of the notes, and an empty one contributes no observation.
+ */
+export function readSightingNotes(raw: unknown): SightingNotesFacts | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const record = raw as Record<string, unknown>;
+  const rows = Array.isArray(record.sightings) ? record.sightings : [];
+
+  const sightings: SightingNote[] = [];
+  for (const row of rows) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
+    const item = row as Record<string, unknown>;
+    const date = typeof item.date === 'string' ? item.date.trim().slice(0, 10) : '';
+    const symbol = typeof item.symbol === 'string' ? item.symbol.trim().slice(0, 24) : '';
+    if (!date || !symbol) continue;
+
+    const notes = (Array.isArray(item.notes) ? item.notes : [])
+      .filter((note): note is string => typeof note === 'string' && note.trim().length > 0)
+      .slice(0, MAX_NOTES_PER_SIGHTING)
+      .map((note) => note.trim().slice(0, MAX_NOTE_CHARS));
+    if (notes.length === 0) continue;
+
+    sightings.push({
+      date,
+      symbol,
+      ...(typeof item.timeframe === 'string' && item.timeframe.trim()
+        ? { timeframe: item.timeframe.trim().slice(0, 12) }
+        : {}),
+      notes,
+    });
+    if (sightings.length >= MAX_SIGHTINGS_PER_READ) break;
+  }
+
+  if (sightings.length === 0) return null;
+
+  // The total is the library's own count, carried so the answer can say "listed 20 of 64"
+  // instead of implying every sighting was considered. A client-supplied total below what is
+  // listed is nonsense and is replaced by the listed count rather than passed through.
+  const suppliedTotal = readNumber(record.total);
+  const total =
+    suppliedTotal !== undefined && suppliedTotal >= sightings.length
+      ? Math.round(suppliedTotal)
+      : sightings.length;
+
+  return { total, listed: sightings.length, sightings };
+}
+
+/**
  * Minimal shape check on the digest. We do not re-validate every field — the client
  * built it from its own types — but we must reject anything that would leave the prompt
  * with no facts at all, because a coach with no data invents data.
@@ -1071,7 +1136,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       error:
         'Unknown coach mode. Expected brief, weekly, setups, form, edge, learn, match, ' +
         'extremes, extremecall, trade, prep, postclose, planreview, planfield, planbuild, ' +
-        'scalein, entrycall, chartread, ask, lessons, selfplan or entryedge.',
+        'scalein, entrycall, chartread, ask, lessons, mindset, sightings, selfplan or entryedge.',
     });
     return;
   }
@@ -1141,6 +1206,18 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       return;
     }
     extras.entryEdge = facts;
+  }
+
+  if (mode === 'sightings') {
+    const facts = readSightingNotes(extrasRaw.sightings);
+    if (!facts) {
+      res.status(400).json({
+        error:
+          'Sightings mode needs at least one sighting that carries a note — there is nothing to read yet.',
+      });
+      return;
+    }
+    extras.sightings = facts;
   }
 
   if (mode === 'ask') {

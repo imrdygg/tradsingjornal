@@ -28,6 +28,7 @@ import { countUnlabelledImages } from '../../lib/memory/journal-import';
 import { useMemoryIndexing } from '../../lib/memory/use-memory-indexing';
 import { sightingFromSearchChart } from '../../lib/memory/sighting';
 import { ObservationLibrary } from './ObservationLibrary';
+import { SightingPatternCard } from './SightingPatternCard';
 import { MemorySearchView } from './MemorySearchView';
 import { MemoryResearchView } from './MemoryResearchView';
 import { MemoryEvaluationView } from './MemoryEvaluationView';
@@ -220,10 +221,12 @@ export const TradingMemoryView: React.FC<TradingMemoryViewProps> = ({
               Trading Memory
             </h1>
             <p className="mt-1 max-w-3xl text-xs leading-relaxed text-zinc-400">
-              Your own market memory. Record the setups you see, whether or not you trade them, and
-              this becomes the place you ask a chart: <em>have I seen this before, how similar was
-              it, and what actually happened afterwards?</em> Everything here is answered from your
-              own records — it is not a forecast, and it never tells you what to do.
+              Your own market memory. Take a picture of the chart you are studying, write what you
+              saw under it, and this becomes the place you ask: <em>have I seen this before, how
+              similar was it, and what actually happened afterwards?</em> The notes are also what
+              your coach reads to name the pattern you keep coming back to. Everything here is
+              answered from your own records — it is not a forecast, and it never tells you what to
+              do.
             </p>
           </div>
           <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-4">
@@ -505,6 +508,17 @@ export const TradingMemoryView: React.FC<TradingMemoryViewProps> = ({
         onDelete={onDeleteObservation}
         onViewTrade={onViewTrade}
         focusObservationId={focusObservationId ?? undefined}
+      />
+
+      {/* The reason the notes exist: what they keep saying across sightings. */}
+      <SightingPatternCard
+        observations={observations}
+        instruments={instruments}
+        setups={setups}
+        trades={trades}
+        tradingDays={tradingDays}
+        timezone={timezone}
+        todayTradeDate={todayTradeDate}
       />
 
       <p className="px-1 text-[10px] leading-relaxed text-zinc-600">

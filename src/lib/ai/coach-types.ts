@@ -92,6 +92,15 @@ export type CoachMode =
    */
   | 'mindset'
   /**
+   * The sighting pattern read: the trader's memory library — one to three charts per sighting,
+   * each with a note about what they saw — read back as the patterns that keep recurring.
+   *
+   * Their own words only. The pictures themselves are not re-read for this request (they are
+   * indexed separately for resemblance search), so the notes are the whole material and the
+   * coach must say so rather than describe a chart it was not shown.
+   */
+  | 'sightings'
+  /**
    * The coach's own trade plan for one instrument, made from the live market read alone.
    *
    * The trader does not set its levels: the coach commits to a direction, an entry, a stop
@@ -233,6 +242,37 @@ export interface CoachExtras {
    * is untrusted input no matter which client sent it.
    */
   images?: CoachImageInput[];
+  /**
+   * The trader's sighting notes, for the `sightings` mode.
+   *
+   * Text only. Each sighting carries the notes written under its pictures, so a pattern can be
+   * traced back to the exact charts it came from. Bounded by the endpoint before it reaches a
+   * prompt, because the whole block is pasted in verbatim.
+   */
+  sightings?: SightingNotesFacts;
+}
+
+/** One sighting as the pattern read sees it: the day, the chart, and what was written. */
+export interface SightingNote {
+  /** YYYY-MM-DD, the day the sighting is filed under. */
+  date: string;
+  symbol: string;
+  timeframe?: string;
+  /** The notes under the pictures, in the order the pictures were attached. */
+  notes: string[];
+}
+
+/**
+ * The whole sighting material for one read.
+ *
+ * `total` and `listed` are both carried because they are different facts: a library of two
+ * hundred sightings read from its most recent thirty must say thirty, not imply two hundred
+ * notes were considered.
+ */
+export interface SightingNotesFacts {
+  total: number;
+  listed: number;
+  sightings: SightingNote[];
 }
 
 /**
@@ -678,6 +718,38 @@ export interface MindsetResponse {
   motivation: string;
 }
 
+/** One pattern the trader's own sighting notes keep returning to. */
+export interface SightingPattern {
+  /** The recurring observation, in the trader's own terms. */
+  pattern: string;
+  /** The sightings and notes behind it, quoted — never a count the digest did not give. */
+  evidence: string;
+  /** How many sightings carry a note that supports this. */
+  sightings: number;
+}
+
+/**
+ * The sighting pattern read.
+ *
+ * A reading of what the trader wrote under their own charts: the setups they keep
+ * photographing, the levels they keep marking, the thing they say they were waiting for. It is
+ * not a market read and not a forecast — every pattern must be traceable to notes they wrote.
+ */
+export interface SightingsResponse {
+  headline: string;
+  /** What the notes keep saying, in the trader's own words. */
+  read: string;
+  /** The recurring patterns, best supported first. Empty when the notes are too thin. */
+  patterns: SightingPattern[];
+  /** How the notes were grouped and what that showed, so the read can be checked. */
+  method: string;
+  /** What the notes do not cover yet, or that there are too few. */
+  notEnoughYet: string;
+  /** One concrete thing to write down under the next picture. */
+  nextStep: string;
+  motivation: string;
+}
+
 export interface LessonsResponse {
   headline: string;
   /** The themes that hold across several lessons. Empty when the library is too thin. */
@@ -836,7 +908,8 @@ export type CoachResponse =
   | LessonsResponse
   | MindsetResponse
   | SelfPlanResponse
-  | EntryEdgeResponse;
+  | EntryEdgeResponse
+  | SightingsResponse;
 
 export function isCoachEntryCall(value: unknown): value is CoachEntryCall {
   if (!value || typeof value !== 'object') return false;

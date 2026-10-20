@@ -537,6 +537,33 @@ export async function upsertObservations(
     if (imageError) throw explainSchemaError(imageError);
   }
 
+  // ---- Pictures removed from a sighting stop being matchable ----
+  //
+  // An upsert only adds or updates. Without this pass, a picture the trader removed keeps its row
+  // and its embedding, so a later search can still return it — pointing at a sighting that no
+  // longer shows that chart. The read is one query for the whole batch and the delete is one
+  // statement, so this does not turn a backfill into a query per picture.
+  const { data: existingImages, error: existingImagesError } = await client
+    .from('memory_images')
+    .select('id')
+    .in('observation_id', rows.map((row) => row.id));
+  if (existingImagesError) throw explainSchemaError(existingImagesError);
+
+  const currentImageIds = new Set(images.map((image) => image.id));
+  const staleImageIds = ((existingImages ?? []) as { id: string }[])
+    .map((row) => row.id)
+    // A row is stale when the observation it belongs to was in this batch and its picture is no
+    // longer on the record. Rows for observations outside the batch are never considered.
+    .filter((id) => !currentImageIds.has(id));
+
+  if (staleImageIds.length > 0) {
+    const { error: staleError } = await client
+      .from('memory_images')
+      .delete()
+      .in('id', staleImageIds);
+    if (staleError) throw explainSchemaError(staleError);
+  }
+
   return rows.length;
 }
 

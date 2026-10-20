@@ -187,6 +187,32 @@ test.describe('Trading Memory', () => {
     await expect(page.locator('#observation-list article')).toHaveCount(2);
   });
 
+  test('edits a note under a saved picture without reopening the form', async ({ page }) => {
+    await openMemory(page);
+
+    await page.locator('#observation-new').click();
+    await page.locator('#observation-instrument').selectOption({ index: 1 });
+    await addPictureNote(page, 'First read.');
+    await page.locator('#observation-save').click();
+
+    const card = page.locator('#observation-list article').first();
+    await expect(card).toContainText('First read.');
+
+    // The note is the material, so refining it is a one-field edit rather than a new sighting.
+    await card.locator('[id^="observation-note-edit-"]').first().click();
+    await card.locator('[id^="observation-note-input-"]').fill('Refined after the close.');
+    await card.locator('[id^="observation-note-save-"]').click();
+
+    await expect(card).toContainText('Refined after the close.');
+    await expect(card).not.toContainText('First read.');
+    await expect(page.locator('#observation-list article')).toHaveCount(1);
+
+    // And it survives a reload, because it was written to the record rather than held on screen.
+    await page.reload();
+    await memoryTab(page).click();
+    await expect(page.locator('#observation-list')).toContainText('Refined after the close.');
+  });
+
   test('turns a note under a picture into material the coach can read', async ({ page }) => {
     await openMemory(page);
 

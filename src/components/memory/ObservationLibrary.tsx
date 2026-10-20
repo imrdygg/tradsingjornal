@@ -182,6 +182,15 @@ export const ObservationLibrary: React.FC<ObservationLibraryProps> = ({
   const [jumpTo, setJumpTo] = useState<{ id: string; targetId?: string } | null>(null);
   /** Which observation's outcome panel is open. One at a time: this is a form, not a table. */
   const [outcomeOpenId, setOutcomeOpenId] = useState<string | null>(null);
+  /**
+   * The picture whose note is being rewritten in place.
+   *
+   * A note is one line about one chart, and fixing a word in it should not mean opening the whole
+   * record form and saving every field again. This is the only edit the library offers in place,
+   * because it is the edit the pattern read depends on: a note worth refining is the point.
+   */
+  const [noteEditId, setNoteEditId] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState('');
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [filter, setFilter] = useState<MemoryObservationFilter>({
     instrumentId: '',
@@ -338,6 +347,27 @@ export const ObservationLibrary: React.FC<ObservationLibraryProps> = ({
       symbol: instrument ? instrument.symbol : draft.symbol,
     });
     setDraft(null);
+  }
+
+  /**
+   * Saves one picture's note, leaving everything else on the record untouched.
+   *
+   * An emptied note is removed rather than stored as an empty string, so the counts that read
+   * "sightings with a note" cannot be inflated by a field the trader cleared.
+   */
+  function saveImageNote(observation: TradingObservation, imageId: string) {
+    const text = noteDraft.trim();
+    onSave({
+      ...observation,
+      images: (observation.images ?? []).map((image) =>
+        image.id === imageId
+          ? { ...image, note: text || undefined, updatedAt: new Date().toISOString() }
+          : image
+      ),
+      updatedAt: new Date().toISOString(),
+    });
+    setNoteEditId(null);
+    setNoteDraft('');
   }
 
   /** Writes an outcome patch onto a stored observation. */
@@ -754,10 +784,61 @@ export const ObservationLibrary: React.FC<ObservationLibraryProps> = ({
                             alt={`A chart from ${observation.symbol} on ${observation.observedAt.slice(0, 10)}`}
                             onOpen={(src) => openImage(src, observation, image.note)}
                           />
-                          {image.note && (
-                            <figcaption className="text-[10px] leading-relaxed text-zinc-400">
-                              {image.note}
-                            </figcaption>
+                          {noteEditId === image.id ? (
+                            <div className="space-y-1">
+                              <textarea
+                                id={`observation-note-input-${image.id}`}
+                                autoFocus
+                                rows={3}
+                                className={fieldClass}
+                                placeholder="What you saw in this picture."
+                                value={noteDraft}
+                                onChange={(e) => setNoteDraft(e.target.value)}
+                              />
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  id={`observation-note-save-${image.id}`}
+                                  onClick={() => saveImageNote(observation, image.id)}
+                                  className="rounded-lg bg-sky-500 px-2 py-0.5 text-[10px] font-bold text-zinc-950 transition-colors hover:bg-sky-400"
+                                >
+                                  Save note
+                                </button>
+                                <button
+                                  type="button"
+                                  id={`observation-note-cancel-${image.id}`}
+                                  onClick={() => {
+                                    setNoteEditId(null);
+                                    setNoteDraft('');
+                                  }}
+                                  className="rounded-lg border border-zinc-700 px-2 py-0.5 text-[10px] font-semibold text-zinc-300 transition-colors hover:bg-zinc-800"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              {image.note ? (
+                                <figcaption className="text-[10px] leading-relaxed text-zinc-400">
+                                  {image.note}
+                                </figcaption>
+                              ) : (
+                                <p className="text-[10px] italic text-zinc-600">no note yet</p>
+                              )}
+                              <button
+                                type="button"
+                                id={`observation-note-edit-${image.id}`}
+                                onClick={() => {
+                                  setNoteEditId(image.id);
+                                  setNoteDraft(image.note ?? '');
+                                }}
+                                className="flex items-center gap-1 text-[10px] font-semibold text-sky-400 transition-colors hover:text-sky-300"
+                              >
+                                <Pencil className="h-3 w-3" />
+                                {image.note ? 'Edit note' : 'Add a note'}
+                              </button>
+                            </>
                           )}
                         </figure>
                       ))

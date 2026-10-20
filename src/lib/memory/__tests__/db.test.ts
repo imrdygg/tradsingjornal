@@ -48,7 +48,7 @@ const fake = vi.hoisted(() => {
   });
 
   function from(name: string) {
-    let op: 'select' | 'insert' | 'upsert' | 'update' = 'select';
+    let op: 'select' | 'insert' | 'upsert' | 'update' | 'delete' = 'select';
     let payload: Row | Row[] | null = null;
     const filters: Record<string, unknown> = {};
     const inFilters: Record<string, unknown[]> = {};
@@ -75,6 +75,21 @@ const fake = vi.hoisted(() => {
         }
         if (rowLimit !== null) rows = rows.slice(0, rowLimit);
         return { data: rows, error: null };
+      }
+
+      if (op === 'delete') {
+        const remaining = table(name).filter((row) => {
+          const matchesFilters = Object.entries(filters).every(
+            ([column, value]) => row[column] === value
+          );
+          const matchesIn = Object.entries(inFilters).every(([column, values]) =>
+            values.includes(row[column])
+          );
+          return !(matchesFilters && matchesIn);
+        });
+        // Mutated in place, so the state a later read sees is the state after the delete.
+        table(name).splice(0, table(name).length, ...remaining);
+        return { data: null, error: null };
       }
 
       const rows = Array.isArray(payload) ? payload : [payload as Row];
@@ -140,6 +155,10 @@ const fake = vi.hoisted(() => {
         op = 'update';
         payload = values;
         state.writes.push({ table: name, op, payload: values });
+        return builder;
+      },
+      delete: () => {
+        op = 'delete';
         return builder;
       },
       single: async () => {
@@ -515,6 +534,31 @@ describe('upsertObservations', () => {
   it('writes no picture rows at all when nothing is uploaded', async () => {
     await upsertObservations([observation({ images: [image({ storagePath: undefined })] })]);
     expect(fake.state.writes.some((entry) => entry.table === 'memory_images')).toBe(false);
+  });
+
+  it('deletes the row of a picture that was removed from a sighting', async () => {
+    // The picture was stored once, so its row exists. The trader then removed it from the
+    // sighting: the row has to go too, or a search can still return a chart the record no
+    // longer shows.
+    fake.state.tables.memory_images = [
+      { ...imageRow(image({ id: 'kept' }), USER, 'obs-1') },
+      { ...imageRow(image({ id: 'removed' }), USER, 'obs-1') },
+    ];
+
+    await upsertObservations([observation({ images: [image({ id: 'kept' })] })]);
+
+    expect(fake.state.tables.memory_images.map((row) => row.id)).toEqual(['kept']);
+  });
+
+  it('leaves pictures of an observation outside the batch alone', async () => {
+    fake.state.tables.memory_images = [
+      { ...imageRow(image({ id: 'other-obs' }), USER, 'obs-2') },
+    ];
+
+    await upsertObservations([observation({ id: 'obs-1', images: [] })]);
+
+    // Deleting another sighting's pictures would silently empty a library one save at a time.
+    expect(fake.state.tables.memory_images.map((row) => row.id)).toEqual(['other-obs']);
   });
 
   it('does nothing, and asks for nothing, on an empty library', async () => {
